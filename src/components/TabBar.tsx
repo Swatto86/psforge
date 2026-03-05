@@ -1,0 +1,284 @@
+/** PSForge Tab Bar component.
+ *  Displays open file tabs with dirty indicators, close buttons, context menus,
+ *  and drag-and-drop reordering (HTML5 Drag API).
+ */
+
+import React, { useState, useRef, useEffect } from "react";
+import { useAppState } from "../store";
+import * as cmd from "../commands";
+
+export function TabBar() {
+  const { state, dispatch } = useAppState();
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    tabId: string;
+  } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  /** Tab id currently being dragged, or null. */
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [contextMenu]);
+
+  // BUG-NEW-5 fix: extracted shared close logic so the context menu items
+  // run the same isDirty confirmation as the tab × button.
+  const closeTab = (tabId: string) => {
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (tab?.isDirty) {
+      const confirmed = window.confirm(
+        `"${tab.title}" has unsaved changes.\n\nClose without saving?`,
+      );
+      if (!confirmed) return;
+    }
+    if (state.tabs.length > 1) {
+      dispatch({ type: "CLOSE_TAB", id: tabId });
+    }
+  };
+
+  const handleClose = (e: React.MouseEvent, tabId: string) => {
+    e.stopPropagation();
+    closeTab(tabId);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, tabId: string) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, tabId });
+  };
+
+  const closeOthers = (tabId: string) => {
+    // BUG-NEW-5 fix: check isDirty before closing each tab.
+    for (const t of state.tabs) {
+      if (t.id === tabId) continue;
+      if (t.isDirty) {
+        const confirmed = window.confirm(
+          `"${t.title}" has unsaved changes.\n\nClose without saving?`,
+        );
+        if (!confirmed) {
+          setContextMenu(null);
+          return;
+        }
+      }
+      dispatch({ type: "CLOSE_TAB", id: t.id });
+    }
+    setContextMenu(null);
+  };
+
+  const closeAll = () => {
+    // BUG-NEW-5 fix: confirm once for all dirty tabs before closing any.
+    const dirtyTabs = state.tabs.filter((t) => t.isDirty);
+    if (dirtyTabs.length > 0) {
+      const names = dirtyTabs.map((t) => `"${t.title}"`).join(", ");
+      const confirmed = window.confirm(
+        `${dirtyTabs.length} file(s) have unsaved changes: ${names}.\n\nClose all without saving?`,
+      );
+      if (!confirmed) {
+        setContextMenu(null);
+        return;
+      }
+    }
+    // Keep at least one tab, resetting it to a fresh code tab.
+    state.tabs.slice(1).forEach((t) => {
+      dispatch({ type: "CLOSE_TAB", id: t.id });
+    });
+    dispatch({
+      type: "UPDATE_TAB",
+      id: state.tabs[0].id,
+      changes: {
+        content: "",
+        savedContent: "",
+        filePath: "",
+        title: "Untitled-1",
+        isDirty: false,
+        tabType: "code",
+      },
+    });
+    setContextMenu(null);
+  };
+
+  return (
+    <div
+      data-testid="tabbar-root"
+      className="flex items-center overflow-x-auto no-select"
+      style={{
+        backgroundColor: "var(--bg-secondary)",
+        borderBottom: "1px solid var(--border-primary)",
+        minHeight: "38px",
+      }}
+    >
+      {state.tabs.map((tab) => {
+        const isActive = tab.id === state.activeTabId;
+        const isDragTarget = dragOverId === tab.id;
+        return (
+          <div
+            key={tab.id}
+            data-testid={`tab-item-${tab.id}`}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData("text/plain", tab.id);
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              setDragOverId(tab.id);
+            }}
+            onDragLeave={() => setDragOverId(null)}
+            onDrop={(e) => {
+              e.preventDefault();
+              const fromId = e.dataTransfer.getData("text/plain");
+              if (fromId && fromId !== tab.id) {
+                dispatch({ type: "REORDER_TABS", fromId, toId: tab.id });
+              }
+              setDragOverId(null);
+            }}
+            onDragEnd={() => setDragOverId(null)}
+            onClick={() => dispatch({ type: "SET_ACTIVE_TAB", id: tab.id })}
+            onContextMenu={(e) => handleContextMenu(e, tab.id)}
+            className="flex items-center gap-2 px-4 py-2 text-sm cursor-pointer shrink-0 transition-colors"
+            style={{
+              backgroundColor: isActive
+                ? "var(--bg-tab-active)"
+                : "var(--bg-tab)",
+              color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+              borderRight: "1px solid var(--border-primary)",
+              borderBottom: isActive
+                ? "2px solid var(--accent)"
+                : "2px solid transparent",
+              // Highlight drop target with a left border accent
+              borderLeft: isDragTarget
+                ? "2px solid var(--accent)"
+                : "2px solid transparent",
+              opacity: isDragTarget ? 0.8 : 1,
+            }}
+          >
+            <span>{tab.title}</span>
+            {tab.isDirty && (
+              <span
+                style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  backgroundColor: "var(--text-accent)",
+                  display: "inline-block",
+                }}
+              />
+            )}
+            <button
+              onClick={(e) => handleClose(e, tab.id)}
+              data-testid={`tab-close-${tab.id}`}
+              disabled={state.tabs.length <= 1}
+              className="ml-1 rounded hover:opacity-100 opacity-50"
+              style={{
+                color: "var(--text-secondary)",
+                backgroundColor: "transparent",
+                width: "18px",
+                height: "18px",
+                fontSize: "14px",
+                lineHeight: "1",
+                display: state.tabs.length <= 1 ? "none" : "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              title="Close"
+            >
+              x
+            </button>
+          </div>
+        );
+      })}
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          ref={menuRef}
+          className="fixed z-50 py-1 rounded shadow-lg"
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+            backgroundColor: "var(--bg-tertiary)",
+            border: "1px solid var(--border-primary)",
+            minWidth: "150px",
+            fontFamily: "var(--ui-font-family)",
+            fontSize: "var(--ui-font-size)",
+          }}
+        >
+          <CtxMenuItem
+            label="Close"
+            onClick={() => {
+              // BUG-NEW-5 fix: route through closeTab so isDirty is checked.
+              closeTab(contextMenu.tabId);
+              setContextMenu(null);
+            }}
+          />
+          <CtxMenuItem
+            label="Close Others"
+            onClick={() => closeOthers(contextMenu.tabId)}
+          />
+          <CtxMenuItem label="Close All" onClick={closeAll} />
+          <div
+            className="my-1"
+            style={{
+              height: "1px",
+              backgroundColor: "var(--border-primary)",
+            }}
+          />
+          <CtxMenuItem
+            label="Reveal in Explorer"
+            disabled={
+              !state.tabs.find((t) => t.id === contextMenu.tabId)?.filePath
+            }
+            onClick={() => {
+              const tab = state.tabs.find((t) => t.id === contextMenu.tabId);
+              if (tab?.filePath) {
+                cmd.revealInExplorer(tab.filePath).catch(() => {});
+              }
+              setContextMenu(null);
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CtxMenuItem({
+  label,
+  onClick,
+  disabled = false,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      onClick={disabled ? undefined : onClick}
+      className="px-3 py-1 transition-colors"
+      style={{
+        color: disabled ? "var(--text-muted)" : "var(--text-primary)",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled)
+          (e.currentTarget as HTMLElement).style.backgroundColor =
+            "var(--bg-hover)";
+      }}
+      onMouseLeave={(e) =>
+        ((e.currentTarget as HTMLElement).style.backgroundColor = "transparent")
+      }
+    >
+      {label}
+    </div>
+  );
+}
