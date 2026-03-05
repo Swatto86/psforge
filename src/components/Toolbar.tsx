@@ -380,23 +380,6 @@ export function Toolbar({
         ))}
       </select>
 
-      {/* Working directory display */}
-      {state.workingDir && (
-        <span
-          className="text-sm ml-2"
-          style={{
-            color: "var(--text-secondary)",
-            maxWidth: "600px",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={state.workingDir}
-        >
-          {state.workingDir}
-        </span>
-      )}
-
       {/* Spacer */}
       <div className="flex-1" />
 

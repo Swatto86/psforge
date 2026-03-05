@@ -150,7 +150,10 @@ export function StatusBar() {
           </div>
         )}
 
-        {/* File path -- click to reveal in Explorer */}
+        {/* File path -- click to reveal in Explorer.
+             direction:rtl makes text-overflow:ellipsis trim from the LEFT,
+             so the filename at the end of the path is always visible —
+             matching VS Code status bar behaviour. */}
         {activeTab?.filePath && (
           <button
             onClick={() =>
@@ -161,12 +164,14 @@ export function StatusBar() {
               backgroundColor: "transparent",
               color: "var(--text-inverse)",
               cursor: "pointer",
-              maxWidth: "600px",
+              maxWidth: "500px",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
               opacity: 0.9,
               fontSize: "inherit",
+              direction: "rtl",
+              textAlign: "left",
             }}
             title={`Reveal in Explorer: ${activeTab.filePath}`}
             onMouseEnter={(e) => {

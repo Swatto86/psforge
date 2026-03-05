@@ -5,7 +5,65 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { useAppState } from "../store";
+import { EditorTab } from "../types";
 import * as cmd from "../commands";
+
+/**
+ * Computes a minimal-but-unique display label for each tab.
+ * Tabs with a unique filename show just the filename.
+ * When two or more saved files share the same filename, parent directory
+ * segments are added one-at-a-time (right-to-left) until every label in
+ * the conflict group is unique — matching VS Code's disambiguation behaviour.
+ */
+function disambiguateTabs(tabs: EditorTab[]): Map<string, string> {
+  const labels = new Map<string, string>();
+
+  // Helper: extract the base filename from a tab.
+  const baseName = (tab: EditorTab) => {
+    if (!tab.filePath) return tab.title;
+    const parts = tab.filePath.replace(/\\/g, "/").split("/");
+    return parts[parts.length - 1] || tab.title;
+  };
+
+  // Group tabs by base filename.
+  const groups = new Map<string, EditorTab[]>();
+  for (const tab of tabs) {
+    const key = baseName(tab);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(tab);
+  }
+
+  for (const [, group] of groups) {
+    if (group.length === 1) {
+      labels.set(group[0].id, baseName(group[0]));
+      continue;
+    }
+    // Find the minimum number of trailing path segments that makes every
+    // label in this conflict group unique.
+    let depth = 2;
+    let resolved = false;
+    while (!resolved) {
+      const attempt = new Map<string, string>();
+      for (const tab of group) {
+        if (!tab.filePath) {
+          attempt.set(tab.id, tab.title);
+          continue;
+        }
+        const parts = tab.filePath.replace(/\\/g, "/").split("/");
+        attempt.set(tab.id, parts.slice(-Math.min(depth, parts.length)).join("/"));
+      }
+      const values = Array.from(attempt.values());
+      if (new Set(values).size === values.length || depth > 12) {
+        for (const [id, label] of attempt) labels.set(id, label);
+        resolved = true;
+      } else {
+        depth++;
+      }
+    }
+  }
+
+  return labels;
+}
 
 export function TabBar() {
   const { state, dispatch } = useAppState();
@@ -105,6 +163,8 @@ export function TabBar() {
     setContextMenu(null);
   };
 
+  const tabLabels = disambiguateTabs(state.tabs);
+
   return (
     <div
       data-testid="tabbar-root"
@@ -112,12 +172,13 @@ export function TabBar() {
       style={{
         backgroundColor: "var(--bg-secondary)",
         borderBottom: "1px solid var(--border-primary)",
-        minHeight: "38px",
+        minHeight: "44px",
       }}
     >
       {state.tabs.map((tab) => {
         const isActive = tab.id === state.activeTabId;
         const isDragTarget = dragOverId === tab.id;
+        const displayLabel = tabLabels.get(tab.id) ?? tab.title;
         return (
           <div
             key={tab.id}
@@ -144,7 +205,7 @@ export function TabBar() {
             onDragEnd={() => setDragOverId(null)}
             onClick={() => dispatch({ type: "SET_ACTIVE_TAB", id: tab.id })}
             onContextMenu={(e) => handleContextMenu(e, tab.id)}
-            className="flex items-center gap-2 px-4 py-2 text-sm cursor-pointer shrink-0 transition-colors"
+            className="flex items-center gap-2 px-4 py-3 text-sm cursor-pointer shrink-0 transition-colors"
             style={{
               backgroundColor: isActive
                 ? "var(--bg-tab-active)"
@@ -161,7 +222,7 @@ export function TabBar() {
               opacity: isDragTarget ? 0.8 : 1,
             }}
           >
-            <span>{tab.title}</span>
+            <span title={tab.filePath || undefined}>{displayLabel}</span>
             {tab.isDirty && (
               <span
                 style={{

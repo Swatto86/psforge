@@ -1182,11 +1182,15 @@ pub async fn reveal_in_explorer(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         // explorer.exe /select,"<path>" highlights the file in its folder.
-        // Combining the flag and path into a single argument avoids Windows
-        // command-line parsing ambiguity when paths contain spaces.
-        let arg = format!("/select,{}", path);
+        // We MUST use raw_arg() here rather than arg(): Rust's arg() applies
+        // Windows command-line quoting, which wraps the whole string in extra
+        // quotes and makes Explorer ignore the /select flag, falling back to
+        // opening Documents. raw_arg() passes the bytes verbatim to
+        // CreateProcess so Explorer sees exactly: /select,"C:\path\file.ps1"
+        use std::os::windows::process::CommandExt;
+        let raw = format!("/select,\"{}\"", path);
         std::process::Command::new("explorer.exe")
-            .arg(&arg)
+            .raw_arg(&raw)
             .spawn()
             .map_err(|e| AppError {
                 code: "EXPLORER_LAUNCH_FAILED".to_string(),
