@@ -1,0 +1,208 @@
+/** PSForge Status Bar component.
+ *  Shows encoding, file path, PS version, and theme info.
+ *  Clicking the encoding label opens an inline encoding picker.
+ *  Clicking the file path reveals it in Windows Explorer.
+ */
+
+import React, { useState, useRef, useEffect } from "react";
+import { useAppState } from "../store";
+import * as cmd from "../commands";
+
+export function StatusBar() {
+  const { state, activeTab, dispatch } = useAppState();
+  const [showEncodingPicker, setShowEncodingPicker] = useState(false);
+  const encodingRef = useRef<HTMLDivElement>(null);
+
+  // Close encoding picker on outside click.
+  useEffect(() => {
+    if (!showEncodingPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        encodingRef.current &&
+        !encodingRef.current.contains(e.target as Node)
+      ) {
+        setShowEncodingPicker(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showEncodingPicker]);
+
+  const encodingLabel = (enc: string): string => {
+    switch (enc) {
+      case "utf8bom":
+        return "UTF-8 with BOM";
+      case "utf16le":
+        return "UTF-16 LE";
+      case "utf16be":
+        return "UTF-16 BE";
+      default:
+        return "UTF-8";
+    }
+  };
+
+  const encodingOptions: { value: string; label: string }[] = [
+    { value: "utf8", label: "UTF-8" },
+    { value: "utf8bom", label: "UTF-8 with BOM" },
+    { value: "utf16le", label: "UTF-16 LE" },
+    { value: "utf16be", label: "UTF-16 BE" },
+  ];
+
+  const psVersion = state.psVersions.find(
+    (v) => v.path === state.selectedPsPath,
+  );
+
+  return (
+    <div
+      data-testid="status-bar"
+      className="flex items-center justify-between py-0.5 text-sm no-select"
+      style={{
+        backgroundColor: "var(--bg-statusbar)",
+        color: "var(--text-inverse)",
+        minHeight: "26px",
+        paddingLeft: "12px",
+        paddingRight: "12px",
+      }}
+    >
+      {/* Left side */}
+      <div className="flex items-center gap-4">
+        {/* Encoding -- click to change */}
+        {activeTab && activeTab.tabType !== "welcome" && (
+          <div ref={encodingRef} className="relative">
+            <button
+              onClick={() => setShowEncodingPicker((v) => !v)}
+              title="Click to change encoding"
+              className="transition-opacity"
+              style={{
+                backgroundColor: "transparent",
+                color: "var(--text-inverse)",
+                cursor: "pointer",
+                opacity: 0.9,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.opacity = "1";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.opacity = "0.9";
+              }}
+            >
+              {encodingLabel(activeTab.encoding)}
+            </button>
+
+            {showEncodingPicker && (
+              <div
+                className="absolute z-50 py-1 rounded shadow-lg"
+                style={{
+                  bottom: "100%",
+                  left: 0,
+                  marginBottom: "4px",
+                  backgroundColor: "var(--bg-tertiary)",
+                  border: "1px solid var(--border-primary)",
+                  minWidth: "160px",
+                }}
+              >
+                {encodingOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => {
+                      dispatch({
+                        type: "UPDATE_TAB",
+                        id: activeTab.id,
+                        changes: { encoding: opt.value, isDirty: true },
+                      });
+                      setShowEncodingPicker(false);
+                    }}
+                    className="flex items-center gap-2 w-full px-3 py-1 text-left text-xs"
+                    style={{
+                      backgroundColor:
+                        activeTab.encoding === opt.value
+                          ? "var(--bg-hover)"
+                          : "transparent",
+                      color: "var(--text-primary)",
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.backgroundColor =
+                        "var(--bg-hover)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.backgroundColor =
+                        activeTab.encoding === opt.value
+                          ? "var(--bg-hover)"
+                          : "transparent";
+                    }}
+                  >
+                    {activeTab.encoding === opt.value && (
+                      <span style={{ color: "var(--text-accent)" }}>
+                        &#10003;
+                      </span>
+                    )}
+                    {activeTab.encoding !== opt.value && (
+                      <span
+                        style={{ width: "12px", display: "inline-block" }}
+                      />
+                    )}
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* File path -- click to reveal in Explorer */}
+        {activeTab?.filePath && (
+          <button
+            onClick={() =>
+              cmd.revealInExplorer(activeTab.filePath).catch(() => {})
+            }
+            className="transition-opacity"
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--text-inverse)",
+              cursor: "pointer",
+              maxWidth: "600px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              opacity: 0.9,
+              fontSize: "inherit",
+            }}
+            title={`Reveal in Explorer: ${activeTab.filePath}`}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = "1";
+              (e.currentTarget as HTMLElement).style.textDecoration =
+                "underline";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = "0.9";
+              (e.currentTarget as HTMLElement).style.textDecoration = "none";
+            }}
+          >
+            {activeTab.filePath}
+          </button>
+        )}
+      </div>
+
+      {/* Right side */}
+      <div className="flex items-center gap-4">
+        {state.isRunning && (
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            Running
+          </span>
+        )}
+        {psVersion && <span>{psVersion.name}</span>}
+        {activeTab && activeTab.tabType !== "welcome" && (
+          <span
+            style={{ fontVariantNumeric: "tabular-nums" }}
+            title="Cursor position"
+          >
+            Ln {state.cursorLine}, Col {state.cursorColumn}
+          </span>
+        )}
+        <span className="capitalize">{state.settings.theme}</span>
+      </div>
+    </div>
+  );
+}

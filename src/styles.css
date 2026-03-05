@@ -1,0 +1,235 @@
+@import "tailwindcss";
+
+/* PSForge Theme CSS Variables */
+:root {
+  /* Background colors */
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d2d;
+  --bg-sidebar: #252526;
+  --bg-toolbar: #333333;
+  --bg-statusbar: #007acc;
+  --bg-input: #3c3c3c;
+  --bg-tab: #2d2d2d;
+  --bg-tab-active: #1e1e1e;
+  --bg-hover: #2a2d2e;
+  --bg-panel: #1e1e1e;
+
+  /* Text colors */
+  --text-primary: #cccccc;
+  --text-secondary: #858585;
+  --text-muted: #6a6a6a;
+  --text-accent: #4fc1ff;
+  --text-inverse: #ffffff;
+
+  /* Border colors */
+  --border-primary: #3c3c3c;
+  --border-active: #007acc;
+
+  /* Accent / brand colors */
+  --accent: #007acc;
+  --accent-hover: #1a8ad4;
+  --accent-fg: #ffffff;
+
+  /* Output stream colors */
+  --stream-stdout: #d4d4d4;
+  --stream-stderr: #f44747;
+  --stream-verbose: #dcdcaa;
+  --stream-warning: #ce9178;
+
+  /* Variable type colors */
+  --type-string: #6a9955;
+  --type-int: #569cd6;
+  --type-bool: #ce9178;
+  --type-object: #858585;
+
+  /* Scrollbar */
+  --scrollbar-bg: #1e1e1e;
+  --scrollbar-thumb: #424242;
+
+  /* UI-wide typography -- overridden at runtime from persisted settings */
+  --ui-font-family: "Segoe UI", sans-serif;
+  --ui-font-size: 14px;
+
+  /* Sidebar/modules list typography -- overridden at runtime from persisted settings */
+  --sidebar-font-family: "Segoe UI", sans-serif;
+  --sidebar-font-size: 13px;
+
+  /* Button */
+  --btn-primary-bg: #0e639c;
+  --btn-primary-fg: #ffffff;
+  --btn-primary-hover: #1177bb;
+  --btn-danger-bg: #c72e2e;
+  --btn-danger-fg: #ffffff;
+  --btn-danger-hover: #d94444;
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f3f3;
+  --bg-tertiary: #ececec;
+  --bg-sidebar: #f3f3f3;
+  --bg-toolbar: #dddddd;
+  --bg-statusbar: #007acc;
+  --bg-input: #ffffff;
+  --bg-tab: #ececec;
+  --bg-tab-active: #ffffff;
+  --bg-hover: #e8e8e8;
+  --bg-panel: #ffffff;
+
+  --text-primary: #333333;
+  --text-secondary: #616161;
+  --text-muted: #999999;
+  --text-accent: #0066b8;
+  --text-inverse: #ffffff;
+
+  --border-primary: #cecece;
+  --border-active: #007acc;
+
+  --stream-stdout: #333333;
+  --stream-stderr: #cd3131;
+  --stream-verbose: #795e26;
+  --stream-warning: #bf8803;
+
+  --scrollbar-bg: #f3f3f3;
+  --scrollbar-thumb: #c1c1c1;
+}
+
+/* PS ISE Classic theme */
+[data-theme="ise-classic"] {
+  --bg-primary: #012456;
+  --bg-secondary: #01184a;
+  --bg-tertiary: #012456;
+  --bg-sidebar: #01184a;
+  --bg-toolbar: #01356e;
+  --bg-statusbar: #01356e;
+  --bg-input: #012456;
+  --bg-tab: #01184a;
+  --bg-tab-active: #012456;
+  --bg-hover: #013a7a;
+  --bg-panel: #012456;
+
+  --text-primary: #eeedf0;
+  --text-secondary: #b0b0c0;
+  --text-muted: #7070a0;
+  --text-accent: #ffff00;
+  --text-inverse: #ffffff;
+
+  --border-primary: #01356e;
+  --border-active: #ffff00;
+
+  --accent: #01356e;
+  --accent-hover: #014a8a;
+
+  --stream-stdout: #eeedf0;
+  --stream-stderr: #ff6060;
+  --stream-verbose: #ffff00;
+  --stream-warning: #ffaa00;
+
+  --scrollbar-bg: #012456;
+  --scrollbar-thumb: #01356e;
+}
+
+/* Global reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--ui-font-family);
+  font-size: var(--ui-font-size);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+::selection {
+  background-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  border: none;
+  cursor: pointer;
+  outline: none;
+}
+
+input,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  border-radius: 2px;
+  outline: none;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+/* Resizer handle */
+.resizer-h {
+  height: 4px;
+  cursor: ns-resize;
+  background: var(--border-primary);
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.resizer-h:hover {
+  background: var(--accent);
+}
+.resizer-v {
+  width: 4px;
+  cursor: ew-resize;
+  background: var(--border-primary);
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.resizer-v:hover {
+  background: var(--accent);
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PSForge</title>
+  <!-- Startup FOUC guard: keeps the body invisible until React has mounted.
+       The `psforge-loading` class is added synchronously by preload.js below
+       and removed by App.tsx after the first render. This prevents the blank
+       white frame that appears while the JS bundle is parsed and hydrated.
+       style-src 'unsafe-inline' is already in the CSP so this <style> is safe. -->
+  <style>
+    html.psforge-loading body {
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+  <!-- Loaded synchronously (before the React module) so the class is applied
+       before any content is painted. Origin is 'self' — no CSP changes needed. -->
+  <script src="/preload.js"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>
