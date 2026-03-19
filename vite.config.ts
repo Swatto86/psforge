@@ -55,6 +55,10 @@ export default defineConfig(async () => ({
   },
 
   build: {
+    // Monaco's standalone editor runtime is intentionally large even after
+    // trimming unused language services. Keep chunk warnings useful for the
+    // rest of the app while suppressing noise from the known Monaco chunk.
+    chunkSizeWarningLimit: 4096,
     rollupOptions: {
       output: {
         // Split Monaco editor and its language workers into a separate chunk so the

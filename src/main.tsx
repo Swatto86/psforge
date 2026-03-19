@@ -1,7 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { loader } from "@monaco-editor/react";
-import * as monaco from "monaco-editor";
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
+import "monaco-editor/esm/vs/basic-languages/powershell/powershell.contribution.js";
 // Vite ?worker suffix bundles the Monaco editor worker into the production output
 // and exposes it as a constructor.  Using new URL(…, import.meta.url) does NOT
 // work for bare npm specifiers in Rollup — Vite resolves them relative to the
