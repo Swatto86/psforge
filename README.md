@@ -8,29 +8,29 @@ PSForge is a native desktop application built with [Tauri v2](https://tauri.app/
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **Monaco Editor** | Syntax highlighting, IntelliSense, find/replace, multi-cursor |
-| **Script Execution** | Run full scripts (F5) or selected text (F8); streamed stdout/stderr |
-| **Integrated Terminal** | xterm.js-based persistent PowerShell session |
-| **Module Browser** | Sidebar listing installed modules with expandable command lists |
-| **Variables Inspector** | View all variables after a script run |
-| **Problems Panel** | Parse and navigate stderr errors with line/column references |
-| **Snippet Library** | 20 built-in PowerShell templates + user-defined snippets via Command Palette |
-| **File Associations** | Register PSForge as the default .ps1/.psm1/.psd1 handler (per-user, no admin) |
-| **Themes** | Dark, Light, and ISE-Classic themes synced across editor and UI |
-| **Multiple Tabs** | Drag-and-drop tab reorder, dirty indicators, recent files |
-| **Encoding Support** | Detect and preserve UTF-8, UTF-8 BOM, and UTF-16 LE/BE |
+| Feature                 | Description                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| **Monaco Editor**       | Syntax highlighting, IntelliSense, find/replace, multi-cursor                 |
+| **Script Execution**    | Run full scripts (F5) or selected text (F8); streamed stdout/stderr           |
+| **Integrated Terminal** | xterm.js-based persistent PowerShell session                                  |
+| **Module Browser**      | Sidebar listing installed modules with expandable command lists               |
+| **Variables Inspector** | View all variables after a script run                                         |
+| **Problems Panel**      | Parse and navigate stderr errors with line/column references                  |
+| **Snippet Library**     | 20 built-in PowerShell templates + user-defined snippets via Command Palette  |
+| **File Associations**   | Register PSForge as the default .ps1/.psm1/.psd1 handler (per-user, no admin) |
+| **Themes**              | Dark, Light, and ISE-Classic themes synced across editor and UI               |
+| **Multiple Tabs**       | Drag-and-drop tab reorder, dirty indicators, recent files                     |
+| **Encoding Support**    | Detect and preserve UTF-8, UTF-8 BOM, and UTF-16 LE/BE                        |
 
 ---
 
 ## Requirements
 
-| Requirement | Minimum Version | Notes |
-|-------------|----------------|-------|
-| Windows | 10 (64-bit) | WebView2 is pre-installed on Win 10/11 |
-| PowerShell | 5.1 (Windows PowerShell) | 7.x also supported and preferred |
-| WebView2 Runtime | Any | Included with Windows 10/11; auto-installed if absent |
+| Requirement      | Minimum Version          | Notes                                                 |
+| ---------------- | ------------------------ | ----------------------------------------------------- |
+| Windows          | 10 (64-bit)              | WebView2 is pre-installed on Win 10/11                |
+| PowerShell       | 5.1 (Windows PowerShell) | 7.x also supported and preferred                      |
+| WebView2 Runtime | Any                      | Included with Windows 10/11; auto-installed if absent |
 
 PSForge does **not** require the .NET SDK, Node.js, or any other runtime at deploy time. All dependencies are bundled in the installer.
 
@@ -54,19 +54,19 @@ msiexec /i PSForge_1.0.0_x64_en-US.msi /quiet
 
 ## Quick Start
 
-| Action | Keyboard Shortcut |
-|--------|------------------|
-| New file | Ctrl+N |
-| Open file | Ctrl+O |
-| Save file | Ctrl+S |
-| Run script | F5 |
-| Run selection | F8 |
-| Stop execution | Ctrl+Break |
-| Command Palette | Ctrl+Shift+P |
-| Toggle Sidebar | Ctrl+B |
-| Find & Replace | Ctrl+H |
-| Settings | Ctrl+, |
-| Zoom in / out | Ctrl+= / Ctrl+- |
+| Action          | Keyboard Shortcut |
+| --------------- | ----------------- |
+| New file        | Ctrl+N            |
+| Open file       | Ctrl+O            |
+| Save file       | Ctrl+S            |
+| Run script      | F5                |
+| Run selection   | F8                |
+| Stop execution  | Ctrl+Break        |
+| Command Palette | Ctrl+Shift+P      |
+| Toggle Sidebar  | Ctrl+B            |
+| Find & Replace  | Ctrl+H            |
+| Settings        | Ctrl+,            |
+| Zoom in / out   | Ctrl+= / Ctrl+-   |
 
 ---
 
@@ -197,4 +197,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 MIT -- see [LICENSE](LICENSE).
-
