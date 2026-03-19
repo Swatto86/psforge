@@ -15,20 +15,60 @@ import * as cmd from "../commands";
 import type { VariableInfo, ProblemItem } from "../types";
 import { TerminalPane } from "./TerminalPane";
 
-/** Prompt the user for a save path and write output lines to disk. */
-async function saveOutputToFile(lines: { text: string }[]): Promise<void> {
+/** Prompt the user for a save path and write plain text to disk. */
+async function saveTextToFile({
+  title,
+  defaultPath,
+  text,
+}: {
+  title: string;
+  defaultPath: string;
+  text: string;
+}): Promise<void> {
   const { save } = await import("@tauri-apps/plugin-dialog");
   const path = await save({
-    title: "Save Output",
-    defaultPath: "output.log",
+    title,
+    defaultPath,
     filters: [
       { name: "Log files", extensions: ["log", "txt"] },
       { name: "All files", extensions: ["*"] },
     ],
   });
   if (!path) return; // user cancelled
-  const text = lines.map((l) => l.text).join("\n");
   await cmd.saveFileContent(path, text, "utf8");
+}
+
+/** Prompt the user for a save path and write output lines to disk. */
+async function saveOutputToFile(lines: { text: string }[]): Promise<void> {
+  const text = lines.map((l) => l.text).join("\n");
+  await saveTextToFile({
+    title: "Save Output",
+    defaultPath: "output.log",
+    text,
+  });
+}
+
+/** Converts structured problems into plain text for copy/save actions. */
+function problemsToText(problems: ProblemItem[]): string {
+  return problems
+    .map((p) => {
+      const severity = p.severity.toUpperCase();
+      const location =
+        p.line !== undefined
+          ? ` (Ln ${p.line}${p.column !== undefined ? `, Col ${p.column}` : ""})`
+          : "";
+      return `[${severity}] ${p.source}${location}: ${p.message}`;
+    })
+    .join("\n");
+}
+
+/** Prompt the user for a save path and write problems to disk. */
+async function saveProblemsToFile(problems: ProblemItem[]): Promise<void> {
+  await saveTextToFile({
+    title: "Save Problems",
+    defaultPath: "problems.log",
+    text: problemsToText(problems),
+  });
 }
 
 export function OutputPane() {
@@ -100,7 +140,12 @@ export function OutputPane() {
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
+  const copyProblems = useCallback(() => {
+    navigator.clipboard.writeText(problemsToText(state.problems)).catch(() => {});
+  }, [state.problems]);
+
   const [isSavingOutput, setIsSavingOutput] = useState(false);
+  const [isSavingProblems, setIsSavingProblems] = useState(false);
 
   const handleSaveOutput = useCallback(async () => {
     if (isSavingOutput || state.outputLines.length === 0) return;
@@ -111,6 +156,16 @@ export function OutputPane() {
       setIsSavingOutput(false);
     }
   }, [isSavingOutput, state.outputLines]);
+
+  const handleSaveProblems = useCallback(async () => {
+    if (isSavingProblems || state.problems.length === 0) return;
+    setIsSavingProblems(true);
+    try {
+      await saveProblemsToFile(state.problems);
+    } finally {
+      setIsSavingProblems(false);
+    }
+  }, [isSavingProblems, state.problems]);
 
   /** Maps a stream type to its display colour CSS variable.
    *  Colours are defined in styles.css and vary per theme.
@@ -287,6 +342,74 @@ export function OutputPane() {
           </>
         )}
 
+        {state.bottomPanelTab === "problems" && (
+          <>
+            <button
+              onClick={copyProblems}
+              disabled={state.problems.length === 0}
+              style={{
+                padding: "6px 14px",
+                backgroundColor: "transparent",
+                color:
+                  state.problems.length === 0
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor: state.problems.length === 0 ? "default" : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "4px",
+              }}
+              title="Copy all problems to clipboard"
+            >
+              Copy
+            </button>
+            <button
+              onClick={handleSaveProblems}
+              disabled={isSavingProblems || state.problems.length === 0}
+              style={{
+                padding: "6px 14px",
+                backgroundColor: "transparent",
+                color:
+                  isSavingProblems || state.problems.length === 0
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor:
+                  isSavingProblems || state.problems.length === 0
+                    ? "default"
+                    : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "4px",
+              }}
+              title="Save problems to file"
+            >
+              {isSavingProblems ? "Saving..." : "Save..."}
+            </button>
+            <button
+              onClick={() => dispatch({ type: "CLEAR_OUTPUT" })}
+              disabled={state.problems.length === 0}
+              style={{
+                padding: "6px 14px",
+                backgroundColor: "transparent",
+                color:
+                  state.problems.length === 0
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor: state.problems.length === 0 ? "default" : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "8px",
+              }}
+              title="Clear problems"
+            >
+              Clear
+            </button>
+          </>
+        )}
+
         {state.bottomPanelTab === "terminal" && (
           <>
             <button
@@ -362,6 +485,8 @@ export function OutputPane() {
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
+          userSelect: "text",
+          WebkitUserSelect: "text",
         }}
       >
         {state.bottomPanelTab === "output" && (
@@ -732,6 +857,18 @@ function ProblemsPane({
     nav?.(line, column ?? 1);
   };
 
+  /** Prevent click-to-navigate when the user is drag-selecting problem text. */
+  const hasSelectionIn = (container: HTMLElement): boolean => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) return false;
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    return (
+      (anchorNode !== null && container.contains(anchorNode)) ||
+      (focusNode !== null && container.contains(focusNode))
+    );
+  };
+
   return (
     <div className="flex flex-col overflow-auto h-full" style={fontStyle}>
       {problems.map((p, i) => {
@@ -744,7 +881,11 @@ function ProblemsPane({
               borderBottom: "1px solid var(--border-primary)",
               cursor: navigable ? "pointer" : "default",
             }}
-            onClick={() => navigable && navigateTo(p.line!, p.column ?? 1)}
+            onClick={(e) => {
+              if (!navigable) return;
+              if (hasSelectionIn(e.currentTarget)) return;
+              navigateTo(p.line!, p.column ?? 1);
+            }}
             title={navigable ? `Click to go to line ${p.line}` : undefined}
             onMouseEnter={(e) => {
               if (navigable)
