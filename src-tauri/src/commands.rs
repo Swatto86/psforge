@@ -826,6 +826,59 @@ pub struct AssociationStatus {
 /// Supported PowerShell file extensions.
 const PS_EXTENSIONS: &[&str] = &[".ps1", ".psm1", ".psd1", ".ps1xml", ".pssc", ".cdxml"];
 
+#[cfg(target_os = "windows")]
+const ASSOCIATION_ICON_FILE_NAME: &str = "psforge-file-association.ico";
+
+#[cfg(target_os = "windows")]
+const ASSOCIATION_ICON_BYTES: &[u8] = include_bytes!("../icons/file-association.ico");
+
+/// Returns the registry `DefaultIcon` value for PSForge-associated script files.
+///
+/// Preference order:
+/// 1. Bundled icon file near the executable (`<exe dir>` or `<exe dir>\\resources`)
+/// 2. A per-user copy under `%LOCALAPPDATA%\\PSForge\\icons`
+/// 3. Fallback to the executable icon (`psforge.exe,0`)
+#[cfg(target_os = "windows")]
+fn file_association_icon_registry_value(exe_path: &std::path::Path) -> String {
+    if let Some(exe_dir) = exe_path.parent() {
+        for candidate in [
+            exe_dir.join(ASSOCIATION_ICON_FILE_NAME),
+            exe_dir.join("resources").join(ASSOCIATION_ICON_FILE_NAME),
+        ] {
+            if candidate.is_file() {
+                return format!("\"{}\",0", candidate.to_string_lossy());
+            }
+        }
+    }
+
+    if let Some(local_data_dir) = dirs::data_local_dir() {
+        let icon_dir = local_data_dir.join("PSForge").join("icons");
+        match std::fs::create_dir_all(&icon_dir) {
+            Ok(()) => {
+                let icon_path = icon_dir.join(ASSOCIATION_ICON_FILE_NAME);
+                match std::fs::write(&icon_path, ASSOCIATION_ICON_BYTES) {
+                    Ok(()) => return format!("\"{}\",0", icon_path.to_string_lossy()),
+                    Err(e) => log::warn!(
+                        "Failed to write file-association icon to '{}': {}",
+                        icon_path.display(),
+                        e
+                    ),
+                }
+            }
+            Err(e) => log::warn!(
+                "Failed to create file-association icon directory '{}': {}",
+                icon_dir.display(),
+                e
+            ),
+        }
+    } else {
+        log::warn!("Could not resolve LocalAppData path for file-association icon");
+    }
+
+    // Defensive fallback so registration still succeeds if icon materialization fails.
+    format!("\"{}\",0", exe_path.to_string_lossy())
+}
+
 /// Registers PSForge as the handler for a specific file extension.
 /// Uses HKCU (per-user, no admin required).
 #[tauri::command]
@@ -838,13 +891,11 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
         use winreg::RegKey;
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let exe_path = std::env::current_exe()
-            .map_err(|e| AppError {
-                code: "EXE_PATH_FAILED".to_string(),
-                message: format!("Could not determine executable path: {}", e),
-            })?
-            .to_string_lossy()
-            .to_string();
+        let exe_path = std::env::current_exe().map_err(|e| AppError {
+            code: "EXE_PATH_FAILED".to_string(),
+            message: format!("Could not determine executable path: {}", e),
+        })?;
+        let exe_path_str = exe_path.to_string_lossy().to_string();
 
         let prog_id = format!("PSForge{}", extension.replace('.', "_"));
 
@@ -859,16 +910,15 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
         let cmd_path = format!(r"Software\Classes\{}\shell\open\command", prog_id);
         let (cmd_key, _) = hkcu.create_subkey(&cmd_path).map_err(reg_err)?;
         cmd_key
-            .set_value("", &format!("\"{}\" \"%1\"", exe_path))
+            .set_value("", &format!("\"{}\" \"%1\"", exe_path_str))
             .map_err(reg_err)?;
 
-        // DefaultIcon: point to our executable so associated files show the PSForge icon.
-        // The ",0" suffix selects the first icon resource embedded in the EXE (our branded icon).
+        // DefaultIcon: use a dedicated file-association icon so script files are
+        // visually distinct from the standalone PSForge executable.
         let icon_path = format!(r"Software\Classes\{}\DefaultIcon", prog_id);
         let (icon_key, _) = hkcu.create_subkey(&icon_path).map_err(reg_err)?;
-        icon_key
-            .set_value("", &format!("\"{}\",0", exe_path))
-            .map_err(reg_err)?;
+        let default_icon = file_association_icon_registry_value(&exe_path);
+        icon_key.set_value("", &default_icon).map_err(reg_err)?;
 
         // Associate the extension: HKCU\Software\Classes\.ps1
         let ext_path = format!(r"Software\Classes\{}", extension);
