@@ -56,7 +56,15 @@ function Write-ErrorLine { param([string]$Msg) Write-Host "[ERR]  $Msg" -Foregro
 # Using $args has no named-parameter binding; every argument is forwarded verbatim.
 # ---------------------------------------------------------------------------
 function Invoke-Git {
-    $output = & git @args 2>&1
+    $rawOutput = & git @args 2>&1
+    $output = @($rawOutput | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) {
+            $_.ToString()
+        }
+        else {
+            "$_"
+        }
+    })
     if ($LASTEXITCODE -ne 0) {
         throw "git $($args -join ' ') failed (exit $LASTEXITCODE): $(($output | Out-String).Trim())"
     }
