@@ -31,58 +31,47 @@ declare global {
 // ---------------------------------------------------------------------------
 
 /**
- * Encodes an arbitrary string as a URL-safe-ish base64 string.
- * Chunks the TextEncoder byte array to avoid spread-induced call-stack
- * overflows on large scripts.
- */
-function scriptToBase64(script: string): string {
-  const bytes = new TextEncoder().encode(script);
-  let binary = "";
-  const CHUNK = 8192;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-/**
- * Wraps `originalScript` in a PowerShell ScriptBlock call with the supplied
- * parameter values injected as named arguments.
+ * Builds native PowerShell script arguments from prompt values.
  *
- * The original script is base64-encoded so its content (including quotes,
- * backticks, here-strings, etc.) is transported without any escaping
- * concerns.  The resulting command is safe to pass as a -Command argument.
- *
- * String values are single-quoted and internal single-quotes are escaped
- * as '' (PowerShell convention).  Numeric values pass through unquoted.
- * Boolean/switch values become $true / $false.
+ * We pass these args after `-File` so PowerShell binds them against the
+ * script's own param() block. This preserves script parse semantics
+ * (including begin/process/end blocks) by executing the original script text
+ * unchanged.
  */
-function wrapScriptWithParams(
-  originalScript: string,
+function buildScriptArgs(
+  params: ScriptParameter[],
   paramValues: Record<string, string>,
-): string {
-  const b64 = scriptToBase64(originalScript);
+): string[] {
+  const args: string[] = [];
+  for (const param of params) {
+    const raw = paramValues[param.name] ?? "";
+    const trimmed = raw.trim();
+    const lower = trimmed.toLowerCase();
+    const typeName = param.typeName.toLowerCase();
+    const isSwitch =
+      typeName === "switchparameter" ||
+      typeName.endsWith(".switchparameter") ||
+      typeName === "switch";
 
-  const paramArgs = Object.entries(paramValues)
-    .map(([name, val]) => {
-      const lower = val.toLowerCase();
-      if (lower === "true") return `-${name}:$true`;
-      if (lower === "false") return `-${name}:$false`;
-      // Numeric: pass unquoted.
-      if (/^-?\d+(\.\d+)?$/.test(val.trim())) return `-${name} ${val.trim()}`;
-      // String: single-quote, escaping internal single-quotes.
-      const escaped = val.replace(/'/g, "''");
-      return `-${name} '${escaped}'`;
-    })
-    .join(" ");
+    if (isSwitch) {
+      if (lower === "false" || lower === "0" || lower === "no") {
+        args.push(`-${param.name}:$false`);
+      } else {
+        // Empty input from the prompt means "present" for switches.
+        args.push(`-${param.name}`);
+      }
+      continue;
+    }
 
-  // Reconstruct the script from base64 inside a ScriptBlock and invoke it
-  // with the user-supplied named parameters.
-  return (
-    `$__sb = [ScriptBlock]::Create(` +
-    `[Text.Encoding]::UTF8.GetString(` +
-    `[Convert]::FromBase64String('${b64}'))); & $__sb ${paramArgs}`
-  );
+    if (lower === "true" || lower === "false") {
+      args.push(`-${param.name}:$${lower}`);
+      continue;
+    }
+
+    args.push(`-${param.name}`);
+    args.push(trimmed);
+  }
+  return args;
 }
 
 /** Inner app that has access to the store. */
@@ -324,13 +313,21 @@ function AppInner() {
     // BUG-NEW-2 fix: welcome tabs have no runnable content; guard here so
     // F5 does not submit an empty script. The Run button is also disabled
     // for welcome tabs (see Toolbar.tsx).
-    if (
-      !activeTab ||
-      activeTab.tabType === "welcome" ||
-      state.isRunning ||
-      !state.selectedPsPath
-    )
+    if (!activeTab || activeTab.tabType === "welcome" || state.isRunning) {
       return;
+    }
+
+    if (!state.selectedPsPath) {
+      dispatch({
+        type: "ADD_OUTPUT",
+        line: {
+          stream: "stderr",
+          text: "Run failed: no PowerShell executable is selected.",
+          timestamp: String(Math.floor(Date.now() / 1000)),
+        },
+      });
+      return;
+    }
 
     // Synchronous guard: prevents a rapid second F5 from slipping through
     // before React applies the SET_RUNNING dispatch from the first invocation.
@@ -390,7 +387,7 @@ function AppInner() {
     // so the user can supply values rather than letting the script fail
     // with a cryptic "missing mandatory parameter" error.
     // ------------------------------------------------------------------
-    let scriptToRun = scriptContent;
+    let scriptArgs: string[] = [];
     try {
       const allParams = await cmd.getScriptParameters(psPath, scriptContent);
       const required = allParams.filter((p) => p.isMandatory && !p.hasDefault);
@@ -411,9 +408,9 @@ function AppInner() {
           return;
         }
 
-        // Wrap the original script in a ScriptBlock invocation with the
-        // supplied parameter values injected as named arguments.
-        scriptToRun = wrapScriptWithParams(scriptContent, paramValues);
+        // Execute the original script text unchanged and pass parameters as
+        // native PowerShell script arguments (after -File).
+        scriptArgs = buildScriptArgs(required, paramValues);
       }
     } catch {
       // Parameter detection failed (e.g. no PS process, timeout).
@@ -428,7 +425,13 @@ function AppInner() {
     dispatch({ type: "SET_RUNNING", running: true });
 
     try {
-      await cmd.executeScript(psPath, scriptToRun, workDir, state.settings.executionPolicy);
+      await cmd.executeScript(
+        psPath,
+        scriptContent,
+        workDir,
+        state.settings.executionPolicy,
+        scriptArgs,
+      );
 
       // Populate the Variables tab by re-running the *original* script in
       // a fresh process.  Fire-and-forget so a failure here never prevents
@@ -439,6 +442,15 @@ function AppInner() {
         .catch(() => {});
     } catch (err) {
       console.error("runScript failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      dispatch({
+        type: "ADD_OUTPUT",
+        line: {
+          stream: "stderr",
+          text: `Run failed: ${message}`,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+        },
+      });
       runGuardRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
     }

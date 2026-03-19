@@ -43,16 +43,24 @@ pub async fn execute_script(
     script: String,
     working_dir: String,
     exec_policy: String,
+    script_args: Option<Vec<String>>,
 ) -> Result<i32, AppError> {
     info!("execute_script called with ps_path={}", ps_path);
 
     let win = window.clone();
     let exit_code = pm()
-        .execute(&ps_path, &script, &working_dir, &exec_policy, move |line: OutputLine| {
-            if let Err(e) = win.emit("ps-output", &line) {
-                error!("Failed to emit ps-output event: {}", e);
-            }
-        })
+        .execute(
+            &ps_path,
+            &script,
+            &working_dir,
+            &exec_policy,
+            script_args.as_deref().unwrap_or(&[]),
+            move |line: OutputLine| {
+                if let Err(e) = win.emit("ps-output", &line) {
+                    error!("Failed to emit ps-output event: {}", e);
+                }
+            },
+        )
         .await?;
 
     // Emit completion event
@@ -77,7 +85,7 @@ pub async fn execute_selection(
     exec_policy: String,
 ) -> Result<i32, AppError> {
     info!("execute_selection called");
-    execute_script(window, ps_path, selection, working_dir, exec_policy).await
+    execute_script(window, ps_path, selection, working_dir, exec_policy, None).await
 }
 
 /// Stops the currently running PowerShell process.
@@ -871,9 +879,7 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
         // and Windows can resolve our ProgID even when UserChoice is absent.
         let open_with_path = format!(r"Software\Classes\{}\OpenWithProgids", extension);
         let (open_with_key, _) = hkcu.create_subkey(&open_with_path).map_err(reg_err)?;
-        open_with_key
-            .set_value(&prog_id, &"")
-            .map_err(reg_err)?;
+        open_with_key.set_value(&prog_id, &"").map_err(reg_err)?;
 
         // Windows Explorer uses HKCU\Software\Microsoft\Windows\CurrentVersion\
         // Explorer\FileExts\<ext>\UserChoice before it ever looks at

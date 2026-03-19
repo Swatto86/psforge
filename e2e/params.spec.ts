@@ -194,6 +194,42 @@ describe('Mandatory Parameter Prompt', () => {
     await waitForIdle();
   });
 
+  it('executes a script with begin/process/end blocks after mandatory param prompt', async () => {
+    // Regression guard: this script shape failed when runs were wrapped in a
+    // dynamically-created ScriptBlock and invoked with named args.
+    await setEditorContent([
+      'param([Parameter(Mandatory)][string]$Identity)',
+      'begin { $items = [System.Collections.Generic.List[string]]::new() }',
+      'process { $items.Add($Identity) }',
+      'end { Write-Host ("BPE:" + $items[0]) }',
+    ].join('\n'));
+
+    await clickRun();
+
+    const dialogShown = await waitForDialog();
+    expect(dialogShown).toBe(true);
+
+    const field = await $('[data-testid="param-input-Identity"]');
+    await field.click();
+    await field.setValue('ADUpdateTest');
+
+    const runBtn = await $('[data-testid="param-prompt-run"]');
+    await runBtn.click();
+
+    const dismissed = await waitForDialogGone();
+    expect(dismissed).toBe(true);
+
+    const hasOutput = await waitForOutput('BPE:ADUpdateTest');
+    expect(hasOutput).toBe(true);
+
+    // If execution regresses to wrapper-based invocation, PowerShell emits
+    // parse/runtime errors like "The term 'begin' is not recognized...".
+    const output = await getOutputText();
+    expect(output.includes("The term 'begin' is not recognized")).toBe(false);
+
+    await waitForIdle();
+  });
+
   it('cancel button aborts the run (script does NOT execute)', async () => {
     // Unique sentinel so we can confirm it does NOT appear if cancelled.
     const sentinel = `SHOULD_NOT_APPEAR_${Date.now()}`;
@@ -220,13 +256,11 @@ describe('Mandatory Parameter Prompt', () => {
   });
 
   it('handles multiple mandatory params of different types', async () => {
-    await setEditorContent([
-      'param(',
-      '    [Parameter(Mandatory)][string]$FirstName,',
-      '    [Parameter(Mandatory)][int]$Age',
-      ')',
-      'Write-Host "$FirstName is $Age years old"',
-    ].join('\n'));
+    // Keep the param() declaration on one line to reduce Monaco typing-flake
+    // risk in E2E (multi-line balanced-paren edits are occasionally lossy).
+    await setEditorContent(
+      'param([Parameter(Mandatory)][string]$FirstName, [Parameter(Mandatory)][int]$Age)\nWrite-Host "$FirstName is $Age years old"',
+    );
 
     await clickRun();
 
@@ -288,8 +322,10 @@ describe('Mandatory Parameter Prompt', () => {
 
   it('shows a checkbox for a boolean mandatory param and injects $true correctly', async () => {
     await setEditorContent([
-      'param([Parameter(Mandatory)][bool]$Verbose)',
-      'if ($Verbose) { Write-Host "verbose-on" } else { Write-Host "verbose-off" }',
+      // Avoid $Verbose name collision with PowerShell's built-in common
+      // parameter metadata; we want a user script bool parameter here.
+      'param([Parameter(Mandatory)][bool]$IsVerbose)',
+      'if ($IsVerbose) { Write-Host "verbose-on" } else { Write-Host "verbose-off" }',
     ].join('\n'));
 
     await clickRun();
@@ -298,7 +334,7 @@ describe('Mandatory Parameter Prompt', () => {
     expect(dialogShown).toBe(true);
 
     // Should be a checkbox, defaulting to unchecked ($false).
-    const checkbox = await $('[data-testid="param-input-Verbose"]');
+    const checkbox = await $('[data-testid="param-input-IsVerbose"]');
     expect(await checkbox.getAttribute('type')).toBe('checkbox');
     // Check the box to choose $true.
     await checkbox.click();
