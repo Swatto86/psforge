@@ -290,7 +290,7 @@ try {
         Write-Host "   6. Update README release examples"
         Write-Host "   7. npm install  (refresh package-lock.json)"
         Write-Host "   8. npm run build  (TypeScript + Vite compile check)"
-        Write-Host "   9. npx prettier --check ."
+        Write-Host "   9. npx prettier --check --ignore-unknown <release files>"
         Write-Host "  10. npx tsc --noEmit"
         Write-Host "  11. cargo fmt -- --check"
         Write-Host "  12. cargo clippy -- -D warnings"
@@ -391,7 +391,7 @@ try {
     & git diff -- package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json src/components/AboutDialog.tsx README.md package-lock.json
     Write-Host ""
 
-    $answer = Read-Host "Proceed with release? (y/N)"
+    $answer = (Read-Host "Proceed with release? (y/N)").Trim()
     if ($answer -notin @('y', 'Y', 'yes', 'YES')) {
         Write-WarnLine "Release cancelled."
         exit 0
@@ -410,8 +410,15 @@ try {
     # -----------------------------------------------------------------------
     Write-Info "Step 3/7 -- Quality gates ..."
 
-    Write-Info "  [1/5] Prettier format check ..."
-    & npx prettier --check .
+    Write-Info "  [1/5] Prettier format check (release-managed files) ..."
+    $prettierTargets = @(
+        'package.json',
+        'package-lock.json',
+        'README.md',
+        'src/components/AboutDialog.tsx',
+        'src-tauri/tauri.conf.json'
+    )
+    & npx prettier --check --ignore-unknown @prettierTargets
     if ($LASTEXITCODE -ne 0) {
         throw "Prettier check failed. Run: npx prettier --write ."
     }
