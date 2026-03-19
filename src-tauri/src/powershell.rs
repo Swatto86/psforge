@@ -1,20 +1,54 @@
 /// PowerShell discovery and process management.
 /// Handles detecting installed PowerShell versions and managing script execution.
 use crate::errors::AppError;
+use crate::utils::write_secure_temp_file;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 /// Maximum number of output lines to buffer per process (memory bound).
 const MAX_OUTPUT_LINES: usize = 100_000;
+
+/// Allowed executable names for backend PowerShell invocation.
+const ALLOWED_PS_EXECUTABLES: &[&str] = &["pwsh", "pwsh.exe", "powershell", "powershell.exe"];
+
+/// Validates that `ps_path` points to an allowed PowerShell executable name.
+/// This prevents arbitrary process launch if a renderer-invoked command is tampered with.
+pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
+    let trimmed = ps_path.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return Err(AppError {
+            code: "INVALID_PS_PATH".to_string(),
+            message: "PowerShell path cannot be empty".to_string(),
+        });
+    }
+
+    let file_name = Path::new(trimmed)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(trimmed)
+        .to_ascii_lowercase();
+
+    if ALLOWED_PS_EXECUTABLES.iter().any(|p| *p == file_name) {
+        Ok(())
+    } else {
+        Err(AppError {
+            code: "INVALID_PS_PATH".to_string(),
+            message: format!(
+                "Invalid PowerShell executable '{}'. Allowed names: {}",
+                trimmed,
+                ALLOWED_PS_EXECUTABLES.join(", ")
+            ),
+        })
+    }
+}
 
 /// Represents a discovered PowerShell installation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,23 +179,24 @@ impl ProcessManager {
     where
         F: Fn(OutputLine) + Send + Sync + 'static,
     {
+        validate_ps_path(ps_path)?;
+
         // Stop any existing process first
         self.stop().await?;
 
         info!("Executing script with {} in {}", ps_path, working_dir);
-        debug!(
-            "Script content (first 200 chars): {}",
-            &script[..script.len().min(200)]
-        );
+        debug!("Script size: {} bytes", script.len());
 
         // Write the script to a uniquely-named temp file and run it with -File.
         // Using -File instead of -Command removes the "inline PowerShell command"
         // pattern that security tools (e.g. MDE) flag as a reverse-shell indicator.
-        let temp_path = std::env::temp_dir().join(format!("psforge_{}.ps1", Uuid::new_v4()));
-        std::fs::write(&temp_path, script.as_bytes()).map_err(|e| AppError {
-            code: "SCRIPT_WRITE_FAILED".to_string(),
-            message: format!("Failed to write script to temp file: {}", e),
-        })?;
+        let temp_path =
+            write_secure_temp_file("psforge_exec", ".ps1", script.as_bytes()).map_err(|e| {
+                AppError {
+                    code: "SCRIPT_WRITE_FAILED".to_string(),
+                    message: format!("Failed to write script to temp file: {}", e),
+                }
+            })?;
         let temp_path_str = temp_path.to_string_lossy().into_owned();
 
         // Build args: only inject -ExecutionPolicy when the user has configured one.
