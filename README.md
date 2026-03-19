@@ -40,14 +40,14 @@ PSForge does **not** require the .NET SDK, Node.js, or any other runtime at depl
 
 ### From GitHub Releases (recommended)
 
-1. Download the latest `PSForge_x.y.z_x64-setup.exe` from the [Releases page](../../releases).
+1. Download the latest `PSForge_1.0.0_x64-setup.exe` from the [Releases page](../../releases).
 2. Run the installer -- no administrator rights required for per-user install.
 3. Launch **PSForge** from the Start Menu or by double-clicking any `.ps1` file (after registering associations in Settings).
 
 ### From the MSI (enterprise / silent install)
 
 ```powershell
-msiexec /i PSForge_x.y.z_x64.msi /quiet
+msiexec /i PSForge_1.0.0_x64_en-US.msi /quiet
 ```
 
 ---
@@ -177,11 +177,11 @@ Output is written to **stderr** / the Windows Debug Console. It is also visible 
 The release pipeline is automated by `update-application.ps1` in the repo root. The script bumps version numbers, runs quality gates (build, format, lint, test), creates a signed git tag, and pushes to origin. GitHub Actions then builds the installer and attaches it to the release.
 
 ```powershell
-# Release version 1.2.3
-.\update-application.ps1 -Version 1.2.3
+# Release version 1.0.0
+.\update-application.ps1 -Version 1.0.0
 
 # Preview what would happen (no changes made)
-.\update-application.ps1 -Version 1.2.3 -DryRun
+.\update-application.ps1 -Version 1.0.0 -DryRun
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full release and contribution guidelines.

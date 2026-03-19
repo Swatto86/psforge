@@ -3,8 +3,8 @@
     Automated release script for PSForge.
 
 .DESCRIPTION
-    Validates the version increment, updates all 3 manifest version fields
-    (package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json),
+    Validates the version increment, updates all version-bearing project files
+    (manifests, lockfiles, UI fallback, and README release examples),
     runs quality gates, commits, tags, pushes, and prunes older releases.
 
 .PARAMETER Version
@@ -114,15 +114,15 @@ function Compare-SemVer {
     return 0
 }
 
-# Updates the version string in a manifest file.
-# $Pattern must be a .NET regex with exactly 2 capture groups: prefix and suffix.
-# The replacement preserves the prefix and suffix around the new version number.
+# Updates the first regex match in a text file while preserving the file's
+# original line-ending style and UTF-8-without-BOM encoding.
 function Update-ManifestVersion {
     param(
         [string]$FilePath,
         [string]$NewVersion,
         [string]$Pattern,
-        [string]$Template  # e.g. '"version": "NEWVER"' -- literal replacement without groups
+        [string]$Template,  # e.g. '"version": "NEWVER"' -- literal replacement without groups
+        [switch]$AllowNoChange
     )
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     $raw = [System.IO.File]::ReadAllText($FilePath)
@@ -136,6 +136,9 @@ function Update-ManifestVersion {
     $updated = [regex]::Replace($raw, $Pattern, $Template, 1)
 
     if ($updated -eq $raw) {
+        if ($AllowNoChange) {
+            return $false
+        }
         throw "Version unchanged after replacement in: $FilePath"
     }
 
@@ -146,6 +149,7 @@ function Update-ManifestVersion {
     }
 
     [System.IO.File]::WriteAllText($FilePath, $updated, $utf8NoBom)
+    return $true
 }
 
 # ---------------------------------------------------------------------------
@@ -162,15 +166,24 @@ Write-Host ""
 
 # Paths
 $pkgJsonPath   = Join-Path $root 'package.json'
-$cargoTomlPath = Join-Path $root 'src-tauri' 'Cargo.toml'
-$tauriConfPath = Join-Path $root 'src-tauri' 'tauri.conf.json'
+$srcTauriDir = Join-Path $root 'src-tauri'
+$srcDir = Join-Path $root 'src'
+$componentsDir = Join-Path $srcDir 'components'
+$cargoTomlPath = Join-Path $srcTauriDir 'Cargo.toml'
+$cargoLockPath = Join-Path $srcTauriDir 'Cargo.lock'
+$tauriConfPath = Join-Path $srcTauriDir 'tauri.conf.json'
 $pkgLockPath   = Join-Path $root 'package-lock.json'
+$aboutDialogPath = Join-Path $componentsDir 'AboutDialog.tsx'
+$readmePath = Join-Path $root 'README.md'
 
 # Snapshot placeholders for rollback (populated in try block before any writes)
 $origPkgJson   = $null
 $origCargoToml = $null
+$origCargoLock = $null
 $origTauriConf = $null
 $origPkgLock   = $null
+$origAboutDialog = $null
+$origReadme = $null
 $currentVersion = $null
 
 try {
@@ -190,8 +203,11 @@ try {
 
     if (-not $Force) {
         $cmp = Compare-SemVer -A $Version -B $currentVersion
-        if ($cmp -le 0) {
-            throw "New version $Version must be greater than $currentVersion. Use -Force to override."
+        if ($cmp -lt 0) {
+            throw "New version $Version must be greater than or equal to $currentVersion. Use -Force to override."
+        }
+        if ($cmp -eq 0) {
+            Write-WarnLine "Requested version matches current version ($currentVersion); proceeding without forced increment."
         }
     }
 
@@ -244,7 +260,10 @@ try {
     # -----------------------------------------------------------------------
     $origPkgJson   = [System.IO.File]::ReadAllText($pkgJsonPath)
     $origCargoToml = [System.IO.File]::ReadAllText($cargoTomlPath)
+    $origCargoLock = [System.IO.File]::ReadAllText($cargoLockPath)
     $origTauriConf = [System.IO.File]::ReadAllText($tauriConfPath)
+    $origAboutDialog = [System.IO.File]::ReadAllText($aboutDialogPath)
+    $origReadme = [System.IO.File]::ReadAllText($readmePath)
     if (Test-Path $pkgLockPath) {
         $origPkgLock = [System.IO.File]::ReadAllText($pkgLockPath)
     }
@@ -265,19 +284,22 @@ try {
         Write-Host "Planned actions:" -ForegroundColor Yellow
         Write-Host "   1. Update version in package.json"
         Write-Host "   2. Update version in src-tauri/Cargo.toml"
-        Write-Host "   3. Update version in src-tauri/tauri.conf.json"
-        Write-Host "   4. npm install  (refresh package-lock.json)"
-        Write-Host "   5. npm run build  (TypeScript + Vite compile check)"
-        Write-Host "   6. npx prettier --check ."
-        Write-Host "   7. npx tsc --noEmit"
-        Write-Host "   8. cargo fmt -- --check"
-        Write-Host "   9. cargo clippy -- -D warnings"
-        Write-Host "  10. cargo test"
-        Write-Host "  11. npx tauri build"
-        Write-Host "  12. git commit -m `"chore: bump version to $Version`""
-        Write-Host "  13. git tag -a $tagName"
-        Write-Host "  14. git push + git push --tags"
-        Write-Host "  15. Prune older v*.*.* tags and their GitHub Releases"
+        Write-Host "   3. Update version in src-tauri/Cargo.lock (root package)"
+        Write-Host "   4. Update version in src-tauri/tauri.conf.json"
+        Write-Host "   5. Update About dialog fallback version in src/components/AboutDialog.tsx"
+        Write-Host "   6. Update README release examples"
+        Write-Host "   7. npm install  (refresh package-lock.json)"
+        Write-Host "   8. npm run build  (TypeScript + Vite compile check)"
+        Write-Host "   9. npx prettier --check ."
+        Write-Host "  10. npx tsc --noEmit"
+        Write-Host "  11. cargo fmt -- --check"
+        Write-Host "  12. cargo clippy -- -D warnings"
+        Write-Host "  13. cargo test"
+        Write-Host "  14. npx tauri build"
+        Write-Host "  15. git commit -m `"chore: bump version to $Version`""
+        Write-Host "  16. git tag -a $tagName"
+        Write-Host "  17. git push + git push --tags"
+        Write-Host "  18. Prune older v*.*.* tags and their GitHub Releases"
         Write-Host ""
         exit 0
     }
@@ -288,22 +310,66 @@ try {
     Write-Info "Step 1/7 -- Updating version strings to $Version ..."
 
     # package.json: "version": "x.y.z"
-    Update-ManifestVersion -FilePath $pkgJsonPath -NewVersion $Version `
+    $pkgJsonUpdated = Update-ManifestVersion -FilePath $pkgJsonPath -NewVersion $Version `
         -Pattern '"version"\s*:\s*"\d+\.\d+\.\d+"' `
-        -Template "`"version`": `"$Version`""
-    Write-Success "Updated package.json"
+        -Template "`"version`": `"$Version`"" `
+        -AllowNoChange
+    if ($pkgJsonUpdated) { Write-Success "Updated package.json" } else { Write-Info "package.json already at $Version" }
 
     # src-tauri/Cargo.toml: version = "x.y.z"  (first occurrences only -- avoids dependency entries)
-    Update-ManifestVersion -FilePath $cargoTomlPath -NewVersion $Version `
+    $cargoTomlUpdated = Update-ManifestVersion -FilePath $cargoTomlPath -NewVersion $Version `
         -Pattern 'version\s*=\s*"\d+\.\d+\.\d+"' `
-        -Template "version = `"$Version`""
-    Write-Success "Updated src-tauri/Cargo.toml"
+        -Template "version = `"$Version`"" `
+        -AllowNoChange
+    if ($cargoTomlUpdated) { Write-Success "Updated src-tauri/Cargo.toml" } else { Write-Info "src-tauri/Cargo.toml already at $Version" }
+
+    # src-tauri/Cargo.lock: [[package]] name = "psforge" -> version = "x.y.z"
+    $cargoLockUpdated = Update-ManifestVersion -FilePath $cargoLockPath -NewVersion $Version `
+        -Pattern '(?ms)(\[\[package\]\]\s*name\s*=\s*"psforge"\s*version\s*=\s*")\d+\.\d+\.\d+(")' `
+        -Template ('${1}' + $Version + '${2}') `
+        -AllowNoChange
+    if ($cargoLockUpdated) { Write-Success "Updated src-tauri/Cargo.lock" } else { Write-Info "src-tauri/Cargo.lock already at $Version" }
 
     # src-tauri/tauri.conf.json: "version": "x.y.z"
-    Update-ManifestVersion -FilePath $tauriConfPath -NewVersion $Version `
+    $tauriConfUpdated = Update-ManifestVersion -FilePath $tauriConfPath -NewVersion $Version `
         -Pattern '"version"\s*:\s*"\d+\.\d+\.\d+"' `
-        -Template "`"version`": `"$Version`""
-    Write-Success "Updated src-tauri/tauri.conf.json"
+        -Template "`"version`": `"$Version`"" `
+        -AllowNoChange
+    if ($tauriConfUpdated) { Write-Success "Updated src-tauri/tauri.conf.json" } else { Write-Info "src-tauri/tauri.conf.json already at $Version" }
+
+    # About dialog fallback version (used only if Tauri version lookup fails).
+    $aboutDialogUpdated = Update-ManifestVersion -FilePath $aboutDialogPath -NewVersion $Version `
+        -Pattern 'setVersion\("\d+\.\d+\.\d+"\)' `
+        -Template "setVersion(`"$Version`")" `
+        -AllowNoChange
+    if ($aboutDialogUpdated) { Write-Success "Updated About dialog fallback version" } else { Write-Info "About dialog fallback already at $Version" }
+
+    # README release examples.
+    $readmeSetupUpdated = Update-ManifestVersion -FilePath $readmePath -NewVersion $Version `
+        -Pattern 'PSForge_\d+\.\d+\.\d+_x64-setup\.exe' `
+        -Template "PSForge_${Version}_x64-setup.exe" `
+        -AllowNoChange
+    $readmeMsiUpdated = Update-ManifestVersion -FilePath $readmePath -NewVersion $Version `
+        -Pattern 'PSForge_\d+\.\d+\.\d+_x64_en-US\.msi' `
+        -Template "PSForge_${Version}_x64_en-US.msi" `
+        -AllowNoChange
+    $readmeReleaseUpdated = Update-ManifestVersion -FilePath $readmePath -NewVersion $Version `
+        -Pattern 'Release version \d+\.\d+\.\d+' `
+        -Template "Release version $Version" `
+        -AllowNoChange
+    $readmeCommandUpdated = Update-ManifestVersion -FilePath $readmePath -NewVersion $Version `
+        -Pattern '(?m)^\.\\update-application\.ps1 -Version \d+\.\d+\.\d+$' `
+        -Template ".\update-application.ps1 -Version $Version" `
+        -AllowNoChange
+    $readmeDryRunUpdated = Update-ManifestVersion -FilePath $readmePath -NewVersion $Version `
+        -Pattern '(?m)^\.\\update-application\.ps1 -Version \d+\.\d+\.\d+ -DryRun$' `
+        -Template ".\update-application.ps1 -Version $Version -DryRun" `
+        -AllowNoChange
+    if ($readmeSetupUpdated -or $readmeMsiUpdated -or $readmeReleaseUpdated -or $readmeCommandUpdated -or $readmeDryRunUpdated) {
+        Write-Success "Updated README release examples"
+    } else {
+        Write-Info "README release examples already at $Version"
+    }
 
     # Refresh package-lock.json
     Write-Info "Running npm install to refresh package-lock.json ..."
@@ -322,7 +388,7 @@ try {
     Write-Host "  Notes   : $($Notes -replace "`n", ' | ')"
     Write-Host ""
     Write-Info "Changed files diff:"
-    & git diff -- package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
+    & git diff -- package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json src/components/AboutDialog.tsx README.md package-lock.json
     Write-Host ""
 
     $answer = Read-Host "Proceed with release? (y/N)"
@@ -392,9 +458,15 @@ try {
     # Step 5 -- Commit version bump
     # -----------------------------------------------------------------------
     Write-Info "Step 5/7 -- Committing version bump ..."
-    Invoke-Git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json package-lock.json
-    Invoke-Git commit -m "chore: bump version to $Version"
-    Write-Success "Committed version bump"
+    Invoke-Git add package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json src/components/AboutDialog.tsx README.md package-lock.json
+    $staged = (& git diff --cached --name-only 2>&1) | Where-Object { $_ -and -not $_.StartsWith("warning:") }
+    if ($staged) {
+        Invoke-Git commit -m "chore: bump version to $Version"
+        Write-Success "Committed version bump"
+    }
+    else {
+        Write-WarnLine "No version file changes to commit; continuing with existing HEAD."
+    }
 
     # -----------------------------------------------------------------------
     # Step 6 -- Tag and push
@@ -447,7 +519,10 @@ catch {
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     if ($null -ne $origPkgJson)   { try { [System.IO.File]::WriteAllText($pkgJsonPath,   $origPkgJson,   $utf8NoBom) } catch {} }
     if ($null -ne $origCargoToml) { try { [System.IO.File]::WriteAllText($cargoTomlPath, $origCargoToml, $utf8NoBom) } catch {} }
+    if ($null -ne $origCargoLock) { try { [System.IO.File]::WriteAllText($cargoLockPath, $origCargoLock, $utf8NoBom) } catch {} }
     if ($null -ne $origTauriConf) { try { [System.IO.File]::WriteAllText($tauriConfPath, $origTauriConf, $utf8NoBom) } catch {} }
+    if ($null -ne $origAboutDialog) { try { [System.IO.File]::WriteAllText($aboutDialogPath, $origAboutDialog, $utf8NoBom) } catch {} }
+    if ($null -ne $origReadme) { try { [System.IO.File]::WriteAllText($readmePath, $origReadme, $utf8NoBom) } catch {} }
     if ($null -ne $origPkgLock)   { try { [System.IO.File]::WriteAllText($pkgLockPath,   $origPkgLock,   $utf8NoBom) } catch {} }
 
     if ($null -ne $currentVersion) {
