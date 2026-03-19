@@ -1,6 +1,6 @@
 [package]
 name = "psforge"
-version = "0.1.0"
+version = "1.0.0"
 description = "PSForge - Modern PowerShell Editor"
 authors = ["PSForge Contributors"]
 edition = "2021"
@@ -31,4 +31,3 @@ encoding_rs = "0.8"
 # tempfile provides OS-managed temporary directories for integration tests.
 # Tests write to temp dirs so they never corrupt the real user AppData/PSForge directory.
 tempfile = "3"
-

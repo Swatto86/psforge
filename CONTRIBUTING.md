@@ -185,9 +185,9 @@ Releases are managed by `update-application.ps1`. Do **not** manually edit versi
 ```
 
 The script:
-1. Validates the version is newer than the current one
+1. Validates semantic version format and ordering (newer or same; warns on same)
 2. Collects release notes interactively
-3. Updates `Cargo.toml`, `package.json`, and `Cargo.lock`
+3. Updates version-bearing files (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `src/components/AboutDialog.tsx`, and README release examples)
 4. Shows a `git diff` and asks for confirmation
 5. Builds the release binary
 6. Runs `cargo fmt --check`, `cargo clippy`, `cargo test`
