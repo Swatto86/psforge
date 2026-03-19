@@ -67,6 +67,46 @@ async fn register_and_unregister_single_extension_roundtrip() {
     });
 }
 
+/// Verifies that the registered ProgID uses the dedicated file-association icon
+/// rather than the main executable icon resource.
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn register_sets_distinct_file_association_icon() {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let ext = ".psforge_icon_test".to_string();
+
+    bounded!(async {
+        commands::register_file_association(ext.clone())
+            .await
+            .expect("register_file_association must succeed for icon test extension");
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let prog_id = format!("PSForge{}", ext.replace('.', "_"));
+        let icon_key_path = format!(r"Software\Classes\{}\DefaultIcon", prog_id);
+        let icon_key = hkcu
+            .open_subkey(&icon_key_path)
+            .expect("DefaultIcon key must exist after registration");
+
+        let icon_value: String = icon_key
+            .get_value("")
+            .expect("DefaultIcon default value must exist");
+
+        assert!(
+            icon_value
+                .to_ascii_lowercase()
+                .contains("psforge-file-association.ico"),
+            "DefaultIcon should reference psforge-file-association.ico, got '{}'",
+            icon_value
+        );
+
+        commands::unregister_file_association(ext)
+            .await
+            .expect("cleanup unregister must succeed");
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Batch register / unregister (Rule 11 error accumulation)
 // ---------------------------------------------------------------------------
