@@ -23,12 +23,14 @@ export async function executeScript(
   script: string,
   workingDir: string,
   execPolicy: string,
+  scriptArgs: string[] = [],
 ): Promise<number> {
   return invoke<number>("execute_script", {
     psPath,
     script,
     workingDir,
     execPolicy,
+    scriptArgs,
   });
 }
 

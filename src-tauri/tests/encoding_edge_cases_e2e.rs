@@ -53,7 +53,7 @@ async fn read_bom_only_utf8_file_returns_empty_content() {
     bounded!(async {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("bom_only.ps1");
-        std::fs::write(&path, &[0xEF, 0xBB, 0xBF]).expect("write BOM-only file");
+        std::fs::write(&path, [0xEF, 0xBB, 0xBF]).expect("write BOM-only file");
 
         let result = commands::read_file_content(path.to_string_lossy().to_string())
             .await
@@ -69,7 +69,7 @@ async fn read_bom_only_utf16le_file_returns_empty_content() {
     bounded!(async {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("bom_only_utf16.ps1");
-        std::fs::write(&path, &[0xFF, 0xFE]).expect("write UTF-16 LE BOM-only file");
+        std::fs::write(&path, [0xFF, 0xFE]).expect("write UTF-16 LE BOM-only file");
 
         let result = commands::read_file_content(path.to_string_lossy().to_string())
             .await

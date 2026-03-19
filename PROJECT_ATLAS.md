@@ -122,7 +122,7 @@ PSForge/
 
 | Command | Module | Description |
 |---------|--------|-------------|
-| `execute_script` | commands | Run a PS script file, stream output events |
+| `execute_script` | commands | Run a PS script file, stream output events; optional script args are passed natively after `-File` for PowerShell parameter binding |
 | `execute_selection` | commands | Run selected text as PS code |
 | `stop_script` | commands | Kill the running PS process |
 | `send_stdin` | commands | Write to running process stdin |

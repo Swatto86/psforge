@@ -296,48 +296,6 @@ pub fn snippets_path() -> Result<PathBuf, AppError> {
     Ok(settings_dir()?.join("snippets.json"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn add_recent_file_prepends_and_deduplicates() {
-        let mut settings = AppSettings::default();
-        settings.add_recent_file("a.ps1");
-        settings.add_recent_file("b.ps1");
-        // Re-adding "a.ps1" should move it to the front, not duplicate it.
-        settings.add_recent_file("a.ps1");
-        assert_eq!(settings.recent_files.len(), 2, "Expected 2 unique entries");
-        assert_eq!(settings.recent_files[0], "a.ps1");
-        assert_eq!(settings.recent_files[1], "b.ps1");
-    }
-
-    #[test]
-    fn add_recent_file_enforces_max_size() {
-        let mut settings = AppSettings::default();
-        for i in 0..25 {
-            settings.add_recent_file(&format!("file{}.ps1", i));
-        }
-        assert_eq!(
-            settings.recent_files.len(),
-            MAX_RECENT_FILES,
-            "list must be capped at MAX_RECENT_FILES"
-        );
-        // Most recently added file must be at front.
-        assert_eq!(settings.recent_files[0], "file24.ps1");
-    }
-
-    #[test]
-    fn default_settings_are_sane() {
-        let s = AppSettings::default();
-        assert!(!s.default_ps_version.is_empty());
-        assert!(!s.theme.is_empty());
-        assert!(s.font_size >= 8);
-        assert!(!s.font_family.is_empty());
-        assert!(s.split_position > 0.0 && s.split_position < 100.0);
-    }
-}
-
 /// Loads settings from disk, returning defaults if the file does not exist.
 pub fn load() -> Result<AppSettings, AppError> {
     let path = settings_path()?;
@@ -395,4 +353,46 @@ pub fn save_to(path: &std::path::PathBuf, settings: &AppSettings) -> Result<(), 
     })?;
     debug!("Settings saved to {:?}", path);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_recent_file_prepends_and_deduplicates() {
+        let mut settings = AppSettings::default();
+        settings.add_recent_file("a.ps1");
+        settings.add_recent_file("b.ps1");
+        // Re-adding "a.ps1" should move it to the front, not duplicate it.
+        settings.add_recent_file("a.ps1");
+        assert_eq!(settings.recent_files.len(), 2, "Expected 2 unique entries");
+        assert_eq!(settings.recent_files[0], "a.ps1");
+        assert_eq!(settings.recent_files[1], "b.ps1");
+    }
+
+    #[test]
+    fn add_recent_file_enforces_max_size() {
+        let mut settings = AppSettings::default();
+        for i in 0..25 {
+            settings.add_recent_file(&format!("file{}.ps1", i));
+        }
+        assert_eq!(
+            settings.recent_files.len(),
+            MAX_RECENT_FILES,
+            "list must be capped at MAX_RECENT_FILES"
+        );
+        // Most recently added file must be at front.
+        assert_eq!(settings.recent_files[0], "file24.ps1");
+    }
+
+    #[test]
+    fn default_settings_are_sane() {
+        let s = AppSettings::default();
+        assert!(!s.default_ps_version.is_empty());
+        assert!(!s.theme.is_empty());
+        assert!(s.font_size >= 8);
+        assert!(!s.font_family.is_empty());
+        assert!(s.split_position > 0.0 && s.split_position < 100.0);
+    }
 }

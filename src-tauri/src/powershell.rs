@@ -139,6 +139,7 @@ impl ProcessManager {
         script: &str,
         working_dir: &str,
         exec_policy: &str,
+        script_args: &[String],
         on_output: F,
     ) -> Result<i32, AppError>
     where
@@ -156,8 +157,7 @@ impl ProcessManager {
         // Write the script to a uniquely-named temp file and run it with -File.
         // Using -File instead of -Command removes the "inline PowerShell command"
         // pattern that security tools (e.g. MDE) flag as a reverse-shell indicator.
-        let temp_path = std::env::temp_dir()
-            .join(format!("psforge_{}.ps1", Uuid::new_v4()));
+        let temp_path = std::env::temp_dir().join(format!("psforge_{}.ps1", Uuid::new_v4()));
         std::fs::write(&temp_path, script.as_bytes()).map_err(|e| AppError {
             code: "SCRIPT_WRITE_FAILED".to_string(),
             message: format!("Failed to write script to temp file: {}", e),
@@ -167,16 +167,18 @@ impl ProcessManager {
         // Build args: only inject -ExecutionPolicy when the user has configured one.
         // "Default" means "honour the machine/user policy" so we omit the flag
         // entirely, avoiding -Bypass in process trees that trigger AV heuristics.
-        let mut ps_args: Vec<&str> = vec!["-NoProfile", "-NonInteractive"];
+        let mut ps_args: Vec<String> =
+            vec!["-NoProfile".to_string(), "-NonInteractive".to_string()];
         if exec_policy != "Default" {
-            ps_args.push("-ExecutionPolicy");
-            ps_args.push(exec_policy);
+            ps_args.push("-ExecutionPolicy".to_string());
+            ps_args.push(exec_policy.to_string());
         }
-        ps_args.push("-File");
-        ps_args.push(&temp_path_str);
+        ps_args.push("-File".to_string());
+        ps_args.push(temp_path_str.clone());
+        ps_args.extend(script_args.iter().cloned());
 
         let mut child = Command::new(ps_path)
-            .args(&ps_args)
+            .args(ps_args)
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
