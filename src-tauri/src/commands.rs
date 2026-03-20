@@ -4,7 +4,7 @@ use crate::errors::{AppError, BatchResult};
 use crate::powershell::{self, OutputLine, ProcessManager};
 use crate::settings::{self, AppSettings};
 use crate::utils::{with_retry, write_secure_temp_file};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tauri::{Emitter, Window};
@@ -633,15 +633,32 @@ fn find_last_json(s: &str) -> Option<&str> {
     None
 }
 
-/// Scans `bytes` backwards for the last balanced `open`/`close` pair.
+/// Scans `bytes` backwards for the last balanced `open`/`close` pair,
+/// skipping brackets that appear inside JSON string literals.
 /// Returns `(start, end)` byte offsets (inclusive) of the outermost
 /// bracket pair, or `None` if no balanced pair is found.
 fn find_balanced_span(bytes: &[u8], open: u8, close: u8) -> Option<(usize, usize)> {
     let mut depth: i32 = 0;
     let mut end_pos: Option<usize> = None;
+    let mut in_string = false;
     let mut i = bytes.len();
     while i > 0 {
         i -= 1;
+        if bytes[i] == b'"' {
+            // Count consecutive backslashes before this quote to decide
+            // whether it is escaped.  Odd count → escaped, even → real.
+            let mut bs = 0usize;
+            while i >= 1 + bs && bytes[i - 1 - bs] == b'\\' {
+                bs += 1;
+            }
+            if bs % 2 == 0 {
+                in_string = !in_string;
+            }
+            continue;
+        }
+        if in_string {
+            continue;
+        }
         if bytes[i] == close {
             if depth == 0 {
                 end_pos = Some(i);
@@ -772,7 +789,14 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String) {
         )
     } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
         // UTF-16 LE
-        let u16_iter = bytes[2..]
+        let payload = &bytes[2..];
+        if payload.len() % 2 != 0 {
+            warn!(
+                "UTF-16 LE file has odd byte count ({}); trailing byte dropped",
+                bytes.len()
+            );
+        }
+        let u16_iter = payload
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]));
         let decoded: String = char::decode_utf16(u16_iter)
@@ -781,7 +805,14 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String) {
         (decoded, "utf16le".to_string())
     } else if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         // UTF-16 BE
-        let u16_iter = bytes[2..]
+        let payload = &bytes[2..];
+        if payload.len() % 2 != 0 {
+            warn!(
+                "UTF-16 BE file has odd byte count ({}); trailing byte dropped",
+                bytes.len()
+            );
+        }
+        let u16_iter = payload
             .chunks_exact(2)
             .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]));
         let decoded: String = char::decode_utf16(u16_iter)
@@ -2242,6 +2273,21 @@ mod tests {
             find_last_json(s).unwrap(),
             "[{\"Name\":\"x\",\"Value\":\"[System.String]\"}]"
         );
+    }
+
+    #[test]
+    fn find_last_json_handles_unbalanced_brackets_in_strings() {
+        // An unbalanced bracket inside a JSON string value must not throw
+        // off the bracket depth counter.
+        let s = r#"[{"Name":"x","Value":"has]bracket"}]"#;
+        assert_eq!(find_last_json(s).unwrap(), s);
+    }
+
+    #[test]
+    fn find_last_json_handles_escaped_quotes_in_strings() {
+        // Escaped quotes inside JSON strings must not toggle string tracking.
+        let s = r#"[{"Name":"x","Value":"has\"escaped\"quotes]"}]"#;
+        assert_eq!(find_last_json(s).unwrap(), s);
     }
 
     #[test]
