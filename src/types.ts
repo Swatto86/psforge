@@ -155,6 +155,8 @@ export interface AppSettings {
   customWorkingDir: string;
 
   // ---- Output ----
+  /** Load PowerShell profiles when starting the integrated terminal. */
+  terminalLoadProfile: boolean;
   showTimestamps: boolean;
   /** Font size for the output/terminal pane (may differ from editor). */
   outputFontSize: number;
@@ -204,6 +206,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   executionPolicy: "Default",
   workingDirMode: "file",
   customWorkingDir: "",
+  terminalLoadProfile: false,
   showTimestamps: false,
   outputFontSize: 13,
   outputFontFamily: "Cascadia Code, Consolas, monospace",

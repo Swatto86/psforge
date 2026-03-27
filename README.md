@@ -11,9 +11,10 @@ PSForge is a native desktop application built with [Tauri v2](https://tauri.app/
 | Feature                 | Description                                                                   |
 | ----------------------- | ----------------------------------------------------------------------------- |
 | **Monaco Editor**       | Syntax highlighting, IntelliSense, find/replace, multi-cursor                 |
-| **Script Execution**    | Run full scripts (F5) or selected text (F8); streamed stdout/stderr           |
+| **Script Execution**    | Run full scripts (F5) or selection/current line (F8); streamed stdout/stderr  |
 | **Integrated Terminal** | xterm.js-based persistent PowerShell session                                  |
 | **Module Browser**      | Sidebar listing installed modules with expandable command lists               |
+| **Outline Navigator**   | Sidebar outline of functions/classes/regions with click-to-jump               |
 | **Variables Inspector** | View all variables after a script run                                         |
 | **Problems Panel**      | Parse and navigate stderr errors with line/column references                  |
 | **Snippet Library**     | 20 built-in PowerShell templates + user-defined snippets via Command Palette  |
@@ -40,14 +41,14 @@ PSForge does **not** require the .NET SDK, Node.js, or any other runtime at depl
 
 ### From GitHub Releases (recommended)
 
-1. Download the latest `PSForge_1.0.0_x64-setup.exe` from the [Releases page](../../releases).
+1. Download the latest `PSForge_1.0.1_x64-setup.exe` from the [Releases page](../../releases).
 2. Run the installer -- no administrator rights required for per-user install.
 3. Launch **PSForge** from the Start Menu or by double-clicking any `.ps1` file (after registering associations in Settings).
 
 ### From the MSI (enterprise / silent install)
 
 ```powershell
-msiexec /i PSForge_1.0.0_x64_en-US.msi /quiet
+msiexec /i PSForge_1.0.1_x64_en-US.msi /quiet
 ```
 
 ---
@@ -59,8 +60,11 @@ msiexec /i PSForge_1.0.0_x64_en-US.msi /quiet
 | New file        | Ctrl+N            |
 | Open file       | Ctrl+O            |
 | Save file       | Ctrl+S            |
+| Save all files  | Ctrl+Shift+S      |
+| Close tab       | Ctrl+W            |
+| Next / Previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Run script      | F5                |
-| Run selection   | F8                |
+| Run selection/current line | F8           |
 | Stop execution  | Ctrl+Break        |
 | Command Palette | Ctrl+Shift+P      |
 | Toggle Sidebar  | Ctrl+B            |
@@ -177,11 +181,11 @@ Output is written to **stderr** / the Windows Debug Console. It is also visible 
 The release pipeline is automated by `update-application.ps1` in the repo root. The script bumps version numbers, runs quality gates (build, format, lint, test), creates a signed git tag, and pushes to origin. GitHub Actions then builds the installer and attaches it to the release.
 
 ```powershell
-# Release version 1.0.0
-.\update-application.ps1 -Version 1.0.0
+# Release version 1.0.1
+.\update-application.ps1 -Version 1.0.1
 
 # Preview what would happen (no changes made)
-.\update-application.ps1 -Version 1.0.0 -DryRun
+.\update-application.ps1 -Version 1.0.1 -DryRun
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full release and contribution guidelines.

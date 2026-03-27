@@ -5,6 +5,7 @@
  *  Window globals set by this component:
  *  - window.__psforge_triggerFindReplace()  -- opens Monaco Find & Replace widget
  *  - window.__psforge_triggerGoToLine()     -- opens Monaco Go To Line widget
+ *  - window.__psforge_getRunText()          -- returns selection, or current line
  *
  *  Editor enhancements wired here:
  *  - Cursor position tracking (dispatched to store -> displayed in StatusBar).
@@ -285,10 +286,27 @@ export function EditorPane() {
       editorRef.current.setPosition({ lineNumber: line, column: Math.max(1, column) });
       editorRef.current.focus();
     };
+    // Returns the currently selected text, or the full current line when
+    // selection is empty (PowerShell ISE F8 semantics).
+    w.__psforge_getRunText = () => {
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !model) return "";
+
+      const selection = editor.getSelection();
+      if (selection && !selection.isEmpty()) {
+        return model.getValueInRange(selection);
+      }
+
+      const pos = editor.getPosition();
+      if (!pos) return "";
+      return model.getLineContent(pos.lineNumber);
+    };
     return () => {
       delete w.__psforge_triggerFindReplace;
       delete w.__psforge_triggerGoToLine;
       delete w.__psforge_navigateTo;
+      delete w.__psforge_getRunText;
     };
   }, []);
 
@@ -316,13 +334,17 @@ export function EditorPane() {
       editorRef.current = editor;
       monacoRef.current = monaco;
 
-      // Track selection for F8 (Run Selection)
+      // Track selection for F8 legacy fallback consumers.
       editor.onDidChangeCursorSelection(() => {
-        const selection = editor
-          .getModel()
-          ?.getValueInRange(editor.getSelection()!);
+        const model = editor.getModel();
+        const selection = editor.getSelection();
+        if (!model || !selection || selection.isEmpty()) {
+          (window as unknown as Record<string, unknown>).__psforge_selection =
+            "";
+          return;
+        }
         (window as unknown as Record<string, unknown>).__psforge_selection =
-          selection || "";
+          model.getValueInRange(selection);
       });
 
       // --- Feature 1: Cursor position for status bar ---

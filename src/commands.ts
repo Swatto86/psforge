@@ -208,8 +208,9 @@ export async function startTerminal(
   shellPath: string,
   cols: number,
   rows: number,
+  loadProfile: boolean,
 ): Promise<number> {
-  return invoke<number>("start_terminal", { shellPath, cols, rows });
+  return invoke<number>("start_terminal", { shellPath, cols, rows, loadProfile });
 }
 
 /** Writes raw terminal input bytes to the active PTY session. */

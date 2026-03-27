@@ -74,7 +74,7 @@ PSForge/
       EditorPane.tsx      # Monaco Editor wrapper with settings sync
       OutputPane.tsx      # Output/Variables/Problems/Terminal tabs; virtualised list (react-virtual) for high-volume output
       TerminalPane.tsx    # xterm.js integrated terminal (PS session via piped I/O)
-      Sidebar.tsx         # Module browser with filter and command listing; lazy-loaded on first show
+      Sidebar.tsx         # Left/right sidebar with Modules browser and script Outline navigator
       StatusBar.tsx       # Bottom bar: encoding, path, running state, version
       SettingsPanel.tsx   # Modal settings dialog (6 sections: Editor, IntelliSense, Execution, Output, Appearance, File Associations)
       CommandPalette.tsx  # Ctrl+Shift+P command palette with snippets
@@ -123,7 +123,7 @@ PSForge/
 | Command | Module | Description |
 |---------|--------|-------------|
 | `execute_script` | commands | Run a PS script file, stream output events; optional script args are passed natively after `-File` for PowerShell parameter binding |
-| `execute_selection` | commands | Run selected text as PS code |
+| `execute_selection` | commands | Run selected text (or current line when no selection) as PS code |
 | `stop_script` | commands | Kill the running PS process |
 | `send_stdin` | commands | Write to running process stdin |
 | `get_ps_versions` | commands | Discover installed PowerShell versions |
@@ -174,8 +174,11 @@ PSForge/
 | Ctrl+N | New tab |
 | Ctrl+O | Open file |
 | Ctrl+S | Save current file |
+| Ctrl+Shift+S | Save all open files |
+| Ctrl+W | Close active tab |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next/previous tab |
 | F5 | Run entire script |
-| F8 | Run selected text |
+| F8 | Run selected text (or current line) |
 | Ctrl+Break | Stop execution |
 | Ctrl+Shift+P | Command Palette |
 | Ctrl+, | Settings |
@@ -244,7 +247,7 @@ npm run test:e2e:features            # New ISE-parity features: format, find/rep
 | `e2e/app.spec.ts` | 22 | Layout, sidebar, settings panel, theme switch, keyboard shortcuts |
 | `e2e/about.spec.ts` | 16 | About dialog open/close/content/Escape/backdrop |
 | `e2e/editor.spec.ts` | 9 | Monaco editor: open file, edit, save, tab management |
-| `e2e/script-run.spec.ts` | 8 | F5/F8 run, stdin, stop, error output |
+| `e2e/script-run.spec.ts` | 9 | F5/F8 run (including current-line F8), stdin, stop, error output |
 | `e2e/intellisense.spec.ts` | 14 | PS completion triggers, parameter/cmdlet/variable/multiline completions |
 | `e2e/settings.spec.ts` | 32 | Settings modal sections, select widths, toggles, theme switch |
 | `e2e/syntax-highlighting.spec.ts` | 33 | Monaco + terminal ANSI highlighting for keywords/cmdlets/params/types |
@@ -279,7 +282,7 @@ npx prettier --write "src/**/*.{ts,tsx,css}"  # Format
   - *Core*: `defaultPsVersion`, `theme`, `fontSize`, `fontFamily`, `wordWrap`, `showTimestamps`, `splitPosition`, `recentFiles`, `fileAssociations`
   - *Editor*: `tabSize`, `insertSpaces`, `showMinimap`, `lineNumbers`, `renderWhitespace`, `showIndentGuides`, `stickyScroll`, `enablePssa`, `enableIntelliSense`
   - *Execution*: `autoSaveOnRun`, `clearOutputOnRun`, `executionPolicy`, `workingDirMode` (`"file"` | `"custom"`), `customWorkingDir`
-  - *Output*: `outputFontSize`, `outputFontFamily`, `outputWordWrap`, `maxRecentFiles`
+  - *Output*: `terminalLoadProfile`, `outputFontSize`, `outputFontFamily`, `outputWordWrap`, `maxRecentFiles`
 - **Defaults**: Auto PS version, dark theme, 14px, Cascadia Code, no wrap, no timestamps, 65% split, tab size 4, spaces, PSSA on, IntelliSense on, clear output on run, max 20 recent files
 - **Font note**: `fontSize`/`fontFamily` apply to the entire UI via `--ui-font-size` / `--ui-font-family` CSS custom properties; `outputFontSize`/`outputFontFamily` apply only to the Output pane
 

@@ -91,6 +91,10 @@ pub struct AppSettings {
     #[serde(default)]
     pub custom_working_dir: String,
 
+    /// Whether the integrated terminal loads user/system PowerShell profiles.
+    #[serde(default)]
+    pub terminal_load_profile: bool,
+
     /// Whether timestamps are shown in the output pane.
     #[serde(default)]
     pub show_timestamps: bool,
@@ -246,6 +250,7 @@ impl Default for AppSettings {
             execution_policy: default_execution_policy(),
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
+            terminal_load_profile: false,
             show_timestamps: false,
             output_font_size: default_output_font_size(),
             output_font_family: default_output_font_family(),

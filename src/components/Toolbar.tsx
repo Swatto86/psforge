@@ -1,5 +1,5 @@
 /** PSForge Toolbar component.
- *  Contains New, Open, Save, Run, Stop, Settings, Theme selector, PS version picker,
+ *  Contains New, Open, Save, Save All, Run, Stop, Settings, Theme selector, PS version picker,
  *  and a Recent Files dropdown.
  */
 
@@ -13,6 +13,7 @@ interface ToolbarProps {
   /** Called when the user selects a path from the Recent Files dropdown. */
   onOpenRecent: (path: string) => void;
   onSave: () => void;
+  onSaveAll: () => void;
   onRun: () => void;
   onStop: () => void;
   /** Format current script with Invoke-Formatter (Shift+Alt+F). */
@@ -32,6 +33,7 @@ export function Toolbar({
   onOpen,
   onOpenRecent,
   onSave,
+  onSaveAll,
   onRun,
   onStop,
   onFormat,
@@ -41,6 +43,9 @@ export function Toolbar({
   onSign,
 }: ToolbarProps) {
   const { state, dispatch, activeTab } = useAppState();
+  const hasSavableTabs = state.tabs.some(
+    (t) => t.tabType !== "welcome" && (t.isDirty || !t.filePath),
+  );
   const [showRecent, setShowRecent] = useState(false);
   const recentRef = useRef<HTMLDivElement>(null);
 
@@ -225,6 +230,17 @@ export function Toolbar({
         </svg>
       </ToolbarBtn>
 
+      <ToolbarBtn
+        title="Save All (Ctrl+Shift+S)"
+        onClick={onSaveAll}
+        testId="toolbar-save-all"
+        disabled={!hasSavableTabs}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1 2a1 1 0 0 1 1-1h8.5a.5.5 0 0 1 .354.146l1.5 1.5A.5.5 0 0 1 12.5 3H2v9H1V2zm2 2h10a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4zm1 1v9h9V5H4zm2 1h5v1H6V6zm0 2h5v1H6V8z" />
+        </svg>
+      </ToolbarBtn>
+
       <div
         className="mx-2 h-5"
         style={{
@@ -359,9 +375,14 @@ export function Toolbar({
         title="PowerShell Version"
         data-testid="toolbar-ps-selector"
         value={state.selectedPsPath}
-        onChange={(e) =>
-          dispatch({ type: "SET_SELECTED_PS", path: e.target.value })
-        }
+        onChange={(e) => {
+          const nextPath = e.target.value;
+          dispatch({ type: "SET_SELECTED_PS", path: nextPath });
+          dispatch({
+            type: "SET_SETTINGS",
+            settings: { ...state.settings, defaultPsVersion: nextPath || "auto" },
+          });
+        }}
         className="text-xs py-0.5 rounded"
         style={{
           backgroundColor: "var(--bg-input)",

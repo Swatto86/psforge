@@ -168,6 +168,19 @@ export function SettingsPanel() {
     });
   };
 
+  const handleDefaultPsChange = (value: string) => {
+    updateSetting("defaultPsVersion", value);
+
+    if (value === "auto") {
+      if (state.psVersions.length > 0) {
+        dispatch({ type: "SET_SELECTED_PS", path: state.psVersions[0].path });
+      }
+      return;
+    }
+
+    dispatch({ type: "SET_SELECTED_PS", path: value });
+  };
+
   const handleRegister = async (ext: string) => {
     if (assocBusy) return;
     setAssocBusy(true);
@@ -484,21 +497,28 @@ export function SettingsPanel() {
               <SectionHeading>Execution</SectionHeading>
 
               <SettingRow label="Default PowerShell">
-                <select
-                  data-testid="settings-default-ps"
-                  value={state.settings.defaultPsVersion}
-                  onChange={(e) =>
-                    updateSetting("defaultPsVersion", e.target.value)
-                  }
-                  className="w-72 text-sm"
-                >
-                  <option value="auto">Auto-detect</option>
-                  {state.psVersions.map((v) => (
-                    <option key={v.path} value={v.path}>
-                      {v.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex flex-col gap-1">
+                  <select
+                    data-testid="settings-default-ps"
+                    value={state.settings.defaultPsVersion}
+                    onChange={(e) => handleDefaultPsChange(e.target.value)}
+                    className="w-72 text-sm"
+                  >
+                    <option value="auto">Auto-detect</option>
+                    {state.psVersions.map((v) => (
+                      <option key={v.path} value={v.path}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p
+                    className="text-xs"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    The PowerShell version selected in the toolbar is saved and
+                    restored on next launch.
+                  </p>
+                </div>
               </SettingRow>
 
               <SettingRow label="Auto-Save on Run">
@@ -649,6 +669,20 @@ export function SettingsPanel() {
           {activeSection === "output" && (
             <div className="flex flex-col gap-4">
               <SectionHeading>Output &amp; Terminal</SectionHeading>
+
+              <SettingRow label="Terminal Profile Loading">
+                <div className="flex flex-col gap-1">
+                  <Toggle
+                    checked={state.settings.terminalLoadProfile === true}
+                    onChange={(v) => updateSetting("terminalLoadProfile", v)}
+                    label="Load PowerShell profile scripts when terminal starts"
+                  />
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Enables profile-based customizations (for example command-not-found
+                    addons) but may slow startup or run profile side effects.
+                  </p>
+                </div>
+              </SettingRow>
 
               <SettingRow label="Show Timestamps">
                 <Toggle

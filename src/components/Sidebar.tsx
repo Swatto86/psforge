@@ -1,5 +1,7 @@
-/** PSForge Sidebar - Module Browser panel.
- *  Lists installed PowerShell modules with expandable command lists.
+/** PSForge Sidebar panel.
+ *  Provides two ISE-style views:
+ *  - Modules: installed PowerShell modules + exported command insertions
+ *  - Outline: script/function navigator for the active editor tab
  */
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -21,8 +23,130 @@ function extractErrorMessage(err: unknown): string {
   return String(err);
 }
 
+type OutlineKind =
+  | "function"
+  | "filter"
+  | "class"
+  | "enum"
+  | "workflow"
+  | "configuration"
+  | "region";
+
+interface OutlineItem {
+  kind: OutlineKind;
+  name: string;
+  line: number;
+  level: number;
+}
+
+/** Returns outline symbols from script content using line-based PowerShell patterns. */
+function parseOutline(content: string): OutlineItem[] {
+  const items: OutlineItem[] = [];
+  const lines = content.split(/\r?\n/);
+  let regionDepth = 0;
+
+  const functionRe = /^\s*function\s+([A-Za-z_][\w-]*)/i;
+  const filterRe = /^\s*filter\s+([A-Za-z_][\w-]*)/i;
+  const classRe = /^\s*class\s+([A-Za-z_][\w]*)/i;
+  const enumRe = /^\s*enum\s+([A-Za-z_][\w]*)/i;
+  const workflowRe = /^\s*workflow\s+([A-Za-z_][\w-]*)/i;
+  const configurationRe = /^\s*configuration\s+([A-Za-z_][\w-]*)/i;
+  const regionStartRe = /^\s*#region\b\s*(.*)$/i;
+  const regionEndRe = /^\s*#endregion\b/i;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+
+    if (regionEndRe.test(line)) {
+      regionDepth = Math.max(0, regionDepth - 1);
+      continue;
+    }
+
+    const regionStart = regionStartRe.exec(line);
+    if (regionStart) {
+      items.push({
+        kind: "region",
+        name: regionStart[1]?.trim() || "(region)",
+        line: lineNo,
+        level: regionDepth,
+      });
+      regionDepth += 1;
+      continue;
+    }
+
+    const fn = functionRe.exec(line);
+    if (fn) {
+      items.push({
+        kind: "function",
+        name: fn[1],
+        line: lineNo,
+        level: regionDepth,
+      });
+      continue;
+    }
+
+    const filter = filterRe.exec(line);
+    if (filter) {
+      items.push({
+        kind: "filter",
+        name: filter[1],
+        line: lineNo,
+        level: regionDepth,
+      });
+      continue;
+    }
+
+    const cls = classRe.exec(line);
+    if (cls) {
+      items.push({
+        kind: "class",
+        name: cls[1],
+        line: lineNo,
+        level: regionDepth,
+      });
+      continue;
+    }
+
+    const en = enumRe.exec(line);
+    if (en) {
+      items.push({
+        kind: "enum",
+        name: en[1],
+        line: lineNo,
+        level: regionDepth,
+      });
+      continue;
+    }
+
+    const wf = workflowRe.exec(line);
+    if (wf) {
+      items.push({
+        kind: "workflow",
+        name: wf[1],
+        line: lineNo,
+        level: regionDepth,
+      });
+      continue;
+    }
+
+    const cfg = configurationRe.exec(line);
+    if (cfg) {
+      items.push({
+        kind: "configuration",
+        name: cfg[1],
+        line: lineNo,
+        level: regionDepth,
+      });
+    }
+  }
+
+  return items;
+}
+
 export function Sidebar() {
-  const { state, dispatch } = useAppState();
+  const { state, dispatch, activeTab } = useAppState();
+  const [viewMode, setViewMode] = useState<"modules" | "outline">("modules");
   const [filter, setFilter] = useState("");
   const [expandedModule, setExpandedModule] = useState<string | null>(null);
   const [moduleCommands, setModuleCommands] = useState<
@@ -35,6 +159,10 @@ export function Sidebar() {
   /** Monotonic counter that invalidates stale module-load results when the
    *  selected PS version changes mid-flight. */
   const loadGenRef = React.useRef(0);
+  const outlineItems = React.useMemo(() => {
+    if (!activeTab || activeTab.tabType === "welcome") return [];
+    return parseOutline(activeTab.content);
+  }, [activeTab?.id, activeTab?.content, activeTab?.tabType]);
 
   // Reset module data when the selected PS version changes so the sidebar
   // fetches the module list for the new installation automatically.
@@ -60,6 +188,7 @@ export function Sidebar() {
   // changed to false, saw modules.length===0 again, and started another load.
   useEffect(() => {
     if (
+      viewMode === "modules" &&
       state.sidebarVisible &&
       state.modules.length === 0 &&
       !state.modulesLoading &&
@@ -86,6 +215,7 @@ export function Sidebar() {
         });
     }
   }, [
+    viewMode,
     state.sidebarVisible,
     state.selectedPsPath,
     state.modules.length,
@@ -158,9 +288,38 @@ export function Sidebar() {
   const filteredModules = state.modules.filter(
     (m) => !filter || m.name.toLowerCase().includes(filter.toLowerCase()),
   );
+  const filteredOutline = outlineItems.filter(
+    (item) => !filter || item.name.toLowerCase().includes(filter.toLowerCase()),
+  );
+
+  const outlineGlyph = (kind: OutlineKind): string => {
+    switch (kind) {
+      case "class":
+        return "C";
+      case "enum":
+        return "E";
+      case "filter":
+        return "F";
+      case "region":
+        return "R";
+      case "workflow":
+        return "W";
+      case "configuration":
+        return "G";
+      default:
+        return "f";
+    }
+  };
+
+  const navigateToLine = (line: number) => {
+    const nav = (window as unknown as Record<string, unknown>)
+      .__psforge_navigateTo as ((line: number, column: number) => void) | undefined;
+    nav?.(line, 1);
+  };
 
   return (
     <div
+      data-testid="sidebar-root"
       className="flex flex-col h-full no-select"
       style={{
         width: "240px",
@@ -184,7 +343,40 @@ export function Sidebar() {
           borderBottom: "1px solid var(--border-primary)",
         }}
       >
-        <span className="flex-1">Modules</span>
+        <div className="flex-1 flex items-center gap-1">
+          <button
+            data-testid="sidebar-view-modules"
+            onClick={() => setViewMode("modules")}
+            className="px-1.5 py-0.5 rounded"
+            style={{
+              backgroundColor:
+                viewMode === "modules" ? "var(--bg-hover)" : "transparent",
+              color:
+                viewMode === "modules"
+                  ? "var(--text-primary)"
+                  : "var(--text-secondary)",
+            }}
+            title="Show module browser"
+          >
+            Modules
+          </button>
+          <button
+            data-testid="sidebar-view-outline"
+            onClick={() => setViewMode("outline")}
+            className="px-1.5 py-0.5 rounded"
+            style={{
+              backgroundColor:
+                viewMode === "outline" ? "var(--bg-hover)" : "transparent",
+              color:
+                viewMode === "outline"
+                  ? "var(--text-primary)"
+                  : "var(--text-secondary)",
+            }}
+            title="Show script outline"
+          >
+            Outline
+          </button>
+        </div>
 
         {/* Dock-left button */}
         <button
@@ -289,29 +481,31 @@ export function Sidebar() {
           </svg>
         </button>
 
-        {/* Refresh button */}
-        <button
-          onClick={refreshModules}
-          title="Refresh modules"
-          className="flex items-center justify-center w-5 h-5 rounded"
-          style={{
-            backgroundColor: "transparent",
-            color: "var(--text-secondary)",
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLElement).style.color =
-              "var(--text-primary)")
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLElement).style.color =
-              "var(--text-secondary)")
-          }
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M13.451 5.609a5.5 5.5 0 1 0 .259 4.893l.972.324a6.5 6.5 0 1 1-.306-5.783l.949-.316-.316.949.324.972-.949.316.316-.949-.324-.972z" />
-            <path d="M14 1v4h-4l1.29-1.29L14 1z" />
-          </svg>
-        </button>
+        {/* Refresh button (modules view only) */}
+        {viewMode === "modules" && (
+          <button
+            onClick={refreshModules}
+            title="Refresh modules"
+            className="flex items-center justify-center w-5 h-5 rounded"
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--text-secondary)",
+            }}
+            onMouseEnter={(e) =>
+              ((e.currentTarget as HTMLElement).style.color =
+                "var(--text-primary)")
+            }
+            onMouseLeave={(e) =>
+              ((e.currentTarget as HTMLElement).style.color =
+                "var(--text-secondary)")
+            }
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M13.451 5.609a5.5 5.5 0 1 0 .259 4.893l.972.324a6.5 6.5 0 1 1-.306-5.783l.949-.316-.316.949.324.972-.949.316.316-.949-.324-.972z" />
+              <path d="M14 1v4h-4l1.29-1.29L14 1z" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Search filter */}
@@ -319,7 +513,10 @@ export function Sidebar() {
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter modules..."
+          placeholder={
+            viewMode === "modules" ? "Filter modules..." : "Filter symbols..."
+          }
+          data-testid="sidebar-filter"
           className="w-full text-xs"
           style={{
             backgroundColor: "var(--bg-input)",
@@ -331,7 +528,7 @@ export function Sidebar() {
         />
       </div>
 
-      {/* Module list */}
+      {/* Panel list */}
       <div
         className="flex-1 overflow-auto"
         style={{
@@ -339,131 +536,193 @@ export function Sidebar() {
           fontSize: "var(--sidebar-font-size)",
         }}
       >
-        {state.modulesLoading && (
-          <div
-            className="p-3 animate-pulse"
-            style={{ color: "var(--text-muted)" }}
-          >
-            Loading modules...
-          </div>
-        )}
-
-        {!state.modulesLoading && loadError && (
-          <div className="p-3" style={{ color: "var(--text-danger, #f44747)" }}>
-            <div style={{ marginBottom: "4px", fontWeight: 600 }}>
-              Failed to load modules
-            </div>
-            <div
-              style={{
-                fontSize: "10px",
-                wordBreak: "break-word",
-                opacity: 0.8,
-              }}
-            >
-              {loadError}
-            </div>
-            <button
-              onClick={refreshModules}
-              style={{
-                marginTop: "6px",
-                fontSize: "10px",
-                color: "var(--text-accent)",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: 0,
-              }}
-            >
-              Retry
-            </button>
-          </div>
-        )}
-
-        {!state.modulesLoading &&
-          !loadError &&
-          filteredModules.length === 0 && (
-            <div className="p-3" style={{ color: "var(--text-muted)" }}>
-              {state.modules.length === 0 ? "No modules found." : "No matches."}
-            </div>
-          )}
-
-        {filteredModules.map((mod) => (
-          <div key={mod.name + mod.version}>
-            <div
-              onClick={() => toggleModule(mod)}
-              className="flex items-center gap-1 px-3 py-1 cursor-pointer transition-colors"
-              style={{
-                color:
-                  expandedModule === mod.name
-                    ? "var(--text-primary)"
-                    : "var(--text-secondary)",
-              }}
-              onMouseEnter={(e) =>
-                ((e.currentTarget as HTMLElement).style.backgroundColor =
-                  "var(--bg-hover)")
-              }
-              onMouseLeave={(e) =>
-                ((e.currentTarget as HTMLElement).style.backgroundColor =
-                  "transparent")
-              }
-            >
-              <span className="text-[10px] shrink-0" style={{ width: "10px" }}>
-                {expandedModule === mod.name ? "\u25BC" : "\u25B6"}
-              </span>
-              <span className="truncate" title={mod.name}>
-                {mod.name}
-              </span>
-              <span
-                className="ml-auto shrink-0"
-                style={{ color: "var(--text-muted)", fontSize: "10px" }}
+        {viewMode === "modules" ? (
+          <>
+            {state.modulesLoading && (
+              <div
+                className="p-3 animate-pulse"
+                style={{ color: "var(--text-muted)" }}
               >
-                {mod.version}
-              </span>
-            </div>
-
-            {/* Expanded commands */}
-            {expandedModule === mod.name && (
-              <div className="pl-6">
-                {loadingCommands === mod.name && (
-                  <div
-                    className="py-1 animate-pulse"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    Loading...
-                  </div>
-                )}
-                {moduleCommands[mod.name]?.map((c) => (
-                  <div
-                    key={c.name}
-                    onClick={() => insertCommand(c.name)}
-                    className="py-0.5 px-2 cursor-pointer truncate transition-colors"
-                    style={{ color: "var(--text-accent)" }}
-                    title={`${c.name} (${c.commandType}) - Click to insert`}
-                    onMouseEnter={(e) =>
-                      ((e.currentTarget as HTMLElement).style.backgroundColor =
-                        "var(--bg-hover)")
-                    }
-                    onMouseLeave={(e) =>
-                      ((e.currentTarget as HTMLElement).style.backgroundColor =
-                        "transparent")
-                    }
-                  >
-                    {c.name}
-                  </div>
-                ))}
-                {moduleCommands[mod.name]?.length === 0 &&
-                  loadingCommands !== mod.name && (
-                    <div
-                      className="py-1"
-                      style={{ color: "var(--text-muted)" }}
-                    >
-                      No exported commands.
-                    </div>
-                  )}
+                Loading modules...
               </div>
             )}
-          </div>
-        ))}
+
+            {!state.modulesLoading && loadError && (
+              <div
+                className="p-3"
+                style={{ color: "var(--text-danger, #f44747)" }}
+              >
+                <div style={{ marginBottom: "4px", fontWeight: 600 }}>
+                  Failed to load modules
+                </div>
+                <div
+                  style={{
+                    fontSize: "10px",
+                    wordBreak: "break-word",
+                    opacity: 0.8,
+                  }}
+                >
+                  {loadError}
+                </div>
+                <button
+                  onClick={refreshModules}
+                  style={{
+                    marginTop: "6px",
+                    fontSize: "10px",
+                    color: "var(--text-accent)",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {!state.modulesLoading && !loadError && filteredModules.length === 0 && (
+              <div className="p-3" style={{ color: "var(--text-muted)" }}>
+                {state.modules.length === 0 ? "No modules found." : "No matches."}
+              </div>
+            )}
+
+            {filteredModules.map((mod) => (
+              <div key={mod.name + mod.version}>
+                <div
+                  onClick={() => toggleModule(mod)}
+                  className="flex items-center gap-1 px-3 py-1 cursor-pointer transition-colors"
+                  style={{
+                    color:
+                      expandedModule === mod.name
+                        ? "var(--text-primary)"
+                        : "var(--text-secondary)",
+                  }}
+                  onMouseEnter={(e) =>
+                    ((e.currentTarget as HTMLElement).style.backgroundColor =
+                      "var(--bg-hover)")
+                  }
+                  onMouseLeave={(e) =>
+                    ((e.currentTarget as HTMLElement).style.backgroundColor =
+                      "transparent")
+                  }
+                >
+                  <span className="text-[10px] shrink-0" style={{ width: "10px" }}>
+                    {expandedModule === mod.name ? "\u25BC" : "\u25B6"}
+                  </span>
+                  <span className="truncate" title={mod.name}>
+                    {mod.name}
+                  </span>
+                  <span
+                    className="ml-auto shrink-0"
+                    style={{ color: "var(--text-muted)", fontSize: "10px" }}
+                  >
+                    {mod.version}
+                  </span>
+                </div>
+
+                {/* Expanded commands */}
+                {expandedModule === mod.name && (
+                  <div className="pl-6">
+                    {loadingCommands === mod.name && (
+                      <div
+                        className="py-1 animate-pulse"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        Loading...
+                      </div>
+                    )}
+                    {moduleCommands[mod.name]?.map((c) => (
+                      <div
+                        key={c.name}
+                        onClick={() => insertCommand(c.name)}
+                        className="py-0.5 px-2 cursor-pointer truncate transition-colors"
+                        style={{ color: "var(--text-accent)" }}
+                        title={`${c.name} (${c.commandType}) - Click to insert`}
+                        onMouseEnter={(e) =>
+                          ((e.currentTarget as HTMLElement).style.backgroundColor =
+                            "var(--bg-hover)")
+                        }
+                        onMouseLeave={(e) =>
+                          ((e.currentTarget as HTMLElement).style.backgroundColor =
+                            "transparent")
+                        }
+                      >
+                        {c.name}
+                      </div>
+                    ))}
+                    {moduleCommands[mod.name]?.length === 0 &&
+                      loadingCommands !== mod.name && (
+                        <div
+                          className="py-1"
+                          style={{ color: "var(--text-muted)" }}
+                        >
+                          No exported commands.
+                        </div>
+                      )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </>
+        ) : (
+          <>
+            {(!activeTab || activeTab.tabType === "welcome") && (
+              <div className="p-3" style={{ color: "var(--text-muted)" }}>
+                Open a script tab to view outline symbols.
+              </div>
+            )}
+
+            {activeTab &&
+              activeTab.tabType !== "welcome" &&
+              filteredOutline.length === 0 && (
+                <div className="p-3" style={{ color: "var(--text-muted)" }}>
+                  {outlineItems.length === 0
+                    ? "No functions/classes/workflows/configurations/regions found."
+                    : "No matching symbols."}
+                </div>
+              )}
+
+            {activeTab &&
+              activeTab.tabType !== "welcome" &&
+              filteredOutline.map((item) => (
+                <button
+                  key={`${item.kind}:${item.line}:${item.name}`}
+                  data-testid="sidebar-outline-item"
+                  onClick={() => navigateToLine(item.line)}
+                  className="w-full text-left px-3 py-1 flex items-center gap-2 transition-colors"
+                  style={{
+                    backgroundColor: "transparent",
+                    color: "var(--text-secondary)",
+                    paddingLeft: `${12 + item.level * 10}px`,
+                  }}
+                  onMouseEnter={(e) =>
+                    ((e.currentTarget as HTMLElement).style.backgroundColor =
+                      "var(--bg-hover)")
+                  }
+                  onMouseLeave={(e) =>
+                    ((e.currentTarget as HTMLElement).style.backgroundColor =
+                      "transparent")
+                  }
+                  title={`${item.kind} at line ${item.line}`}
+                >
+                  <span
+                    className="shrink-0 text-[10px] uppercase"
+                    style={{ color: "var(--text-accent)", width: "10px" }}
+                  >
+                    {outlineGlyph(item.kind)}
+                  </span>
+                  <span className="truncate flex-1">{item.name}</span>
+                  <span
+                    className="shrink-0 text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Ln {item.line}
+                  </span>
+                </button>
+              ))}
+          </>
+        )}
       </div>
     </div>
   );
