@@ -12,7 +12,14 @@ import React, { useRef, useEffect, useState, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
-import type { VariableInfo, ProblemItem } from "../types";
+import type {
+  VariableInfo,
+  ProblemItem,
+  DebugBreakpoint,
+  DebugLocal,
+  DebugStackFrame,
+  DebugWatch,
+} from "../types";
 import { TerminalPane } from "./TerminalPane";
 
 /** Prompt the user for a save path and write plain text to disk. */
@@ -71,12 +78,36 @@ async function saveProblemsToFile(problems: ProblemItem[]): Promise<void> {
   });
 }
 
+function breakpointLabel(bp: DebugBreakpoint): string {
+  if (typeof bp.line === "number") return `Ln ${bp.line}`;
+  if (bp.targetCommand) return `Command ${bp.targetCommand}`;
+  const mode = bp.mode ?? "ReadWrite";
+  return `$${bp.variable ?? "?"} (${mode})`;
+}
+
+function breakpointKey(bp: DebugBreakpoint): string {
+  if (typeof bp.line === "number") return `line:${bp.line}`;
+  if (bp.targetCommand) return `cmd:${bp.targetCommand.toLowerCase()}`;
+  return `var:${bp.mode ?? "ReadWrite"}:${bp.variable ?? ""}`;
+}
+
+function summarizeBreakpointOptions(bp: DebugBreakpoint): string {
+  const parts: string[] = [];
+  if (bp.condition) parts.push(`if ${bp.condition}`);
+  if (bp.hitCount && bp.hitCount > 1) parts.push(`hit >= ${bp.hitCount}`);
+  if (bp.command) parts.push("has action");
+  return parts.join(" | ");
+}
+
 interface OutputPaneProps {
   onDebugStart: () => void;
   onDebugContinue: () => void;
   onDebugStepOver: () => void;
   onDebugStepInto: () => void;
   onDebugStepOut: () => void;
+  onDebugSelectFrame: (frameIndex: number) => void;
+  onDebugRefreshInspector: () => void;
+  onDebugEvaluateWatch: (expression: string) => void;
   onStop: () => void;
 }
 
@@ -86,6 +117,9 @@ export function OutputPane({
   onDebugStepOver,
   onDebugStepInto,
   onDebugStepOut,
+  onDebugSelectFrame,
+  onDebugRefreshInspector,
+  onDebugEvaluateWatch,
   onStop,
 }: OutputPaneProps) {
   const { state, dispatch, activeTab } = useAppState();
@@ -132,6 +166,11 @@ export function OutputPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.outputLines.length, state.bottomPanelTab]);
 
+  const isDebuggerInputTab = state.bottomPanelTab === "debugger";
+  const isStdinEnabled = isDebuggerInputTab ? state.isDebugging : state.isRunning;
+  const inputPrompt = isDebuggerInputTab ? "DBG>" : ">";
+  const inputEchoPrefix = isDebuggerInputTab ? "DBG> " : "> ";
+
   const handleStdinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!stdinInput.trim()) return;
@@ -141,7 +180,7 @@ export function OutputPane({
         type: "ADD_OUTPUT",
         line: {
           stream: "stdout",
-          text: `> ${stdinInput}`,
+          text: `${inputEchoPrefix}${stdinInput}`,
           timestamp: String(Math.floor(Date.now() / 1000)),
         },
       });
@@ -217,6 +256,25 @@ export function OutputPane({
       v.value.toLowerCase().includes(varFilter.toLowerCase()),
   );
 
+  const handleAddDebugWatch = useCallback(
+    (expression: string) => {
+      const expr = expression.trim();
+      if (!expr) return;
+      dispatch({ type: "ADD_DEBUG_WATCH", expression: expr });
+      if (state.isDebugging && state.debugPaused) {
+        onDebugEvaluateWatch(expr);
+      }
+    },
+    [dispatch, state.isDebugging, state.debugPaused, onDebugEvaluateWatch],
+  );
+
+  const handleRemoveDebugWatch = useCallback(
+    (expression: string) => {
+      dispatch({ type: "REMOVE_DEBUG_WATCH", expression });
+    },
+    [dispatch],
+  );
+
   const navigateTo = useCallback((line: number, column: number) => {
     const nav = (window as unknown as Record<string, unknown>)
       .__psforge_navigateTo as ((l: number, c: number) => void) | undefined;
@@ -227,6 +285,30 @@ export function OutputPane({
     activeTab && activeTab.tabType !== "welcome"
       ? state.breakpoints[activeTab.id] ?? []
       : [];
+
+  const upsertActiveTabBreakpoint = useCallback(
+    (breakpoint: DebugBreakpoint) => {
+      if (!activeTab || activeTab.tabType === "welcome") return;
+      dispatch({
+        type: "UPSERT_BREAKPOINT",
+        tabId: activeTab.id,
+        breakpoint,
+      });
+    },
+    [activeTab, dispatch],
+  );
+
+  const removeActiveTabBreakpoint = useCallback(
+    (breakpoint: DebugBreakpoint) => {
+      if (!activeTab || activeTab.tabType === "welcome") return;
+      dispatch({
+        type: "REMOVE_BREAKPOINT",
+        tabId: activeTab.id,
+        breakpoint,
+      });
+    },
+    [activeTab, dispatch],
+  );
 
   return (
     <div
@@ -624,6 +706,29 @@ export function OutputPane({
               Step Out
             </button>
             <button
+              onClick={onDebugRefreshInspector}
+              disabled={!state.isDebugging || !state.debugPaused}
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                color:
+                  !state.isDebugging || !state.debugPaused
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor:
+                  !state.isDebugging || !state.debugPaused
+                    ? "default"
+                    : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "4px",
+              }}
+              title="Refresh locals, call stack, and watches"
+            >
+              Refresh
+            </button>
+            <button
               onClick={onStop}
               disabled={!state.isRunning}
               style={{
@@ -812,11 +917,16 @@ export function OutputPane({
             debugPaused={state.debugPaused}
             debugLine={state.debugLine}
             debugColumn={state.debugColumn}
+            selectedFrameIndex={state.debugSelectedFrame}
             activeTabName={
               activeTab?.tabType === "code" ? activeTab.title : undefined
             }
             breakpoints={activeTabBreakpoints}
+            locals={state.debugLocals}
+            callStack={state.debugCallStack}
+            watches={state.debugWatches}
             onNavigate={navigateTo}
+            onSelectFrame={onDebugSelectFrame}
             onToggleBreakpoint={(line) => {
               if (!activeTab || activeTab.tabType === "welcome") return;
               dispatch({
@@ -825,6 +935,18 @@ export function OutputPane({
                 line,
               });
             }}
+            onUpsertBreakpoint={upsertActiveTabBreakpoint}
+            onRemoveBreakpoint={removeActiveTabBreakpoint}
+            onAddVariableBreakpoint={(variable, mode) =>
+              upsertActiveTabBreakpoint({ variable, mode })
+            }
+            onAddCommandBreakpoint={(targetCommand) =>
+              upsertActiveTabBreakpoint({ targetCommand })
+            }
+            onRefresh={onDebugRefreshInspector}
+            onAddWatch={handleAddDebugWatch}
+            onRemoveWatch={handleRemoveDebugWatch}
+            onEvaluateWatch={onDebugEvaluateWatch}
             fontSize={state.settings.outputFontSize ?? 13}
             fontFamily={
               state.settings.outputFontFamily ??
@@ -852,8 +974,9 @@ export function OutputPane({
         </div>
       </div>
 
-      {/* Stdin input row (only visible in output tab) */}
-      {state.bottomPanelTab === "output" && (
+      {/* Stdin/debugger input row (visible in output and debugger tabs). */}
+      {(state.bottomPanelTab === "output" ||
+        state.bottomPanelTab === "debugger") && (
         <form
           onSubmit={handleStdinSubmit}
           className="flex items-center px-2 py-1"
@@ -866,24 +989,28 @@ export function OutputPane({
             className="mr-1 text-xs"
             style={{ color: "var(--text-accent)" }}
           >
-            &gt;
+            {inputPrompt}
           </span>
           <input
             value={stdinInput}
             onChange={(e) => setStdinInput(e.target.value)}
             placeholder={
-              state.isRunning
-                ? "Type input for Read-Host..."
-                : "Script not running"
+              isDebuggerInputTab
+                ? isStdinEnabled
+                  ? "Type debugger command or expression..."
+                  : "Debugger not active"
+                : isStdinEnabled
+                  ? "Type input for Read-Host..."
+                  : "Script not running"
             }
-            disabled={!state.isRunning}
+            disabled={!isStdinEnabled}
             className="flex-1 text-xs font-mono"
             style={{
               backgroundColor: "transparent",
               border: "none",
               color: "var(--text-primary)",
               outline: "none",
-              opacity: state.isRunning ? 1 : 0.5,
+              opacity: isStdinEnabled ? 1 : 0.5,
             }}
           />
         </form>
@@ -907,10 +1034,23 @@ function DebuggerPane({
   debugPaused,
   debugLine,
   debugColumn,
+  selectedFrameIndex,
   activeTabName,
   breakpoints,
+  locals,
+  callStack,
+  watches,
   onNavigate,
+  onSelectFrame,
   onToggleBreakpoint,
+  onUpsertBreakpoint,
+  onRemoveBreakpoint,
+  onAddVariableBreakpoint,
+  onAddCommandBreakpoint,
+  onRefresh,
+  onAddWatch,
+  onRemoveWatch,
+  onEvaluateWatch,
   fontSize,
   fontFamily,
 }: {
@@ -919,16 +1059,55 @@ function DebuggerPane({
   debugPaused: boolean;
   debugLine: number | null;
   debugColumn: number | null;
+  selectedFrameIndex: number;
   activeTabName?: string;
-  breakpoints: number[];
+  breakpoints: DebugBreakpoint[];
+  locals: DebugLocal[];
+  callStack: DebugStackFrame[];
+  watches: DebugWatch[];
   onNavigate: (line: number, column: number) => void;
+  onSelectFrame: (frameIndex: number) => void;
   onToggleBreakpoint: (line: number) => void;
+  onUpsertBreakpoint: (breakpoint: DebugBreakpoint) => void;
+  onRemoveBreakpoint: (breakpoint: DebugBreakpoint) => void;
+  onAddVariableBreakpoint: (
+    variable: string,
+    mode: "Read" | "Write" | "ReadWrite",
+  ) => void;
+  onAddCommandBreakpoint: (targetCommand: string) => void;
+  onRefresh: () => void;
+  onAddWatch: (expression: string) => void;
+  onRemoveWatch: (expression: string) => void;
+  onEvaluateWatch: (expression: string) => void;
   fontSize: number;
   fontFamily: string;
 }) {
+  const [newWatchExpression, setNewWatchExpression] = useState("");
+  const [newVariableName, setNewVariableName] = useState("");
+  const [newVariableMode, setNewVariableMode] = useState<
+    "Read" | "Write" | "ReadWrite"
+  >("ReadWrite");
+  const [newCommandName, setNewCommandName] = useState("");
+  const [editingBreakpointKey, setEditingBreakpointKey] = useState<string | null>(
+    null,
+  );
+  const [editCondition, setEditCondition] = useState("");
+  const [editHitCount, setEditHitCount] = useState("");
+  const [editAction, setEditAction] = useState("");
+  const [editVariableName, setEditVariableName] = useState("");
+  const [editVariableMode, setEditVariableMode] = useState<
+    "Read" | "Write" | "ReadWrite"
+  >("ReadWrite");
+  const [editCommandName, setEditCommandName] = useState("");
+  const [editError, setEditError] = useState("");
+
   const fontStyle: React.CSSProperties = {
     fontSize: `${fontSize}px`,
     fontFamily: `var(--ui-font-family, ${fontFamily})`,
+  };
+  const monoFontStyle: React.CSSProperties = {
+    fontSize: `${fontSize}px`,
+    fontFamily,
   };
 
   const statusLabel = !isDebugging
@@ -946,6 +1125,159 @@ function DebuggerPane({
     : debugPaused
       ? "var(--stream-warning)"
       : "var(--text-accent)";
+  const canInspect = isDebugging && debugPaused;
+  const lineBreakpoints = breakpoints
+    .filter((bp): bp is DebugBreakpoint & { line: number } => {
+      return typeof bp.line === "number" && bp.line >= 1;
+    })
+    .sort((a, b) => a.line - b.line);
+  const variableBreakpoints = breakpoints.filter(
+    (bp): bp is DebugBreakpoint & { variable: string } =>
+      typeof bp.variable === "string" && bp.variable.trim().length > 0,
+  );
+  const commandBreakpoints = breakpoints.filter(
+    (bp): bp is DebugBreakpoint & { targetCommand: string } =>
+      typeof bp.targetCommand === "string" && bp.targetCommand.trim().length > 0,
+  );
+  const editingBreakpoint = editingBreakpointKey
+    ? breakpoints.find((bp) => breakpointKey(bp) === editingBreakpointKey) ?? null
+    : null;
+
+  const beginEditBreakpoint = useCallback((bp: DebugBreakpoint) => {
+    setEditingBreakpointKey(breakpointKey(bp));
+    setEditCondition(bp.condition ?? "");
+    setEditHitCount(bp.hitCount ? String(bp.hitCount) : "");
+    setEditAction(bp.command ?? "");
+    setEditVariableName(bp.variable ?? "");
+    setEditVariableMode(bp.mode ?? "ReadWrite");
+    setEditCommandName(bp.targetCommand ?? "");
+    setEditError("");
+  }, []);
+
+  const cancelEditBreakpoint = useCallback(() => {
+    setEditingBreakpointKey(null);
+    setEditCondition("");
+    setEditHitCount("");
+    setEditAction("");
+    setEditVariableName("");
+    setEditVariableMode("ReadWrite");
+    setEditCommandName("");
+    setEditError("");
+  }, []);
+
+  useEffect(() => {
+    if (!editingBreakpointKey) return;
+    const exists = breakpoints.some((bp) => breakpointKey(bp) === editingBreakpointKey);
+    if (!exists) {
+      cancelEditBreakpoint();
+    }
+  }, [breakpoints, editingBreakpointKey, cancelEditBreakpoint]);
+
+  const saveEditedBreakpoint = useCallback(() => {
+    if (!editingBreakpoint) return;
+
+    const trimmedHit = editHitCount.trim();
+    const parsedHit = parseInt(trimmedHit, 10);
+    if (
+      trimmedHit.length > 0 &&
+      (!Number.isFinite(parsedHit) || parsedHit < 1)
+    ) {
+      setEditError("Hit count must be an integer >= 1.");
+      return;
+    }
+
+    let updated: DebugBreakpoint = {
+      ...editingBreakpoint,
+      condition: editCondition.trim() || undefined,
+      hitCount: trimmedHit.length > 0 ? parsedHit : undefined,
+      command: editAction.trim() || undefined,
+    };
+
+    if (editingBreakpoint.variable) {
+      const variable = editVariableName.trim().replace(/^\$/, "");
+      if (!variable) {
+        setEditError("Variable breakpoint name cannot be empty.");
+        return;
+      }
+      updated = {
+        ...updated,
+        variable,
+        mode: editVariableMode,
+      };
+    }
+
+    if (editingBreakpoint.targetCommand) {
+      const targetCommand = editCommandName.trim();
+      if (!targetCommand) {
+        setEditError("Command breakpoint target cannot be empty.");
+        return;
+      }
+      updated = {
+        ...updated,
+        targetCommand,
+      };
+    }
+
+    const oldKey = breakpointKey(editingBreakpoint);
+    const newKey = breakpointKey(updated);
+    if (oldKey !== newKey) {
+      onRemoveBreakpoint(editingBreakpoint);
+    }
+    onUpsertBreakpoint(updated);
+    setEditingBreakpointKey(newKey);
+    setEditError("");
+  }, [
+    editingBreakpoint,
+    editCondition,
+    editHitCount,
+    editAction,
+    editVariableName,
+    editVariableMode,
+    editCommandName,
+    onRemoveBreakpoint,
+    onUpsertBreakpoint,
+  ]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ line?: unknown }>).detail;
+      const line =
+        detail && typeof detail.line === "number" && detail.line >= 1
+          ? Math.floor(detail.line)
+          : null;
+      if (!line) return;
+      const existing = breakpoints.find((bp) => bp.line === line);
+      if (existing) {
+        beginEditBreakpoint(existing);
+        return;
+      }
+      const created: DebugBreakpoint = { line };
+      onUpsertBreakpoint(created);
+      beginEditBreakpoint(created);
+    };
+
+    window.addEventListener(
+      "psforge-edit-breakpoint",
+      handler as EventListener,
+    );
+    return () =>
+      window.removeEventListener(
+        "psforge-edit-breakpoint",
+        handler as EventListener,
+      );
+  }, [breakpoints, beginEditBreakpoint, onUpsertBreakpoint]);
+
+  const parseCallStackLocation = useCallback((location: string) => {
+    const match = /:(\d+)(?::(\d+))?$/.exec(location.trim());
+    if (!match) return null;
+    const line = parseInt(match[1], 10);
+    const column = match[2] ? parseInt(match[2], 10) : 1;
+    if (!Number.isFinite(line) || line < 1) return null;
+    return {
+      line,
+      column: Number.isFinite(column) && column > 0 ? column : 1,
+    };
+  }, []);
 
   return (
     <div
@@ -988,18 +1320,281 @@ function DebuggerPane({
       </div>
 
       <div className="mt-4">
+        <div
+          className="flex items-center justify-between gap-2"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          <span>Watch</span>
+          <button
+            onClick={onRefresh}
+            disabled={!canInspect}
+            style={{
+              backgroundColor: "transparent",
+              color: canInspect ? "var(--text-accent)" : "var(--text-muted)",
+              cursor: canInspect ? "pointer" : "default",
+            }}
+            title="Refresh all watch values"
+          >
+            Refresh
+          </button>
+        </div>
+
+        <form
+          className="mt-2 flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const expr = newWatchExpression.trim();
+            if (!expr) return;
+            onAddWatch(expr);
+            setNewWatchExpression("");
+          }}
+        >
+          <input
+            value={newWatchExpression}
+            onChange={(e) => setNewWatchExpression(e.target.value)}
+            placeholder="Add watch expression..."
+            className="flex-1 px-2 py-1"
+            style={{
+              ...monoFontStyle,
+              backgroundColor: "var(--bg-input)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+              borderRadius: "2px",
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--text-accent)",
+              cursor: "pointer",
+            }}
+          >
+            Add
+          </button>
+        </form>
+
+        {watches.length === 0 ? (
+          <div className="mt-1" style={{ color: "var(--text-muted)" }}>
+            No watch expressions yet.
+          </div>
+        ) : (
+          <div className="mt-2 flex flex-col gap-2">
+            {watches.map((watch) => (
+              <div
+                key={watch.expression}
+                className="rounded px-2 py-1"
+                style={{
+                  border: "1px solid var(--border-primary)",
+                  backgroundColor: "var(--bg-secondary)",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <code
+                    style={{
+                      ...monoFontStyle,
+                      color: "var(--text-accent)",
+                      flex: 1,
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {watch.expression}
+                  </code>
+                  <button
+                    onClick={() => onEvaluateWatch(watch.expression)}
+                    disabled={!canInspect}
+                    style={{
+                      backgroundColor: "transparent",
+                      color: canInspect
+                        ? "var(--text-secondary)"
+                        : "var(--text-muted)",
+                      cursor: canInspect ? "pointer" : "default",
+                    }}
+                    title="Evaluate watch expression now"
+                  >
+                    Eval
+                  </button>
+                  <button
+                    onClick={() => onRemoveWatch(watch.expression)}
+                    style={{
+                      backgroundColor: "transparent",
+                      color: "var(--text-muted)",
+                      cursor: "pointer",
+                    }}
+                    title="Remove watch expression"
+                  >
+                    x
+                  </button>
+                </div>
+                <div
+                  className="mt-1"
+                  style={{
+                    ...monoFontStyle,
+                    color: watch.error
+                      ? "var(--stream-stderr)"
+                      : watch.value
+                        ? "var(--text-primary)"
+                        : "var(--text-muted)",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {watch.error
+                    ? `Error: ${watch.error}`
+                    : watch.value || "Value unavailable (pause debugger to evaluate)."}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <div style={{ color: "var(--text-secondary)" }}>
+          Call Stack (selected frame: {selectedFrameIndex})
+        </div>
+        {callStack.length === 0 ? (
+          <div className="mt-1" style={{ color: "var(--text-muted)" }}>
+            No call stack available at the current state.
+          </div>
+        ) : (
+          <table className="mt-2 w-full" style={monoFontStyle}>
+            <thead>
+              <tr
+                style={{
+                  backgroundColor: "var(--bg-secondary)",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                <th className="px-2 py-1 text-left font-medium">Function</th>
+                <th className="px-2 py-1 text-left font-medium">Location</th>
+              </tr>
+            </thead>
+            <tbody>
+              {callStack.map((frame, idx) => {
+                const location = frame.location.trim();
+                const target = parseCallStackLocation(location);
+                const isSelected = selectedFrameIndex === idx;
+                return (
+                  <tr
+                    key={`${frame.functionName}-${location}-${idx}`}
+                    style={{
+                      borderBottom: "1px solid var(--border-primary)",
+                      backgroundColor: isSelected
+                        ? "color-mix(in srgb, var(--accent) 15%, transparent)"
+                        : "transparent",
+                    }}
+                  >
+                    <td className="px-2 py-1" style={{ color: "var(--text-primary)" }}>
+                      <button
+                        onClick={() => onSelectFrame(idx)}
+                        style={{
+                          backgroundColor: "transparent",
+                          color: isSelected
+                            ? "var(--text-accent)"
+                            : "var(--text-primary)",
+                          cursor: "pointer",
+                          textDecoration: isSelected ? "underline" : "none",
+                        }}
+                        title={`Select frame ${idx}`}
+                      >
+                        {frame.functionName || "<script>"}
+                      </button>
+                    </td>
+                    <td className="px-2 py-1">
+                      {target ? (
+                        <button
+                          onClick={() => onNavigate(target.line, target.column)}
+                          style={{
+                            backgroundColor: "transparent",
+                            color: "var(--text-accent)",
+                            textDecoration: "underline",
+                            cursor: "pointer",
+                          }}
+                          title={`Go to ${location}`}
+                        >
+                          {location || "Unknown"}
+                        </button>
+                      ) : (
+                        <span style={{ color: "var(--text-muted)" }}>
+                          {location || "Unknown"}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <div style={{ color: "var(--text-secondary)" }}>Locals</div>
+        {locals.length === 0 ? (
+          <div className="mt-1" style={{ color: "var(--text-muted)" }}>
+            No local variables captured yet.
+          </div>
+        ) : (
+          <table className="mt-2 w-full" style={monoFontStyle}>
+            <thead>
+              <tr
+                style={{
+                  backgroundColor: "var(--bg-secondary)",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                <th className="px-2 py-1 text-left font-medium">Name</th>
+                <th className="px-2 py-1 text-left font-medium">Value</th>
+                <th className="px-2 py-1 text-left font-medium">Type</th>
+                <th className="px-2 py-1 text-left font-medium">Scope</th>
+              </tr>
+            </thead>
+            <tbody>
+              {locals.map((local) => (
+                <tr
+                  key={local.name}
+                  style={{ borderBottom: "1px solid var(--border-primary)" }}
+                >
+                  <td className="px-2 py-1" style={{ color: "var(--text-accent)" }}>
+                    ${local.name}
+                  </td>
+                  <td
+                    className="px-2 py-1"
+                    style={{
+                      color: "var(--text-primary)",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {local.value}
+                  </td>
+                  <td className="px-2 py-1" style={{ color: "var(--text-secondary)" }}>
+                    {local.typeName}
+                  </td>
+                  <td className="px-2 py-1" style={{ color: "var(--text-muted)" }}>
+                    {local.scope}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="mt-4">
         <div style={{ color: "var(--text-secondary)" }}>
           Breakpoints{activeTabName ? ` (${activeTabName})` : ""}
         </div>
-        {breakpoints.length === 0 ? (
+        {lineBreakpoints.length === 0 ? (
           <div className="mt-1" style={{ color: "var(--text-muted)" }}>
             No line breakpoints in the active tab. Click the editor gutter to add one.
           </div>
         ) : (
           <div className="mt-2 flex flex-wrap gap-2">
-            {breakpoints.map((line) => (
+            {lineBreakpoints.map((bp) => (
               <div
-                key={line}
+                key={breakpointKey(bp)}
                 className="flex items-center gap-1 px-2 py-1 rounded"
                 style={{
                   border: "1px solid var(--border-primary)",
@@ -1007,8 +1602,8 @@ function DebuggerPane({
                 }}
               >
                 <button
-                  data-testid={`debugger-breakpoint-${line}`}
-                  onClick={() => onNavigate(line, 1)}
+                  data-testid={`debugger-breakpoint-${bp.line}`}
+                  onClick={() => onNavigate(bp.line, 1)}
                   style={{
                     backgroundColor: "transparent",
                     color: "var(--text-accent)",
@@ -1016,13 +1611,30 @@ function DebuggerPane({
                     cursor: "pointer",
                     fontSize: "0.95em",
                   }}
-                  title={`Go to breakpoint on line ${line}`}
+                  title={`Go to breakpoint on line ${bp.line}`}
                 >
-                  Ln {line}
+                  {breakpointLabel(bp)}
+                </button>
+                {summarizeBreakpointOptions(bp) && (
+                  <span style={{ color: "var(--text-muted)", fontSize: "0.82em" }}>
+                    {summarizeBreakpointOptions(bp)}
+                  </span>
+                )}
+                <button
+                  onClick={() => beginEditBreakpoint(bp)}
+                  style={{
+                    backgroundColor: "transparent",
+                    color: "var(--text-secondary)",
+                    cursor: "pointer",
+                    fontSize: "0.9em",
+                  }}
+                  title="Edit this breakpoint"
+                >
+                  Edit
                 </button>
                 <button
-                  data-testid={`debugger-breakpoint-remove-${line}`}
-                  onClick={() => onToggleBreakpoint(line)}
+                  data-testid={`debugger-breakpoint-remove-${bp.line}`}
+                  onClick={() => onToggleBreakpoint(bp.line)}
                   style={{
                     backgroundColor: "transparent",
                     color: "var(--text-muted)",
@@ -1030,12 +1642,395 @@ function DebuggerPane({
                     fontSize: "0.95em",
                     padding: "0 2px",
                   }}
-                  title={`Remove breakpoint on line ${line}`}
+                  title={`Remove breakpoint on line ${bp.line}`}
                 >
                   x
                 </button>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3">
+        <div style={{ color: "var(--text-secondary)" }}>Variable Breakpoints</div>
+        <form
+          className="mt-2 flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const variable = newVariableName.trim().replace(/^\$/, "");
+            if (!variable) return;
+            onAddVariableBreakpoint(variable, newVariableMode);
+            setNewVariableName("");
+          }}
+        >
+          <input
+            value={newVariableName}
+            onChange={(e) => setNewVariableName(e.target.value)}
+            placeholder="Variable name (e.g. path)"
+            className="px-2 py-1"
+            style={{
+              ...monoFontStyle,
+              backgroundColor: "var(--bg-input)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+              borderRadius: "2px",
+            }}
+          />
+          <select
+            value={newVariableMode}
+            onChange={(e) =>
+              setNewVariableMode(e.target.value as "Read" | "Write" | "ReadWrite")
+            }
+            style={{
+              ...monoFontStyle,
+              backgroundColor: "var(--bg-input)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+              borderRadius: "2px",
+              padding: "5px 8px",
+            }}
+          >
+            <option value="ReadWrite">ReadWrite</option>
+            <option value="Read">Read</option>
+            <option value="Write">Write</option>
+          </select>
+          <button
+            type="submit"
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--text-accent)",
+              cursor: "pointer",
+            }}
+          >
+            Add
+          </button>
+        </form>
+
+        {variableBreakpoints.length === 0 ? (
+          <div className="mt-1" style={{ color: "var(--text-muted)" }}>
+            No variable breakpoints in the active tab.
+          </div>
+        ) : (
+          <div className="mt-2 flex flex-col gap-2">
+            {variableBreakpoints.map((bp) => (
+              <div
+                key={breakpointKey(bp)}
+                className="rounded px-2 py-1"
+                style={{
+                  border: "1px solid var(--border-primary)",
+                  backgroundColor: "var(--bg-secondary)",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span style={{ ...monoFontStyle, color: "var(--text-accent)" }}>
+                    {breakpointLabel(bp)}
+                  </span>
+                  {summarizeBreakpointOptions(bp) && (
+                    <span style={{ color: "var(--text-muted)", fontSize: "0.82em" }}>
+                      {summarizeBreakpointOptions(bp)}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => beginEditBreakpoint(bp)}
+                    style={{
+                      backgroundColor: "transparent",
+                      color: "var(--text-secondary)",
+                      cursor: "pointer",
+                      fontSize: "0.9em",
+                    }}
+                    title="Edit this breakpoint"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => onRemoveBreakpoint(bp)}
+                    style={{
+                      backgroundColor: "transparent",
+                      color: "var(--text-muted)",
+                      cursor: "pointer",
+                      fontSize: "0.95em",
+                    }}
+                    title="Remove variable breakpoint"
+                  >
+                    x
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3">
+        <div style={{ color: "var(--text-secondary)" }}>Command Breakpoints</div>
+        <form
+          className="mt-2 flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const targetCommand = newCommandName.trim();
+            if (!targetCommand) return;
+            onAddCommandBreakpoint(targetCommand);
+            setNewCommandName("");
+          }}
+        >
+          <input
+            value={newCommandName}
+            onChange={(e) => setNewCommandName(e.target.value)}
+            placeholder="Command name (e.g. Get-ChildItem)"
+            className="px-2 py-1"
+            style={{
+              ...monoFontStyle,
+              backgroundColor: "var(--bg-input)",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)",
+              borderRadius: "2px",
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--text-accent)",
+              cursor: "pointer",
+            }}
+          >
+            Add
+          </button>
+        </form>
+
+        {commandBreakpoints.length === 0 ? (
+          <div className="mt-1" style={{ color: "var(--text-muted)" }}>
+            No command breakpoints in the active tab.
+          </div>
+        ) : (
+          <div className="mt-2 flex flex-col gap-2">
+            {commandBreakpoints.map((bp) => (
+              <div
+                key={breakpointKey(bp)}
+                className="rounded px-2 py-1"
+                style={{
+                  border: "1px solid var(--border-primary)",
+                  backgroundColor: "var(--bg-secondary)",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span style={{ ...monoFontStyle, color: "var(--text-accent)" }}>
+                    {breakpointLabel(bp)}
+                  </span>
+                  {summarizeBreakpointOptions(bp) && (
+                    <span style={{ color: "var(--text-muted)", fontSize: "0.82em" }}>
+                      {summarizeBreakpointOptions(bp)}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => beginEditBreakpoint(bp)}
+                    style={{
+                      backgroundColor: "transparent",
+                      color: "var(--text-secondary)",
+                      cursor: "pointer",
+                      fontSize: "0.9em",
+                    }}
+                    title="Edit this breakpoint"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => onRemoveBreakpoint(bp)}
+                    style={{
+                      backgroundColor: "transparent",
+                      color: "var(--text-muted)",
+                      cursor: "pointer",
+                      fontSize: "0.95em",
+                    }}
+                    title="Remove command breakpoint"
+                  >
+                    x
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <div style={{ color: "var(--text-secondary)" }}>Breakpoint Editor</div>
+        {!editingBreakpoint ? (
+          <div className="mt-1" style={{ color: "var(--text-muted)" }}>
+            Select Edit on any breakpoint to modify condition, hit count, and action.
+          </div>
+        ) : (
+          <div
+            className="mt-2 rounded p-2"
+            style={{
+              border: "1px solid var(--border-primary)",
+              backgroundColor: "var(--bg-secondary)",
+            }}
+          >
+            <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Editing {breakpointLabel(editingBreakpoint)}
+            </div>
+            {editingBreakpoint.line !== undefined && (
+              <div className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+                Line breakpoint at line {editingBreakpoint.line}
+              </div>
+            )}
+            {editingBreakpoint.variable !== undefined && (
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  value={editVariableName}
+                  onChange={(e) => setEditVariableName(e.target.value)}
+                  placeholder="Variable name"
+                  className="px-2 py-1"
+                  style={{
+                    ...monoFontStyle,
+                    backgroundColor: "var(--bg-input)",
+                    border: "1px solid var(--border-primary)",
+                    color: "var(--text-primary)",
+                    borderRadius: "2px",
+                  }}
+                />
+                <select
+                  value={editVariableMode}
+                  onChange={(e) =>
+                    setEditVariableMode(
+                      e.target.value as "Read" | "Write" | "ReadWrite",
+                    )
+                  }
+                  style={{
+                    ...monoFontStyle,
+                    backgroundColor: "var(--bg-input)",
+                    border: "1px solid var(--border-primary)",
+                    color: "var(--text-primary)",
+                    borderRadius: "2px",
+                    padding: "5px 8px",
+                  }}
+                >
+                  <option value="ReadWrite">ReadWrite</option>
+                  <option value="Read">Read</option>
+                  <option value="Write">Write</option>
+                </select>
+              </div>
+            )}
+            {editingBreakpoint.targetCommand !== undefined && (
+              <div className="mt-2">
+                <input
+                  value={editCommandName}
+                  onChange={(e) => setEditCommandName(e.target.value)}
+                  placeholder="Command name"
+                  className="w-full px-2 py-1"
+                  style={{
+                    ...monoFontStyle,
+                    backgroundColor: "var(--bg-input)",
+                    border: "1px solid var(--border-primary)",
+                    color: "var(--text-primary)",
+                    borderRadius: "2px",
+                  }}
+                />
+              </div>
+            )}
+
+            <div className="mt-2">
+              <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Condition
+              </div>
+              <input
+                value={editCondition}
+                onChange={(e) => setEditCondition(e.target.value)}
+                placeholder="PowerShell condition expression"
+                className="w-full px-2 py-1"
+                style={{
+                  ...monoFontStyle,
+                  backgroundColor: "var(--bg-input)",
+                  border: "1px solid var(--border-primary)",
+                  color: "var(--text-primary)",
+                  borderRadius: "2px",
+                }}
+              />
+            </div>
+
+            <div className="mt-2">
+              <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Hit Count (blank for none)
+              </div>
+              <input
+                value={editHitCount}
+                onChange={(e) => setEditHitCount(e.target.value)}
+                placeholder="e.g. 3"
+                className="w-32 px-2 py-1"
+                style={{
+                  ...monoFontStyle,
+                  backgroundColor: "var(--bg-input)",
+                  border: "1px solid var(--border-primary)",
+                  color: "var(--text-primary)",
+                  borderRadius: "2px",
+                }}
+              />
+            </div>
+
+            <div className="mt-2">
+              <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Action Command
+              </div>
+              <textarea
+                value={editAction}
+                onChange={(e) => setEditAction(e.target.value)}
+                placeholder="PowerShell script/action to run when breakpoint hits"
+                className="w-full px-2 py-1"
+                rows={3}
+                style={{
+                  ...monoFontStyle,
+                  backgroundColor: "var(--bg-input)",
+                  border: "1px solid var(--border-primary)",
+                  color: "var(--text-primary)",
+                  borderRadius: "2px",
+                }}
+              />
+            </div>
+
+            {editError && (
+              <div className="mt-2 text-xs" style={{ color: "var(--stream-stderr)" }}>
+                {editError}
+              </div>
+            )}
+
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={saveEditedBreakpoint}
+                style={{
+                  backgroundColor: "transparent",
+                  color: "var(--text-accent)",
+                  cursor: "pointer",
+                }}
+              >
+                Save
+              </button>
+              <button
+                onClick={() => {
+                  if (!editingBreakpoint) return;
+                  onRemoveBreakpoint(editingBreakpoint);
+                  cancelEditBreakpoint();
+                }}
+                style={{
+                  backgroundColor: "transparent",
+                  color: "var(--stream-stderr)",
+                  cursor: "pointer",
+                }}
+              >
+                Remove
+              </button>
+              <button
+                onClick={cancelEditBreakpoint}
+                style={{
+                  backgroundColor: "transparent",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1049,7 +2044,8 @@ function DebuggerPane({
           fontSize: "0.92em",
         }}
       >
-        F5 Continue | F10 Step Over | F11 Step Into | Shift+F11 Step Out | Shift+F5 Stop
+        F5 Run/Continue | F9 Toggle Breakpoint | F10 Step Over | F11 Step Into |
+        Shift+F11 Step Out | Shift+F5 Stop
       </div>
     </div>
   );

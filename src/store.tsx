@@ -19,6 +19,10 @@ import type {
   VariableInfo,
   ModuleInfo,
   ProblemItem,
+  DebugBreakpoint,
+  DebugLocal,
+  DebugStackFrame,
+  DebugWatch,
 } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import * as cmd from "./commands";
@@ -40,7 +44,7 @@ type BottomPanelTab =
   | "problems"
   | "terminal"
   | "debugger";
-type BreakpointMap = Record<string, number[]>;
+type BreakpointMap = Record<string, DebugBreakpoint[]>;
 
 interface PersistedSession {
   tabs: EditorTab[];
@@ -75,16 +79,78 @@ function createUntitledTab(id = "tab-1", title = "Untitled-1"): EditorTab {
   };
 }
 
-function normalizeBreakpointLines(value: unknown): number[] {
-  if (!Array.isArray(value)) return [];
-  const unique = new Set<number>();
-  for (const item of value) {
-    if (typeof item !== "number" || !Number.isInteger(item) || item < 1) {
-      continue;
-    }
-    unique.add(item);
+function normalizeBreakpointMode(value: unknown): "Read" | "Write" | "ReadWrite" {
+  if (value === "Read") return "Read";
+  if (value === "Write") return "Write";
+  return "ReadWrite";
+}
+
+function breakpointKey(bp: DebugBreakpoint): string {
+  if (typeof bp.line === "number") return `line:${bp.line}`;
+  if (typeof bp.targetCommand === "string" && bp.targetCommand.trim()) {
+    return `cmd:${bp.targetCommand.trim().toLowerCase()}`;
   }
-  return [...unique].sort((a, b) => a - b);
+  const mode = normalizeBreakpointMode(bp.mode);
+  const variable = (bp.variable ?? "").toLowerCase();
+  return `var:${mode}:${variable}`;
+}
+
+function normalizeBreakpoint(value: unknown): DebugBreakpoint | null {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 1) {
+    return { line: value };
+  }
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+  const line =
+    typeof rec.line === "number" && Number.isInteger(rec.line) && rec.line >= 1
+      ? rec.line
+      : undefined;
+  const variableRaw =
+    typeof rec.variable === "string"
+      ? rec.variable.trim().replace(/^\$/, "")
+      : "";
+  const variable = variableRaw.length > 0 ? variableRaw : undefined;
+  const targetCommandRaw =
+    typeof rec.targetCommand === "string" ? rec.targetCommand.trim() : "";
+  const targetCommand =
+    targetCommandRaw.length > 0 ? targetCommandRaw : undefined;
+  if (line === undefined && variable === undefined && targetCommand === undefined) {
+    return null;
+  }
+
+  const condition =
+    typeof rec.condition === "string" && rec.condition.trim().length > 0
+      ? rec.condition.trim()
+      : undefined;
+  const command =
+    typeof rec.command === "string" && rec.command.trim().length > 0
+      ? rec.command.trim()
+      : undefined;
+  const hitCount =
+    typeof rec.hitCount === "number" &&
+    Number.isInteger(rec.hitCount) &&
+    rec.hitCount >= 1
+      ? rec.hitCount
+      : undefined;
+  const mode = variable ? normalizeBreakpointMode(rec.mode) : undefined;
+
+  return { line, variable, targetCommand, mode, condition, hitCount, command };
+}
+
+function normalizeBreakpointList(value: unknown): DebugBreakpoint[] {
+  if (!Array.isArray(value)) return [];
+  const unique = new Map<string, DebugBreakpoint>();
+  for (const item of value) {
+    const normalized = normalizeBreakpoint(item);
+    if (!normalized) continue;
+    unique.set(breakpointKey(normalized), normalized);
+  }
+  return [...unique.values()].sort((a, b) => {
+    const aLine = typeof a.line === "number" ? a.line : Number.MAX_SAFE_INTEGER;
+    const bLine = typeof b.line === "number" ? b.line : Number.MAX_SAFE_INTEGER;
+    if (aLine !== bLine) return aLine - bLine;
+    return breakpointKey(a).localeCompare(breakpointKey(b));
+  });
 }
 
 function normalizePersistedBreakpoints(
@@ -94,10 +160,10 @@ function normalizePersistedBreakpoints(
   if (!value || typeof value !== "object") return {};
   const rec = value as Record<string, unknown>;
   const result: BreakpointMap = {};
-  for (const [tabId, rawLines] of Object.entries(rec)) {
+  for (const [tabId, rawBreakpoints] of Object.entries(rec)) {
     if (!validTabIds.has(tabId)) continue;
-    const lines = normalizeBreakpointLines(rawLines);
-    if (lines.length > 0) result[tabId] = lines;
+    const breakpoints = normalizeBreakpointList(rawBreakpoints);
+    if (breakpoints.length > 0) result[tabId] = breakpoints;
   }
   return result;
 }
@@ -211,7 +277,7 @@ export interface AppState {
   showAbout: boolean;
   /** Whether the script signing dialog is visible. */
   showSigningDialog: boolean;
-  /** Per-tab debugger breakpoints as 1-indexed line numbers. */
+  /** Per-tab debugger breakpoints (line and variable). */
   breakpoints: BreakpointMap;
   /** True when a debug run is active (script started via debugger command). */
   isDebugging: boolean;
@@ -221,6 +287,14 @@ export interface AppState {
   debugLine: number | null;
   /** Current debugger stop location column (1-indexed), when known. */
   debugColumn: number | null;
+  /** Selected call-stack frame index (0 = current). */
+  debugSelectedFrame: number;
+  /** Debugger locals captured at the current pause point. */
+  debugLocals: DebugLocal[];
+  /** PowerShell call stack captured at the current pause point. */
+  debugCallStack: DebugStackFrame[];
+  /** User-defined watch expressions and their latest values/errors. */
+  debugWatches: DebugWatch[];
 }
 
 /** Detects first launch by checking localStorage and creates the appropriate initial tab. */
@@ -285,6 +359,10 @@ const initialState: AppState = {
   debugPaused: false,
   debugLine: null,
   debugColumn: null,
+  debugSelectedFrame: 0,
+  debugLocals: [],
+  debugCallStack: [],
+  debugWatches: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -326,14 +404,23 @@ type Action =
   | { type: "TOGGLE_ABOUT" }
   | { type: "TOGGLE_SIGNING_DIALOG" }
   | { type: "TOGGLE_BREAKPOINT"; tabId: string; line: number }
-  | { type: "SET_BREAKPOINTS"; tabId: string; lines: number[] }
+  | { type: "SET_BREAKPOINTS"; tabId: string; breakpoints: DebugBreakpoint[] }
+  | { type: "UPSERT_BREAKPOINT"; tabId: string; breakpoint: DebugBreakpoint }
+  | { type: "REMOVE_BREAKPOINT"; tabId: string; breakpoint: DebugBreakpoint }
   | {
       type: "SET_DEBUG_STATE";
       isDebugging?: boolean;
       debugPaused?: boolean;
       debugLine?: number | null;
       debugColumn?: number | null;
-    };
+    }
+  | { type: "SET_DEBUG_SELECTED_FRAME"; frameIndex: number }
+  | { type: "SET_DEBUG_LOCALS"; locals: DebugLocal[] }
+  | { type: "SET_DEBUG_CALL_STACK"; frames: DebugStackFrame[] }
+  | { type: "ADD_DEBUG_WATCH"; expression: string }
+  | { type: "REMOVE_DEBUG_WATCH"; expression: string }
+  | { type: "UPDATE_DEBUG_WATCH"; watch: DebugWatch }
+  | { type: "CLEAR_DEBUG_INSPECTOR_VALUES" };
 
 // ---------------------------------------------------------------------------
 // Problem parsing
@@ -613,26 +700,59 @@ function reducer(state: AppState, action: Action): AppState {
     case "TOGGLE_BREAKPOINT": {
       if (action.line < 1) return state;
       const existing = state.breakpoints[action.tabId] ?? [];
-      const has = existing.includes(action.line);
-      const lines = has
-        ? existing.filter((line) => line !== action.line)
-        : [...existing, action.line].sort((a, b) => a - b);
+      const has = existing.some((bp) => bp.line === action.line);
+      const breakpoints = has
+        ? existing.filter((bp) => bp.line !== action.line)
+        : normalizeBreakpointList([...existing, { line: action.line }]);
       const next = { ...state.breakpoints };
-      if (lines.length === 0) {
+      if (breakpoints.length === 0) {
         delete next[action.tabId];
       } else {
-        next[action.tabId] = lines;
+        next[action.tabId] = breakpoints;
       }
       return { ...state, breakpoints: next };
     }
 
     case "SET_BREAKPOINTS": {
-      const lines = normalizeBreakpointLines(action.lines);
+      const breakpoints = normalizeBreakpointList(action.breakpoints);
       const next = { ...state.breakpoints };
-      if (lines.length === 0) {
+      if (breakpoints.length === 0) {
         delete next[action.tabId];
       } else {
-        next[action.tabId] = lines;
+        next[action.tabId] = breakpoints;
+      }
+      return { ...state, breakpoints: next };
+    }
+
+    case "UPSERT_BREAKPOINT": {
+      const normalized = normalizeBreakpoint(action.breakpoint);
+      if (!normalized) return state;
+      const existing = state.breakpoints[action.tabId] ?? [];
+      const key = breakpointKey(normalized);
+      const merged = normalizeBreakpointList([
+        ...existing.filter((bp) => breakpointKey(bp) !== key),
+        normalized,
+      ]);
+      const next = { ...state.breakpoints };
+      if (merged.length === 0) {
+        delete next[action.tabId];
+      } else {
+        next[action.tabId] = merged;
+      }
+      return { ...state, breakpoints: next };
+    }
+
+    case "REMOVE_BREAKPOINT": {
+      const normalized = normalizeBreakpoint(action.breakpoint);
+      if (!normalized) return state;
+      const existing = state.breakpoints[action.tabId] ?? [];
+      const key = breakpointKey(normalized);
+      const filtered = existing.filter((bp) => breakpointKey(bp) !== key);
+      const next = { ...state.breakpoints };
+      if (filtered.length === 0) {
+        delete next[action.tabId];
+      } else {
+        next[action.tabId] = filtered;
       }
       return { ...state, breakpoints: next };
     }
@@ -648,6 +768,67 @@ function reducer(state: AppState, action: Action): AppState {
           action.debugColumn !== undefined
             ? action.debugColumn
             : state.debugColumn,
+        debugSelectedFrame:
+          action.isDebugging === false ? 0 : state.debugSelectedFrame,
+      };
+
+    case "SET_DEBUG_SELECTED_FRAME":
+      return {
+        ...state,
+        debugSelectedFrame: Math.max(0, Math.floor(action.frameIndex || 0)),
+      };
+
+    case "SET_DEBUG_LOCALS":
+      return { ...state, debugLocals: action.locals };
+
+    case "SET_DEBUG_CALL_STACK":
+      return { ...state, debugCallStack: action.frames };
+
+    case "ADD_DEBUG_WATCH": {
+      const expression = action.expression.trim();
+      if (!expression) return state;
+      if (state.debugWatches.some((w) => w.expression === expression)) {
+        return state;
+      }
+      return {
+        ...state,
+        debugWatches: [
+          ...state.debugWatches,
+          { expression, value: "", error: "" },
+        ],
+      };
+    }
+
+    case "REMOVE_DEBUG_WATCH":
+      return {
+        ...state,
+        debugWatches: state.debugWatches.filter(
+          (w) => w.expression !== action.expression,
+        ),
+      };
+
+    case "UPDATE_DEBUG_WATCH": {
+      const idx = state.debugWatches.findIndex(
+        (w) => w.expression === action.watch.expression,
+      );
+      if (idx === -1) {
+        return { ...state, debugWatches: [...state.debugWatches, action.watch] };
+      }
+      const next = [...state.debugWatches];
+      next[idx] = action.watch;
+      return { ...state, debugWatches: next };
+    }
+
+    case "CLEAR_DEBUG_INSPECTOR_VALUES":
+      return {
+        ...state,
+        debugLocals: [],
+        debugCallStack: [],
+        debugWatches: state.debugWatches.map((w) => ({
+          ...w,
+          value: "",
+          error: "",
+        })),
       };
 
     default:
@@ -771,8 +952,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
       dispatch({ type: "SET_BOTTOM_TAB", tab: persisted.bottomPanelTab });
       dispatch({ type: "SET_WORKING_DIR", dir: persisted.workingDir });
-      for (const [tabId, lines] of Object.entries(persisted.breakpoints)) {
-        dispatch({ type: "SET_BREAKPOINTS", tabId, lines });
+      for (const [tabId, breakpoints] of Object.entries(persisted.breakpoints)) {
+        dispatch({ type: "SET_BREAKPOINTS", tabId, breakpoints });
       }
       if (persisted.selectedPsPath) {
         dispatch({ type: "SET_SELECTED_PS", path: persisted.selectedPsPath });

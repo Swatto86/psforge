@@ -266,7 +266,7 @@ export function Toolbar({
 
       {/* Run / Stop */}
       <ToolbarBtn
-        title="Run Script (F5)"
+        title="Run or Debug Script (F5)"
         onClick={onRun}
         testId="toolbar-run"
         // BUG-NEW-2 fix: welcome tabs contain no runnable PowerShell code;

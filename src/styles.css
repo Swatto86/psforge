@@ -230,6 +230,24 @@ select:focus {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-primary) 60%, transparent);
 }
 
+.psforge-breakpoint-glyph-conditional {
+  position: relative;
+}
+
+.psforge-breakpoint-glyph-conditional::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  margin-left: -5px;
+  transform: rotate(45deg);
+  background: var(--stream-warning);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-primary) 60%, transparent);
+}
+
 .psforge-breakpoint-line {
   border-left: 2px solid color-mix(in srgb, var(--stream-stderr) 55%, transparent);
   margin-left: 2px;

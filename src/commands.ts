@@ -7,6 +7,7 @@ import type {
   BatchResult,
   CertInfo,
   CommandInfo,
+  DebugBreakpoint,
   FileContent,
   ModuleInfo,
   ModuleInstallSuggestion,
@@ -41,7 +42,7 @@ export async function executeScriptDebug(
   script: string,
   workingDir: string,
   execPolicy: string,
-  breakpoints: number[],
+  breakpoints: DebugBreakpoint[],
   scriptArgs: string[] = [],
 ): Promise<number> {
   return invoke<number>("execute_script_debug", {
@@ -113,6 +114,11 @@ export async function debugStepInto(): Promise<void> {
 /** Step out of the current scope in the debugger. */
 export async function debugStepOut(): Promise<void> {
   return invoke("debug_step_out");
+}
+
+/** Select debugger frame scope for locals/watch evaluation (0 = current). */
+export async function debugSetFrame(frameIndex: number): Promise<void> {
+  return invoke("debug_set_frame", { frameIndex });
 }
 
 /** Discover all installed PowerShell versions. */

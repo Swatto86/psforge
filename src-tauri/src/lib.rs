@@ -34,6 +34,7 @@ pub fn run() {
             commands::debug_step_over,
             commands::debug_step_into,
             commands::debug_step_out,
+            commands::debug_set_frame,
             commands::get_script_parameters,
             commands::get_ps_versions,
             commands::get_installed_modules,

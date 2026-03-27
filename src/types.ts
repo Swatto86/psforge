@@ -74,6 +74,54 @@ export interface VariableInfo {
   typeName: string;
 }
 
+/** A variable visible in the current debugger scope. */
+export interface DebugLocal {
+  /** Variable name without leading '$'. */
+  name: string;
+  /** Runtime type name when known. */
+  typeName: string;
+  /** String-rendered value preview. */
+  value: string;
+  /** Scope/options descriptor from PowerShell (best-effort). */
+  scope: string;
+}
+
+/** A single frame in the current PowerShell call stack. */
+export interface DebugStackFrame {
+  /** Function/cmdlet name when available. */
+  functionName: string;
+  /** Script path + line or "Interactive". */
+  location: string;
+  /** Command text associated with the frame. */
+  command: string;
+}
+
+/** A user-defined watch expression and its latest evaluation result. */
+export interface DebugWatch {
+  expression: string;
+  value: string;
+  /** Non-empty when the expression evaluation failed. */
+  error: string;
+}
+
+/** Breakpoint definition for line/variable breakpoints in the debugger. */
+export interface DebugBreakpoint {
+  /** 1-indexed source line for line breakpoints. */
+  line?: number;
+  /** Variable name (without `$`) for variable breakpoints. */
+  variable?: string;
+  /** Command/cmdlet name for command breakpoints. */
+  targetCommand?: string;
+  /** Variable breakpoint mode. */
+  mode?: "Read" | "Write" | "ReadWrite";
+  /** Expression condition that must evaluate truthy before breaking. */
+  condition?: string;
+  /** Break only on/after this hit count (1-based). */
+  hitCount?: number;
+  /** Optional action script executed when the breakpoint triggers. */
+  command?: string;
+}
+
 /**
  * Metadata for a single parameter declared in a PowerShell script's param() block.
  * Returned by the `get_script_parameters` Tauri command.
