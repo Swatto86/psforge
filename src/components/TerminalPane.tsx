@@ -173,6 +173,35 @@ function cssVar(name: string, fallback: string): string {
   );
 }
 
+type TabCompletionCycle = {
+  seedInput: string;
+  tokenStart: number;
+  tokenEnd: number;
+  items: string[];
+  index: number;
+  renderedInput: string;
+  renderedCursor: number;
+};
+
+/** PowerShell token boundary characters used for completion replacement. */
+const TOKEN_BOUNDARY_RE = /[\s,;|(){}\[\]`"'<>@#%&*!?+^]/;
+
+/** Extracts `Get-Foo` from stderr text like: The term 'Get-Foo' is not recognized... */
+function extractMissingCommandName(line: string): string | null {
+  // eslint-disable-next-line no-control-regex
+  const plain = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+  const patterns = [
+    /The term ['"]([^'"]+)['"] is not recognized\b/i,
+    /CommandNotFoundException:\s*(?:The term )?['"]([^'"]+)['"]/i,
+  ];
+  for (const pattern of patterns) {
+    const match = plain.match(pattern);
+    const candidate = match?.[1]?.trim();
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
 export function TerminalPane() {
   const { state } = useAppState();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -214,6 +243,14 @@ export function TerminalPane() {
    * before the first terminal-cwd event fires.
    */
   const pendingInitialPromptRef = useRef<boolean>(false);
+  /** State for cycling through TabExpansion2 completions across repeated Tab presses. */
+  const tabCompletionRef = useRef<TabCompletionCycle | null>(null);
+  /** Monotonic sequence to discard stale async completion responses. */
+  const completionSeqRef = useRef<number>(0);
+  /** Missing command name captured from the latest stderr line for this command run. */
+  const missingCommandRef = useRef<string | null>(null);
+  /** Commands already hinted in this session so we do not repeat lookup spam. */
+  const hintedMissingCommandsRef = useRef<Set<string>>(new Set());
 
   // Keep snapshot refs current so the mount effect captures up-to-date values.
   fontFamilyRef.current = state.settings.outputFontFamily;
@@ -472,8 +509,10 @@ export function TerminalPane() {
       if (charsToEnd > 0) term.write(`\x1b[${charsToEnd}C`);
       inputBufferRef.current = "";
       cursorPosRef.current = 0;
+      tabCompletionRef.current = null;
       term.write("\r\n");
       if (command.trim()) {
+        missingCommandRef.current = null;
         const hist = historyRef.current;
         if (hist.length === 0 || hist[hist.length - 1] !== command) {
           hist.push(command);
@@ -495,6 +534,7 @@ export function TerminalPane() {
           });
         }
       } else {
+        missingCommandRef.current = null;
         historyIdxRef.current = -1;
         writePrompt();
       }
@@ -508,6 +548,8 @@ export function TerminalPane() {
       if (cancelled) return;
       inputBufferRef.current = "";
       cursorPosRef.current = 0;
+      tabCompletionRef.current = null;
+      missingCommandRef.current = null;
       historyIdxRef.current = -1;
       term.write("\r\n");
       writePrompt();
@@ -528,6 +570,47 @@ export function TerminalPane() {
       }
     };
 
+    /**
+     * Looks up installable modules for a missing command and prints actionable
+     * hints below the current prompt.
+     */
+    const writeMissingCommandHint = async (commandName: string) => {
+      const key = commandName.trim().toLowerCase();
+      if (!key || hintedMissingCommandsRef.current.has(key)) return;
+
+      const psPath = shellPathRef.current;
+      if (!psPath) return;
+
+      const suggestions = await cmd
+        .suggestModulesForCommand(psPath, commandName)
+        .catch(() => []);
+      if (
+        cancelled ||
+        isStoppingRef.current ||
+        suggestions.length === 0 ||
+        inputBufferRef.current.length > 0 ||
+        cursorPosRef.current > 0
+      ) {
+        return;
+      }
+
+      const top = suggestions.slice(0, 3);
+      const names = top.map((s) => s.name).join(", ");
+      term.write(
+        `\r\n\x1b[2m[Hint] '${commandName}' may be available in module${top.length > 1 ? "s" : ""}: ${names}\x1b[0m\r\n`,
+      );
+      for (const suggestion of top) {
+        const repo = suggestion.repository
+          ? ` (${suggestion.repository})`
+          : "";
+        term.write(
+          `\x1b[2m  ${suggestion.installCommand}${repo}\x1b[0m\r\n`,
+        );
+      }
+      hintedMissingCommandsRef.current.add(key);
+      writePrompt();
+    };
+
     // ---- Tauri event listeners ----
 
     // A line of stdout from the running command.
@@ -538,6 +621,10 @@ export function TerminalPane() {
 
     // A line of stderr from the running command -- shown in red.
     const unlistenStderr = listen<string>("terminal-stderr", (event) => {
+      const missingCommand = extractMissingCommandName(event.payload);
+      if (missingCommand) {
+        missingCommandRef.current = missingCommand;
+      }
       const line = event.payload.replace(/\r?\n/g, "\r\n");
       term.write(`\x1b[31m${line}\x1b[0m\r\n`);
     });
@@ -570,6 +657,11 @@ export function TerminalPane() {
       // Reset the restart counter so future exits get a full set of retries.
       restartAttemptsRef.current = 0;
       writePrompt();
+      const missingCommand = missingCommandRef.current;
+      missingCommandRef.current = null;
+      if (missingCommand) {
+        void writeMissingCommandHint(missingCommand);
+      }
     });
 
     // The session process has exited.  Only auto-restart if the exit was NOT
@@ -636,7 +728,14 @@ export function TerminalPane() {
      * Visual-width arithmetic always uses RAW text lengths because ANSI escape
      * sequences produced by highlightPs are non-printing.
      */
-    const setInputLine = (newText: string, newCursor: number) => {
+    const setInputLine = (
+      newText: string,
+      newCursor: number,
+      preserveTabCompletion = false,
+    ) => {
+      if (!preserveTabCompletion) {
+        tabCompletionRef.current = null;
+      }
       const currentPos = cursorPosRef.current;
       const currentText = inputBufferRef.current;
       let seq = "";
@@ -679,6 +778,101 @@ export function TerminalPane() {
       while (i < buf.length && buf[i] === " ") i++; // skip whitespace
       while (i < buf.length && buf[i] !== " ") i++; // skip word
       return i;
+    };
+
+    /** Finds the start of the current PowerShell token ending at `pos`. */
+    const completionTokenStart = (buf: string, pos: number): number => {
+      let start = pos;
+      while (start > 0 && !TOKEN_BOUNDARY_RE.test(buf[start - 1])) {
+        start--;
+      }
+      return start;
+    };
+
+    /** Deduplicates completion text values while preserving source order. */
+    const uniqueCompletionTexts = (
+      items: Awaited<ReturnType<typeof cmd.getCompletions>>,
+    ): string[] => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const item of items) {
+        const text = item.completionText || "";
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        out.push(text);
+      }
+      return out;
+    };
+
+    /** Applies a completion item from a cycle snapshot to the input buffer. */
+    const applyCompletionCandidate = (
+      cycle: TabCompletionCycle,
+      nextIndex: number,
+    ) => {
+      const candidate = cycle.items[nextIndex];
+      const nextText =
+        cycle.seedInput.slice(0, cycle.tokenStart) +
+        candidate +
+        cycle.seedInput.slice(cycle.tokenEnd);
+      const nextCursor = cycle.tokenStart + candidate.length;
+      cycle.index = nextIndex;
+      cycle.renderedInput = nextText;
+      cycle.renderedCursor = nextCursor;
+      setInputLine(nextText, nextCursor, true);
+    };
+
+    /** Handles terminal Tab completion via the existing get_completions API. */
+    const triggerTabCompletion = async () => {
+      const currentBuf = inputBufferRef.current;
+      const currentPos = cursorPosRef.current;
+      const existing = tabCompletionRef.current;
+      if (
+        existing &&
+        currentBuf === existing.renderedInput &&
+        currentPos === existing.renderedCursor &&
+        existing.items.length > 0
+      ) {
+        const next = (existing.index + 1) % existing.items.length;
+        applyCompletionCandidate(existing, next);
+        return;
+      }
+
+      const psPath = shellPathRef.current;
+      if (!psPath) return;
+
+      const tokenStart = completionTokenStart(currentBuf, currentPos);
+      const requestSeq = completionSeqRef.current + 1;
+      completionSeqRef.current = requestSeq;
+      const results = await cmd
+        .getCompletions(psPath, currentBuf, currentPos)
+        .catch(() => []);
+
+      if (
+        cancelled ||
+        completionSeqRef.current !== requestSeq ||
+        inputBufferRef.current !== currentBuf ||
+        cursorPosRef.current !== currentPos
+      ) {
+        return;
+      }
+
+      const items = uniqueCompletionTexts(results);
+      if (items.length === 0) {
+        tabCompletionRef.current = null;
+        return;
+      }
+
+      const cycle: TabCompletionCycle = {
+        seedInput: currentBuf,
+        tokenStart,
+        tokenEnd: currentPos,
+        items,
+        index: -1,
+        renderedInput: currentBuf,
+        renderedCursor: currentPos,
+      };
+      tabCompletionRef.current = cycle;
+      applyCompletionCandidate(cycle, 0);
     };
 
     /** Handles a fully-assembled VT escape sequence (e.g. "\x1b[A"). */
@@ -879,9 +1073,11 @@ export function TerminalPane() {
           if (charsToEnd > 0) term.write(`\x1b[${charsToEnd}C`);
           inputBufferRef.current = "";
           cursorPosRef.current = 0;
+          tabCompletionRef.current = null;
           term.write("\r\n");
 
           if (command.trim()) {
+            missingCommandRef.current = null;
             // Add to history, deduplicating consecutive identical entries.
             const hist = historyRef.current;
             if (hist.length === 0 || hist[hist.length - 1] !== command) {
@@ -908,6 +1104,7 @@ export function TerminalPane() {
               });
             }
           } else {
+            missingCommandRef.current = null;
             historyIdxRef.current = -1;
             // Empty line: just show a new prompt.
             writePrompt();
@@ -926,6 +1123,7 @@ export function TerminalPane() {
           // Ctrl+C: cancel current input.
           inputBufferRef.current = "";
           cursorPosRef.current = 0;
+          tabCompletionRef.current = null;
           historyIdxRef.current = -1;
           term.write("^C\r\n");
           writePrompt();
@@ -1029,8 +1227,11 @@ export function TerminalPane() {
           const start = wordLeft(buf, pos);
           if (start !== pos)
             setInputLine(buf.slice(0, start) + buf.slice(pos), start);
-        } else if (ch >= " " || ch === "\t") {
-          // Printable character or Tab: insert at cursor position then
+        } else if (ch === "\t") {
+          // Tab: trigger PowerShell completion for the current token.
+          void triggerTabCompletion();
+        } else if (ch >= " ") {
+          // Printable character: insert at cursor position then
           // re-render the whole input line with syntax highlighting.
           const pos = cursorPosRef.current;
           const buf = inputBufferRef.current;

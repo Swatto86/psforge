@@ -16,6 +16,45 @@ use uuid::Uuid;
 /// Maximum number of output lines to buffer per process (memory bound).
 const MAX_OUTPUT_LINES: usize = 100_000;
 
+/// PowerShell bootstrap that ensures a real (hidden) Win32 console window
+/// handle exists for the child process.
+///
+/// Some modern auth flows (for example WAM/MSAL in ExchangeOnlineManagement)
+/// query `GetConsoleWindow()` and fail when it returns `0` in redirected,
+/// headless hosts.  We detach from any pseudoconsole and allocate a hidden
+/// real console window when needed, while keeping stdio pipes intact.
+const AUTH_WINDOW_HANDLE_BOOTSTRAP_PS: &str = r#"
+try {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class PSForgeNativeConsole {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool FreeConsole();
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool AllocConsole();
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@ -ErrorAction Stop | Out-Null
+
+    if ([PSForgeNativeConsole]::GetConsoleWindow() -eq [IntPtr]::Zero) {
+        [void][PSForgeNativeConsole]::FreeConsole()
+        if ([PSForgeNativeConsole]::AllocConsole()) {
+            $psfHwnd = [PSForgeNativeConsole]::GetConsoleWindow()
+            if ($psfHwnd -ne [IntPtr]::Zero) {
+                # SW_HIDE = 0
+                [void][PSForgeNativeConsole]::ShowWindow($psfHwnd, 0)
+            }
+        }
+    }
+} catch {
+    # Best-effort only: script execution must continue even if this fails.
+}
+"#;
+
 /// Represents a discovered PowerShell installation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PsVersion {
@@ -154,15 +193,31 @@ impl ProcessManager {
             &script[..script.len().min(200)]
         );
 
-        // Write the script to a uniquely-named temp file and run it with -File.
+        // Write the user script to a uniquely-named temp file.
         // Using -File instead of -Command removes the "inline PowerShell command"
         // pattern that security tools (e.g. MDE) flag as a reverse-shell indicator.
-        let temp_path = std::env::temp_dir().join(format!("psforge_{}.ps1", Uuid::new_v4()));
-        std::fs::write(&temp_path, script.as_bytes()).map_err(|e| AppError {
+        let user_script_path =
+            std::env::temp_dir().join(format!("psforge_script_{}.ps1", Uuid::new_v4()));
+        std::fs::write(&user_script_path, script.as_bytes()).map_err(|e| AppError {
             code: "SCRIPT_WRITE_FAILED".to_string(),
             message: format!("Failed to write script to temp file: {}", e),
         })?;
-        let temp_path_str = temp_path.to_string_lossy().into_owned();
+        let user_script_path_ps = user_script_path.to_string_lossy().replace('\'', "''");
+
+        // Wrapper script that first ensures a valid hidden Win32 console handle
+        // for auth libraries, then executes the real script path with original args.
+        let wrapper_script_path =
+            std::env::temp_dir().join(format!("psforge_wrapper_{}.ps1", Uuid::new_v4()));
+        let mut wrapper_script = String::new();
+        wrapper_script.push_str(AUTH_WINDOW_HANDLE_BOOTSTRAP_PS);
+        wrapper_script.push_str("\n& '");
+        wrapper_script.push_str(&user_script_path_ps);
+        wrapper_script.push_str("' @args\n");
+        std::fs::write(&wrapper_script_path, wrapper_script.as_bytes()).map_err(|e| AppError {
+            code: "SCRIPT_WRITE_FAILED".to_string(),
+            message: format!("Failed to write wrapper script to temp file: {}", e),
+        })?;
+        let wrapper_script_path_str = wrapper_script_path.to_string_lossy().into_owned();
 
         // Build args: only inject -ExecutionPolicy when the user has configured one.
         // "Default" means "honour the machine/user policy" so we omit the flag
@@ -174,7 +229,7 @@ impl ProcessManager {
             ps_args.push(exec_policy.to_string());
         }
         ps_args.push("-File".to_string());
-        ps_args.push(temp_path_str.clone());
+        ps_args.push(wrapper_script_path_str.clone());
         ps_args.extend(script_args.iter().cloned());
 
         let mut child = Command::new(ps_path)
@@ -187,8 +242,9 @@ impl ProcessManager {
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .spawn()
             .map_err(|e| {
-                // Clean up the temp file if the process failed to start.
-                let _ = std::fs::remove_file(&temp_path);
+                // Clean up temp files if the process failed to start.
+                let _ = std::fs::remove_file(&user_script_path);
+                let _ = std::fs::remove_file(&wrapper_script_path);
                 AppError {
                     code: "PROCESS_SPAWN_FAILED".to_string(),
                     message: format!("Failed to start PowerShell at '{}': {}", ps_path, e),
@@ -342,8 +398,9 @@ impl ProcessManager {
             *stdin_guard = None;
         }
 
-        // Remove the temp script file now that execution has finished.
-        let _ = std::fs::remove_file(&temp_path);
+        // Remove temp scripts now that execution has finished.
+        let _ = std::fs::remove_file(&user_script_path);
+        let _ = std::fs::remove_file(&wrapper_script_path);
 
         info!("Script execution completed with exit code {}", exit_code);
         Ok(exit_code)

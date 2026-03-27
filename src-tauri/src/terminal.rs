@@ -39,6 +39,99 @@ if (Get-Module -Name PSReadLine -ErrorAction SilentlyContinue) {
 $ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Ensure this process has a real (hidden) Win32 console window handle.
+# Some auth stacks (WAM/MSAL) call GetConsoleWindow() and fail when the
+# PowerShell host is attached only to a pseudoconsole/no windowed console.
+$script:PSForgeHasAuthWindowHandle = $false
+try {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class PSForgeNativeConsole {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool FreeConsole();
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool AllocConsole();
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@ -ErrorAction Stop | Out-Null
+
+    if ([PSForgeNativeConsole]::GetConsoleWindow() -eq [IntPtr]::Zero) {
+        [void][PSForgeNativeConsole]::FreeConsole()
+        if ([PSForgeNativeConsole]::AllocConsole()) {
+            $psfHwnd = [PSForgeNativeConsole]::GetConsoleWindow()
+            if ($psfHwnd -ne [IntPtr]::Zero) {
+                # SW_HIDE = 0
+                [void][PSForgeNativeConsole]::ShowWindow($psfHwnd, 0)
+            }
+        }
+    }
+
+    $script:PSForgeHasAuthWindowHandle = (
+        [PSForgeNativeConsole]::GetConsoleWindow() -ne [IntPtr]::Zero
+    )
+} catch {
+    $script:PSForgeHasAuthWindowHandle = $false
+}
+
+# Work around ExchangeOnlineManagement WAM failures when no parent window
+# handle is available (for example if console allocation failed).
+# In that case Connect-ExchangeOnline can throw:
+#   "A window handle must be configured..."
+# Automatically add -DisableWAM unless the user has already supplied it.
+function global:Connect-ExchangeOnline {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [object[]]$RemainingArgs
+    )
+
+    if (-not (Microsoft.PowerShell.Core\Get-Module -Name ExchangeOnlineManagement)) {
+        Microsoft.PowerShell.Core\Import-Module `
+            -Name ExchangeOnlineManagement `
+            -ErrorAction SilentlyContinue `
+            | Out-Null
+    }
+
+    $cmdlet = Microsoft.PowerShell.Core\Get-Command `
+        -Name ExchangeOnlineManagement\Connect-ExchangeOnline `
+        -ErrorAction SilentlyContinue
+
+    if (-not $cmdlet) {
+        throw [System.Management.Automation.CommandNotFoundException]::new(
+            "The term 'Connect-ExchangeOnline' is not recognized as a cmdlet."
+        )
+    }
+
+    $hasDisableWAM = $false
+    foreach ($arg in $RemainingArgs) {
+        if ($arg -is [string] -and $arg.Trim().ToLower().StartsWith('-disablewam')) {
+            $hasDisableWAM = $true
+            break
+        }
+    }
+
+    if (
+        $cmdlet.Parameters.ContainsKey('DisableWAM') -and
+        -not $hasDisableWAM -and
+        -not $script:PSForgeHasAuthWindowHandle
+    ) {
+        if (-not $script:PSForgeExoDisableWamNotified) {
+            [Console]::Out.WriteLine(
+                "[PSForge] Applying '-DisableWAM' for Connect-ExchangeOnline in non-console host."
+            )
+            [Console]::Out.Flush()
+            $script:PSForgeExoDisableWamNotified = $true
+        }
+        $RemainingArgs = @($RemainingArgs + '-DisableWAM')
+    }
+
+    & $cmdlet @RemainingArgs
+}
+
 # Emit initial working directory so the frontend path bar appears immediately.
 [Console]::Out.WriteLine('<<PSF_CWD>>' + (Get-Location).Path)
 [Console]::Out.Flush()
