@@ -239,7 +239,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
             id="param-prompt-title"
             data-testid="param-prompt-title"
             style={{
-              fontSize: "15px",
+              fontSize: "var(--ui-font-size-lg)",
               fontWeight: "600",
               color: "var(--text-primary)",
               marginBottom: "4px",
@@ -247,7 +247,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
           >
             Script Parameters Required
           </div>
-          <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+          <div style={{ fontSize: "var(--ui-font-size-sm)", color: "var(--text-muted)" }}>
             Enter values for the mandatory parameters below.
           </div>
         </div>
@@ -284,7 +284,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
               color: "var(--text-primary)",
               border: `1px solid ${error ? "var(--error, #f44)" : "var(--border-primary)"}`,
               borderRadius: "4px",
-              fontSize: "13px",
+              fontSize: "var(--ui-font-size-md)",
               fontFamily: "inherit",
               outline: "none",
               boxSizing: "border-box",
@@ -305,7 +305,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
                     htmlFor={`param-input-${param.name}`}
                     style={{
                       fontWeight: "600",
-                      fontSize: "13px",
+                      fontSize: "var(--ui-font-size-md)",
                       color: "var(--text-primary)",
                       fontFamily: "Cascadia Code, Consolas, monospace",
                     }}
@@ -314,7 +314,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
                   </label>
                   <span
                     style={{
-                      fontSize: "11px",
+                      fontSize: "var(--ui-font-size-xs)",
                       color: "var(--accent)",
                       opacity: 0.75,
                     }}
@@ -327,7 +327,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
                 {param.helpMessage && (
                   <div
                     style={{
-                      fontSize: "11px",
+                      fontSize: "var(--ui-font-size-xs)",
                       color: "var(--text-muted)",
                       marginBottom: "4px",
                     }}
@@ -366,7 +366,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
                     />
                     <span
                       style={{
-                        fontSize: "13px",
+                        fontSize: "var(--ui-font-size-md)",
                         color: "var(--text-secondary, var(--text-muted))",
                       }}
                     >
@@ -409,7 +409,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
                 {error && (
                   <div
                     style={{
-                      fontSize: "11px",
+                      fontSize: "var(--ui-font-size-xs)",
                       color: "var(--error, #f44)",
                       marginTop: "3px",
                     }}
@@ -442,7 +442,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
               backgroundColor: "transparent",
               color: "var(--text-primary)",
               cursor: "pointer",
-              fontSize: "13px",
+              fontSize: "var(--ui-font-size-md)",
             }}
             onMouseEnter={(e) =>
               ((e.currentTarget as HTMLElement).style.backgroundColor =
@@ -468,7 +468,7 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
                 : "var(--bg-tertiary, var(--bg-secondary))",
               color: canRun ? "#fff" : "var(--text-muted)",
               cursor: canRun ? "pointer" : "not-allowed",
-              fontSize: "13px",
+              fontSize: "var(--ui-font-size-md)",
               fontWeight: "600",
               opacity: canRun ? 1 : 0.5,
             }}
@@ -480,3 +480,4 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
     </div>
   );
 }
+

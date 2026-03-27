@@ -1055,7 +1055,7 @@ export function SettingsPanel() {
                               style={{
                                 backgroundColor: "var(--btn-danger-bg)",
                                 color: "var(--btn-danger-fg)",
-                                fontSize: "11px",
+                                fontSize: "var(--ui-font-size-xs)",
                                 opacity: assocBusy ? 0.5 : 1,
                               }}
                             >
@@ -1069,7 +1069,7 @@ export function SettingsPanel() {
                               style={{
                                 backgroundColor: "var(--btn-primary-bg)",
                                 color: "var(--btn-primary-fg)",
-                                fontSize: "11px",
+                                fontSize: "var(--ui-font-size-xs)",
                                 opacity: assocBusy ? 0.5 : 1,
                               }}
                             >
@@ -1261,3 +1261,4 @@ function InfoBox({
     </div>
   );
 }
+

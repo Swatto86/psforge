@@ -244,7 +244,7 @@ export function TabBar() {
                 backgroundColor: "transparent",
                 width: "18px",
                 height: "18px",
-                fontSize: "14px",
+                fontSize: "var(--ui-font-size-base)",
                 lineHeight: "1",
                 display: state.tabs.length <= 1 ? "none" : "flex",
                 alignItems: "center",
@@ -343,3 +343,4 @@ function CtxMenuItem({
     </div>
   );
 }
+

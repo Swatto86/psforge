@@ -56,14 +56,21 @@ export function HelpPane() {
     return () => window.removeEventListener("psforge-help-request", handler);
   }, [lookup]);
 
+  const controlStyle = {
+    minHeight: "30px",
+    backgroundColor: "var(--bg-input)",
+    border: "1px solid var(--border-primary)",
+    color: "var(--text-primary)",
+    padding: "4px 8px",
+  } as const;
+
   return (
     <div
       data-testid="help-pane"
       className="h-full overflow-auto px-3 py-2"
       style={{
-        fontSize: `${state.settings.outputFontSize ?? 13}px`,
-        fontFamily:
-          state.settings.outputFontFamily ?? "Cascadia Code, Consolas, monospace",
+        fontFamily: "var(--ui-font-family)",
+        fontSize: "var(--ui-font-size)",
       }}
     >
       <div className="flex items-center gap-2">
@@ -79,9 +86,7 @@ export function HelpPane() {
           placeholder="Type a command/topic (for example Get-ChildItem)"
           className="flex-1"
           style={{
-            backgroundColor: "var(--bg-input)",
-            border: "1px solid var(--border-primary)",
-            color: "var(--text-primary)",
+            ...controlStyle,
           }}
         />
         <button
@@ -140,6 +145,10 @@ export function HelpPane() {
                 whiteSpace: "pre-wrap",
                 color: "var(--text-primary)",
                 margin: 0,
+                fontFamily:
+                  state.settings.outputFontFamily ??
+                  "Cascadia Code, Consolas, monospace",
+                fontSize: `${state.settings.outputFontSize ?? 13}px`,
               }}
             >
               {result.synopsis || "(none)"}
@@ -153,6 +162,10 @@ export function HelpPane() {
                 whiteSpace: "pre-wrap",
                 color: "var(--text-primary)",
                 margin: 0,
+                fontFamily:
+                  state.settings.outputFontFamily ??
+                  "Cascadia Code, Consolas, monospace",
+                fontSize: `${state.settings.outputFontSize ?? 13}px`,
               }}
             >
               {result.syntax || "(none)"}
@@ -168,6 +181,10 @@ export function HelpPane() {
                 margin: 0,
                 maxHeight: "360px",
                 overflow: "auto",
+                fontFamily:
+                  state.settings.outputFontFamily ??
+                  "Cascadia Code, Consolas, monospace",
+                fontSize: `${state.settings.outputFontSize ?? 13}px`,
               }}
             >
               {result.fullText || "(none)"}

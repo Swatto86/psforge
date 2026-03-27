@@ -109,7 +109,7 @@ export function WelcomePane() {
           </h1>
           <p
             className="mb-4"
-            style={{ color: "var(--text-secondary)", fontSize: "15px" }}
+            style={{ color: "var(--text-secondary)", fontSize: "var(--ui-font-size-lg)" }}
           >
             A modern PowerShell editor built on Tauri + Monaco
           </p>
@@ -206,13 +206,13 @@ export function WelcomePane() {
                         >
                           <div
                             className="font-semibold"
-                            style={{ color: "var(--text-accent)", fontSize: "15px" }}
+                            style={{ color: "var(--text-accent)", fontSize: "var(--ui-font-size-lg)" }}
                           >
                             {name}
                           </div>
                           <div
                             className="mt-1 break-all"
-                            style={{ color: "var(--text-secondary)", fontSize: "12px" }}
+                            style={{ color: "var(--text-secondary)", fontSize: "var(--ui-font-size-sm)" }}
                           >
                             {path}
                           </div>
@@ -266,7 +266,7 @@ export function WelcomePane() {
                           backgroundColor: "var(--bg-tertiary)",
                           border: "1px solid var(--border-primary)",
                           color: "var(--text-primary)",
-                          fontSize: "12px",
+                          fontSize: "var(--ui-font-size-sm)",
                         }}
                       >
                         {key}
@@ -274,7 +274,7 @@ export function WelcomePane() {
                     </td>
                     <td
                       className="py-2"
-                      style={{ color: "var(--text-secondary)", fontSize: "14px" }}
+                      style={{ color: "var(--text-secondary)", fontSize: "var(--ui-font-size-base)" }}
                     >
                       {desc}
                     </td>
@@ -307,14 +307,15 @@ function ActionButton({
         color: "var(--btn-primary-fg)",
         border: "none",
         cursor: "pointer",
-        fontSize: "14px",
+        fontSize: "var(--ui-font-size-base)",
         fontWeight: 600,
       }}
     >
       {label}
-      <span className="ml-2 opacity-70" style={{ fontSize: "12px" }}>
+      <span className="ml-2 opacity-70" style={{ fontSize: "var(--ui-font-size-sm)" }}>
         {hint}
       </span>
     </button>
   );
 }
+

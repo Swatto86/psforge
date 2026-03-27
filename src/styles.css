@@ -50,6 +50,13 @@
   /* UI-wide typography -- overridden at runtime from persisted settings */
   --ui-font-family: "Segoe UI", sans-serif;
   --ui-font-size: 14px;
+  --ui-font-size-2xs: calc(var(--ui-font-size) - 4px);
+  --ui-font-size-xs: calc(var(--ui-font-size) - 3px);
+  --ui-font-size-sm: calc(var(--ui-font-size) - 2px);
+  --ui-font-size-md: calc(var(--ui-font-size) - 1px);
+  --ui-font-size-base: var(--ui-font-size);
+  --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
+  --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
 
   /* Sidebar/modules list typography -- overridden at runtime from persisted settings */
   --sidebar-font-family: "Segoe UI", sans-serif;
@@ -208,6 +215,21 @@ select {
 
 input:focus,
 select:focus {
+  border-color: var(--accent);
+}
+
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  border-radius: 2px;
+  outline: none;
+}
+
+textarea:focus {
   border-color: var(--accent);
 }
 

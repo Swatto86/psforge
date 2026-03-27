@@ -205,18 +205,25 @@ export function ShowCommandPane() {
     );
   };
 
+  const controlStyle = {
+    minHeight: "30px",
+    backgroundColor: "var(--bg-input)",
+    border: "1px solid var(--border-primary)",
+    color: "var(--text-primary)",
+    padding: "4px 8px",
+  } as const;
+
   return (
     <div
       data-testid="show-command-pane"
       className="h-full overflow-auto px-3 py-2"
       style={{
-        fontSize: `${state.settings.outputFontSize ?? 13}px`,
-        fontFamily:
-          state.settings.outputFontFamily ?? "Cascadia Code, Consolas, monospace",
+        fontFamily: "var(--ui-font-family)",
+        fontSize: "var(--ui-font-size)",
       }}
     >
       <div
-        className="mb-2 text-xs"
+        className="mb-2"
         style={{ color: "var(--text-muted)", lineHeight: 1.4 }}
       >
         Build a PowerShell command and insert it at the cursor.
@@ -229,9 +236,7 @@ export function ShowCommandPane() {
           placeholder="Filter modules..."
           style={{
             minWidth: "220px",
-            backgroundColor: "var(--bg-input)",
-            border: "1px solid var(--border-primary)",
-            color: "var(--text-primary)",
+            ...controlStyle,
           }}
         />
         <select
@@ -239,9 +244,7 @@ export function ShowCommandPane() {
           onChange={(e) => setSelectedModule(e.target.value)}
           style={{
             minWidth: "260px",
-            backgroundColor: "var(--bg-input)",
-            border: "1px solid var(--border-primary)",
-            color: "var(--text-primary)",
+            ...controlStyle,
           }}
         >
           {filteredModules.length === 0 && <option value="">No modules</option>}
@@ -276,9 +279,7 @@ export function ShowCommandPane() {
           placeholder="Filter commands..."
           style={{
             minWidth: "220px",
-            backgroundColor: "var(--bg-input)",
-            border: "1px solid var(--border-primary)",
-            color: "var(--text-primary)",
+            ...controlStyle,
           }}
         />
         <select
@@ -287,9 +288,7 @@ export function ShowCommandPane() {
           disabled={!selectedModule || loadingCommands}
           style={{
             minWidth: "260px",
-            backgroundColor: "var(--bg-input)",
-            border: "1px solid var(--border-primary)",
-            color: "var(--text-primary)",
+            ...controlStyle,
           }}
         >
           {filteredCommands.length === 0 && <option value="">No commands</option>}
@@ -302,7 +301,7 @@ export function ShowCommandPane() {
       </div>
 
       {(moduleError || commandsError || paramsError) && (
-        <div className="mt-2 text-xs" style={{ color: "var(--stream-stderr)" }}>
+        <div className="mt-2" style={{ color: "var(--stream-stderr)" }}>
           {moduleError || commandsError || paramsError}
         </div>
       )}
@@ -315,7 +314,7 @@ export function ShowCommandPane() {
         }}
       >
         <div
-          className="px-2 py-1 text-xs"
+          className="px-2 py-1"
           style={{
             borderBottom: "1px solid var(--border-primary)",
             color: "var(--text-secondary)",
@@ -345,7 +344,7 @@ export function ShowCommandPane() {
                 }}
               >
                 <div
-                  className="flex items-center gap-2 text-xs"
+                  className="flex items-center gap-2"
                   style={{ color: "var(--text-secondary)" }}
                 >
                   <span style={{ color: "var(--text-accent)" }}>-{param.name}</span>
@@ -363,14 +362,14 @@ export function ShowCommandPane() {
                   )}
                 </div>
                 {param.aliases.length > 0 && (
-                  <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  <div style={{ color: "var(--text-muted)" }}>
                     Aliases: {param.aliases.join(", ")}
                   </div>
                 )}
                 <div className="mt-1">
                   {param.isSwitch ? (
                     <label
-                      className="flex items-center gap-2 text-xs"
+                      className="flex items-center gap-2"
                       style={{ color: "var(--text-primary)" }}
                     >
                       <input
@@ -397,9 +396,7 @@ export function ShowCommandPane() {
                       placeholder={`Value for -${param.name}`}
                       style={{
                         width: "100%",
-                        backgroundColor: "var(--bg-input)",
-                        border: "1px solid var(--border-primary)",
-                        color: "var(--text-primary)",
+                        ...controlStyle,
                       }}
                     />
                   )}
@@ -411,7 +408,7 @@ export function ShowCommandPane() {
       </div>
 
       <div className="mt-3">
-        <div className="text-xs" style={{ color: "var(--text-secondary)" }}>
+        <div style={{ color: "var(--text-secondary)" }}>
           Command Preview
         </div>
         <textarea
@@ -420,9 +417,11 @@ export function ShowCommandPane() {
           rows={3}
           className="w-full mt-1 px-2 py-1"
           style={{
-            backgroundColor: "var(--bg-input)",
-            border: "1px solid var(--border-primary)",
-            color: "var(--text-primary)",
+            ...controlStyle,
+            fontFamily:
+              state.settings.outputFontFamily ??
+              "Cascadia Code, Consolas, monospace",
+            fontSize: `${state.settings.outputFontSize ?? 13}px`,
             resize: "vertical",
           }}
         />

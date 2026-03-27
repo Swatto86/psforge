@@ -429,7 +429,7 @@ export function OutputPane({
                     ? "var(--text-muted)"
                     : "var(--text-secondary)",
                 cursor: state.outputLines.length === 0 ? "default" : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -452,7 +452,7 @@ export function OutputPane({
                   isSavingOutput || state.outputLines.length === 0
                     ? "default"
                     : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -472,7 +472,7 @@ export function OutputPane({
                     ? "var(--text-muted)"
                     : "var(--text-secondary)",
                 cursor: state.outputLines.length === 0 ? "default" : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "8px",
@@ -497,7 +497,7 @@ export function OutputPane({
                     ? "var(--text-muted)"
                     : "var(--text-secondary)",
                 cursor: state.problems.length === 0 ? "default" : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -520,7 +520,7 @@ export function OutputPane({
                   isSavingProblems || state.problems.length === 0
                     ? "default"
                     : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -540,7 +540,7 @@ export function OutputPane({
                     ? "var(--text-muted)"
                     : "var(--text-secondary)",
                 cursor: state.problems.length === 0 ? "default" : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "8px",
@@ -565,7 +565,7 @@ export function OutputPane({
                 backgroundColor: "transparent",
                 color: "var(--text-secondary)",
                 cursor: "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -585,7 +585,7 @@ export function OutputPane({
                 backgroundColor: "transparent",
                 color: "var(--text-secondary)",
                 cursor: "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "8px",
@@ -624,7 +624,7 @@ export function OutputPane({
                   activeTab.tabType === "welcome"
                     ? "default"
                     : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -647,7 +647,7 @@ export function OutputPane({
                   !state.isDebugging || !state.debugPaused
                     ? "default"
                     : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -670,7 +670,7 @@ export function OutputPane({
                   !state.isDebugging || !state.debugPaused
                     ? "default"
                     : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -693,7 +693,7 @@ export function OutputPane({
                   !state.isDebugging || !state.debugPaused
                     ? "default"
                     : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -716,7 +716,7 @@ export function OutputPane({
                   !state.isDebugging || !state.debugPaused
                     ? "default"
                     : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -739,7 +739,7 @@ export function OutputPane({
                   !state.isDebugging || !state.debugPaused
                     ? "default"
                     : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "4px",
@@ -758,7 +758,7 @@ export function OutputPane({
                   ? "var(--text-muted)"
                   : "var(--stream-stderr)",
                 cursor: !state.isRunning ? "default" : "pointer",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 border: "none",
                 borderRadius: "3px",
                 marginRight: "8px",
@@ -894,7 +894,7 @@ export function OutputPane({
                   color: "var(--text-accent)",
                   backgroundColor: "var(--bg-panel)",
                   borderTop: "1px solid var(--border-primary)",
-                  fontSize: "11px",
+                  fontSize: "var(--ui-font-size-xs)",
                 }}
               >
                 {state.isDebugging
@@ -2326,3 +2326,4 @@ function ProblemsPane({
     </div>
   );
 }
+

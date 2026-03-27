@@ -182,7 +182,7 @@ export function Toolbar({
                     <span className="font-medium truncate w-full">{name}</span>
                     <span
                       className="truncate w-full"
-                      style={{ color: "var(--text-muted)", fontSize: "10px" }}
+                      style={{ color: "var(--text-muted)", fontSize: "var(--ui-font-size-2xs)" }}
                     >
                       {path}
                     </span>
@@ -199,7 +199,7 @@ export function Toolbar({
                       backgroundColor: "transparent",
                       color: "var(--text-muted)",
                       cursor: "pointer",
-                      fontSize: "12px",
+                      fontSize: "var(--ui-font-size-sm)",
                       lineHeight: 1,
                     }}
                     onMouseEnter={(e) => {
@@ -320,7 +320,7 @@ export function Toolbar({
         disabled={!state.isDebugging || !state.debugPaused}
         className="text-yellow-300 hover:text-yellow-200"
       >
-        <span style={{ fontSize: "10px", fontWeight: 700 }}>SO</span>
+        <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>SO</span>
       </ToolbarBtn>
       <ToolbarBtn
         title="Step Into (F11)"
@@ -329,7 +329,7 @@ export function Toolbar({
         disabled={!state.isDebugging || !state.debugPaused}
         className="text-yellow-300 hover:text-yellow-200"
       >
-        <span style={{ fontSize: "10px", fontWeight: 700 }}>SI</span>
+        <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>SI</span>
       </ToolbarBtn>
       <ToolbarBtn
         title="Step Out (Shift+F11)"
@@ -338,7 +338,7 @@ export function Toolbar({
         disabled={!state.isDebugging || !state.debugPaused}
         className="text-yellow-300 hover:text-yellow-200"
       >
-        <span style={{ fontSize: "10px", fontWeight: 700 }}>SU</span>
+        <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>SU</span>
       </ToolbarBtn>
       <ToolbarBtn
         title="Stop (Ctrl+Break / Shift+F5)"
@@ -631,3 +631,4 @@ function ToolbarBtn({
     </button>
   );
 }
+
