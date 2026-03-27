@@ -1,7 +1,6 @@
 /// PowerShell discovery and process management.
 /// Handles detecting installed PowerShell versions and managing script execution.
 use crate::errors::AppError;
-use crate::utils::write_secure_temp_file;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,6 +11,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 /// Maximum number of output lines to buffer per process (memory bound).
 const MAX_OUTPUT_LINES: usize = 100_000;
@@ -411,6 +411,29 @@ impl Default for ProcessManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Validates that `ps_path` points to an existing executable file.
+/// Keeps checks lightweight because this is called on hot paths
+/// (e.g. completions/analysis invocations).
+pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
+    let trimmed = ps_path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError {
+            code: "INVALID_PS_PATH".to_string(),
+            message: "PowerShell path is empty".to_string(),
+        });
+    }
+
+    let path = Path::new(trimmed);
+    if !path.is_file() {
+        return Err(AppError {
+            code: "INVALID_PS_PATH".to_string(),
+            message: format!("PowerShell executable not found at '{}'", trimmed),
+        });
+    }
+
+    Ok(())
 }
 
 /// Discovers all installed PowerShell versions on the system.
