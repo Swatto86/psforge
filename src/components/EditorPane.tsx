@@ -23,7 +23,7 @@ import type {
 import { useAppState } from "../store";
 import { getMonacoThemeData, monacoThemeName } from "../themes";
 import { getPsMonarchGrammar } from "../ps-grammar";
-import type { PsCompletion, ThemeName } from "../types";
+import type { DebugBreakpoint, PsCompletion, ThemeName } from "../types";
 import { WelcomePane } from "./WelcomePane";
 import { analyzeScript, getCompletions } from "../commands";
 
@@ -234,6 +234,7 @@ export function EditorPane() {
   // up when the editor unmounts or a new provider is registered).
   const completionDisposableRef = useRef<{ dispose(): void } | null>(null);
   const breakpointDecorationsRef = useRef<string[]>([]);
+  const contextMenuLineRef = useRef<number | null>(null);
 
   // Dispose the completion provider when the component unmounts.
   useEffect(() => {
@@ -346,16 +347,28 @@ export function EditorPane() {
     if (!model) return;
 
     const maxLine = model.getLineCount();
-    const lines = (state.breakpoints[activeTab.id] ?? []).filter(
-      (line) => Number.isInteger(line) && line >= 1 && line <= maxLine,
-    );
-    const decorations: MonacoEditor.IModelDeltaDecoration[] = lines.map(
-      (line) => ({
-        range: new monaco.Range(line, 1, line, 1),
+    const lineBreakpoints = (state.breakpoints[activeTab.id] ?? [])
+      .filter(
+        (bp): bp is DebugBreakpoint & { line: number } =>
+          typeof bp.line === "number" && bp.line >= 1 && bp.line <= maxLine,
+      )
+      .sort((a, b) => a.line - b.line);
+    const decorations: MonacoEditor.IModelDeltaDecoration[] = lineBreakpoints.map(
+      (bp) => ({
+        range: new monaco.Range(bp.line, 1, bp.line, 1),
         options: {
           isWholeLine: true,
-          glyphMarginClassName: "psforge-breakpoint-glyph",
-          glyphMarginHoverMessage: { value: `Breakpoint (line ${line})` },
+          glyphMarginClassName:
+            bp.condition || bp.hitCount || bp.command
+              ? "psforge-breakpoint-glyph-conditional"
+              : "psforge-breakpoint-glyph",
+          glyphMarginHoverMessage: {
+            value:
+              `Breakpoint (line ${bp.line})` +
+              (bp.condition ? `\nCondition: ${bp.condition}` : "") +
+              (bp.hitCount ? `\nHit Count: ${bp.hitCount}` : "") +
+              (bp.command ? "\nAction: configured" : ""),
+          },
           linesDecorationsClassName: "psforge-breakpoint-line",
         },
       }),
@@ -408,6 +421,61 @@ export function EditorPane() {
           tabId: activeTab.id,
           line: e.target.position.lineNumber,
         });
+      });
+
+      // Track the line where context menu is opened so custom actions can
+      // target that line even if cursor position differs.
+      editor.onContextMenu((e) => {
+        if (e.target.position) {
+          contextMenuLineRef.current = e.target.position.lineNumber;
+          editor.setPosition(e.target.position);
+        } else {
+          contextMenuLineRef.current = null;
+        }
+      });
+
+      const getTargetLine = (): number | null => {
+        const lineFromContext = contextMenuLineRef.current;
+        contextMenuLineRef.current = null;
+        if (lineFromContext && lineFromContext >= 1) return lineFromContext;
+        const pos = editor.getPosition();
+        return pos?.lineNumber && pos.lineNumber >= 1 ? pos.lineNumber : null;
+      };
+
+      editor.addAction({
+        id: "psforge-toggle-breakpoint",
+        label: "Toggle Breakpoint",
+        contextMenuGroupId: "navigation",
+        contextMenuOrder: 1.5,
+        run: () => {
+          if (!activeTab || activeTab.tabType === "welcome") return;
+          const line = getTargetLine();
+          if (!line) return;
+          dispatch({
+            type: "TOGGLE_BREAKPOINT",
+            tabId: activeTab.id,
+            line,
+          });
+          dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
+        },
+      });
+
+      editor.addAction({
+        id: "psforge-edit-breakpoint",
+        label: "Add/Edit Breakpoint...",
+        contextMenuGroupId: "navigation",
+        contextMenuOrder: 1.6,
+        run: () => {
+          if (!activeTab || activeTab.tabType === "welcome") return;
+          const line = getTargetLine();
+          if (!line) return;
+          dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
+          window.dispatchEvent(
+            new CustomEvent("psforge-edit-breakpoint", {
+              detail: { line },
+            }),
+          );
+        },
       });
 
       // --- Feature 3: PowerShell IntelliSense via TabExpansion2 ---

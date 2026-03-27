@@ -108,7 +108,7 @@ pub async fn execute_script_debug(
     script: String,
     working_dir: String,
     exec_policy: String,
-    breakpoints: Vec<u32>,
+    breakpoints: Vec<powershell::DebugBreakpointSpec>,
     script_args: Option<Vec<String>>,
 ) -> Result<i32, AppError> {
     info!(
@@ -187,6 +187,14 @@ pub async fn debug_step_into() -> Result<(), AppError> {
 #[tauri::command]
 pub async fn debug_step_out() -> Result<(), AppError> {
     pm().send_stdin("o").await
+}
+
+/// Select debugger frame scope for subsequent inspector evaluations.
+#[tauri::command]
+pub async fn debug_set_frame(frame_index: u32) -> Result<(), AppError> {
+    pm()
+        .send_stdin(&format!("$global:__psforge_debug_scope = {}", frame_index))
+        .await
 }
 
 // ---------------------------------------------------------------------------

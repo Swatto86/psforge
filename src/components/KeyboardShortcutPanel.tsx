@@ -43,7 +43,11 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     category: "Script Execution",
     shortcuts: [
-      { keys: "F5", description: "Run script / Continue when debug-paused" },
+      {
+        keys: "F5",
+        description: "Run script, or start debugger if breakpoints exist",
+      },
+      { keys: "F9", description: "Toggle breakpoint on current line" },
       { keys: "F8", description: "Run selection (or current line)" },
       { keys: "F10", description: "Debugger step over (when paused)" },
       { keys: "F11", description: "Debugger step into (when paused)" },

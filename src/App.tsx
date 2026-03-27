@@ -16,7 +16,15 @@ import { AboutDialog } from "./components/AboutDialog";
 import { ScriptSigningDialog } from "./components/ScriptSigningDialog";
 import { ParamPromptDialog } from "./components/ParamPromptDialog";
 import * as cmd from "./commands";
-import type { OutputLine, EditorTab, ScriptParameter } from "./types";
+import type {
+  OutputLine,
+  EditorTab,
+  ScriptParameter,
+  DebugBreakpoint,
+  DebugLocal,
+  DebugStackFrame,
+  DebugWatch,
+} from "./types";
 
 // Expose the startup reveal function injected by public/preload.js.
 declare global {
@@ -74,6 +82,128 @@ function buildScriptArgs(
   return args;
 }
 
+// ---------------------------------------------------------------------------
+// Debugger inspector helpers
+// ---------------------------------------------------------------------------
+
+const DEBUG_LOCALS_PREFIX = "<<PSF_DEBUG_LOCALS_JSON>>";
+const DEBUG_STACK_PREFIX = "<<PSF_DEBUG_STACK_JSON>>";
+const DEBUG_WATCH_PREFIX = "<<PSF_DEBUG_WATCH_JSON>>";
+
+const DEBUG_STACK_COMMAND =
+  "$__psf_stack = Get-PSCallStack | ForEach-Object { " +
+  "[PSCustomObject]@{ " +
+  "functionName = if ([string]::IsNullOrWhiteSpace($_.FunctionName)) { '<script>' } else { $_.FunctionName }; " +
+  "location = if ($_.ScriptName) { \"$($_.ScriptName):$($_.ScriptLineNumber)\" } else { 'Interactive' }; " +
+  "command = if ($_.Command) { $_.Command } else { '' } " +
+  "} }; " +
+  `Write-Host '${DEBUG_STACK_PREFIX}' + ($__psf_stack | ConvertTo-Json -Compress -Depth 4)`;
+
+function escapeForSingleQuotedPsLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function normalizeFrameIndex(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.floor(value);
+}
+
+function buildDebugLocalsCommand(frameIndex: number): string {
+  const scope = normalizeFrameIndex(frameIndex);
+  return (
+    `$__psf_scope = ${scope}; ` +
+    "$__psf_locals = Get-Variable -Scope $__psf_scope -ErrorAction SilentlyContinue | ForEach-Object { " +
+    "[PSCustomObject]@{ " +
+    "name = $_.Name; " +
+    "typeName = if ($null -eq $_.Value) { 'null' } else { $_.Value.GetType().FullName }; " +
+    "value = ($_.Value | Out-String).Trim(); " +
+    "scope = \"Frame:$__psf_scope\" " +
+    "} }; " +
+    `Write-Host '${DEBUG_LOCALS_PREFIX}' + ($__psf_locals | ConvertTo-Json -Compress -Depth 4)`
+  );
+}
+
+function buildWatchEvalCommand(expression: string, frameIndex: number): string {
+  const escaped = escapeForSingleQuotedPsLiteral(expression);
+  const scope = normalizeFrameIndex(frameIndex);
+  return (
+    `$__psf_scope = ${scope}; ` +
+    `$__psf_expr = '${escaped}'; ` +
+    "try { " +
+    "  $__psf_watch_vars = @(Get-Variable -Scope $__psf_scope -ErrorAction SilentlyContinue | ForEach-Object { New-Object System.Management.Automation.PSVariable -ArgumentList $_.Name, $_.Value }); " +
+    "  $__psf_watch_value = ([scriptblock]::Create($__psf_expr)).InvokeWithContext($null, $__psf_watch_vars, $null); " +
+    "  $__psf_payload = [PSCustomObject]@{ expression = $__psf_expr; value = ($__psf_watch_value | Out-String).Trim(); error = '' }; " +
+    "} catch { " +
+    "  $__psf_payload = [PSCustomObject]@{ expression = $__psf_expr; value = ''; error = $_.Exception.Message }; " +
+    "} " +
+    `Write-Host '${DEBUG_WATCH_PREFIX}' + ($__psf_payload | ConvertTo-Json -Compress -Depth 4)`
+  );
+}
+
+function parseMarkerJson<T>(
+  line: string,
+  prefix: string,
+): T | T[] | null {
+  if (!line.startsWith(prefix)) return null;
+  const json = line.slice(prefix.length).trim();
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as T | T[];
+  } catch {
+    return null;
+  }
+}
+
+function asArray<T>(value: T | T[] | null): T[] {
+  if (value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function normalizeBreakpointForDebug(
+  breakpoint: DebugBreakpoint,
+): DebugBreakpoint | null {
+  const line =
+    typeof breakpoint.line === "number" &&
+    Number.isInteger(breakpoint.line) &&
+    breakpoint.line >= 1
+      ? breakpoint.line
+      : undefined;
+  const variableRaw =
+    typeof breakpoint.variable === "string"
+      ? breakpoint.variable.trim().replace(/^\$/, "")
+      : "";
+  const variable = variableRaw.length > 0 ? variableRaw : undefined;
+  const targetCommandRaw =
+    typeof breakpoint.targetCommand === "string"
+      ? breakpoint.targetCommand.trim()
+      : "";
+  const targetCommand =
+    targetCommandRaw.length > 0 ? targetCommandRaw : undefined;
+  if (line === undefined && variable === undefined && targetCommand === undefined) {
+    return null;
+  }
+
+  const condition =
+    typeof breakpoint.condition === "string" && breakpoint.condition.trim()
+      ? breakpoint.condition.trim()
+      : undefined;
+  const command =
+    typeof breakpoint.command === "string" && breakpoint.command.trim()
+      ? breakpoint.command.trim()
+      : undefined;
+  const hitCount =
+    typeof breakpoint.hitCount === "number" &&
+    Number.isInteger(breakpoint.hitCount) &&
+    breakpoint.hitCount >= 1
+      ? breakpoint.hitCount
+      : undefined;
+  const mode =
+    breakpoint.mode === "Read" || breakpoint.mode === "Write"
+      ? breakpoint.mode
+      : "ReadWrite";
+  return { line, variable, targetCommand, mode, condition, hitCount, command };
+}
+
 /** Inner app that has access to the store. */
 function AppInner() {
   const { state, dispatch, activeTab } = useAppState();
@@ -97,6 +227,8 @@ function AppInner() {
   const debugLocationRef = useRef<{ line: number; column: number } | null>(
     null,
   );
+  const activeTabRef = useRef<EditorTab | undefined>(activeTab);
+  const cursorLineRef = useRef(state.cursorLine);
 
   /**
    * Pending parameter-prompt state.  When a script has mandatory parameters
@@ -119,6 +251,58 @@ function AppInner() {
       debugLocationRef.current = null;
     }
   }, [state.debugLine, state.debugColumn]);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    cursorLineRef.current = state.cursorLine;
+  }, [state.cursorLine]);
+
+  const debugWatchesRef = useRef<DebugWatch[]>(state.debugWatches);
+  const debugSelectedFrameRef = useRef<number>(state.debugSelectedFrame);
+  useEffect(() => {
+    debugWatchesRef.current = state.debugWatches;
+  }, [state.debugWatches]);
+  useEffect(() => {
+    debugSelectedFrameRef.current = normalizeFrameIndex(state.debugSelectedFrame);
+  }, [state.debugSelectedFrame]);
+
+  const evaluateDebugWatch = useCallback(
+    async (expression: string, frameIndex?: number) => {
+      const expr = expression.trim();
+      if (!expr || !state.isDebugging || !state.debugPaused) return;
+      const scope = normalizeFrameIndex(
+        frameIndex ?? debugSelectedFrameRef.current,
+      );
+      try {
+        await cmd.sendStdin(buildWatchEvalCommand(expr, scope));
+      } catch {
+        dispatch({
+          type: "UPDATE_DEBUG_WATCH",
+          watch: { expression: expr, value: "", error: "Evaluation failed." },
+        });
+      }
+    },
+    [state.isDebugging, state.debugPaused, dispatch],
+  );
+
+  const refreshDebugInspector = useCallback(async (frameIndex?: number) => {
+    if (!state.isDebugging || !state.debugPaused) return;
+    const scope = normalizeFrameIndex(frameIndex ?? debugSelectedFrameRef.current);
+    try {
+      await cmd.sendStdin(buildDebugLocalsCommand(scope));
+      await cmd.sendStdin(DEBUG_STACK_COMMAND);
+      for (const watch of debugWatchesRef.current) {
+        const expr = watch.expression.trim();
+        if (!expr) continue;
+        await cmd.sendStdin(buildWatchEvalCommand(expr, scope));
+      }
+    } catch {
+      // Best-effort only; debugger execution should continue.
+    }
+  }, [state.isDebugging, state.debugPaused]);
 
   // Remove the startup loading mask once React has successfully mounted.
   // This completes the white-flash prevention sequence started by preload.js
@@ -146,11 +330,68 @@ function AppInner() {
   // Listen for ps-output events from Rust backend
   useEffect(() => {
     const unlisten = listen<OutputLine>("ps-output", (event) => {
+      const trimmed = event.payload.text.trim();
+
+      if (debugSessionRef.current) {
+        const localsPayload = parseMarkerJson<Record<string, unknown>>(
+          trimmed,
+          DEBUG_LOCALS_PREFIX,
+        );
+        if (localsPayload !== null) {
+          const locals: DebugLocal[] = asArray(localsPayload)
+            .map((item) => ({
+              name: typeof item.name === "string" ? item.name : "",
+              typeName: typeof item.typeName === "string" ? item.typeName : "",
+              value: typeof item.value === "string" ? item.value : "",
+              scope: typeof item.scope === "string" ? item.scope : "",
+            }))
+            .filter((item) => item.name.length > 0);
+          dispatch({ type: "SET_DEBUG_LOCALS", locals });
+          return;
+        }
+
+        const stackPayload = parseMarkerJson<Record<string, unknown>>(
+          trimmed,
+          DEBUG_STACK_PREFIX,
+        );
+        if (stackPayload !== null) {
+          const frames: DebugStackFrame[] = asArray(stackPayload).map((item) => ({
+            functionName:
+              typeof item.functionName === "string"
+                ? item.functionName
+                : "<script>",
+            location: typeof item.location === "string" ? item.location : "",
+            command: typeof item.command === "string" ? item.command : "",
+          }));
+          dispatch({ type: "SET_DEBUG_CALL_STACK", frames });
+          return;
+        }
+
+        const watchPayload = parseMarkerJson<Record<string, unknown>>(
+          trimmed,
+          DEBUG_WATCH_PREFIX,
+        );
+        if (watchPayload !== null) {
+          const entry = asArray(watchPayload)[0];
+          if (entry) {
+            dispatch({
+              type: "UPDATE_DEBUG_WATCH",
+              watch: {
+                expression:
+                  typeof entry.expression === "string" ? entry.expression : "",
+                value: typeof entry.value === "string" ? entry.value : "",
+                error: typeof entry.error === "string" ? entry.error : "",
+              },
+            });
+          }
+          return;
+        }
+      }
+
       dispatch({ type: "ADD_OUTPUT", line: event.payload });
 
       if (!debugSessionRef.current) return;
 
-      const trimmed = event.payload.text.trim();
       const locationMatch = /At\s+(?:.+:)?(\d+)\s+char:(\d+)/i.exec(trimmed);
       if (locationMatch) {
         const line = parseInt(locationMatch[1], 10);
@@ -174,7 +415,9 @@ function AppInner() {
           isDebugging: true,
           debugPaused: true,
         });
+        dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: 0 });
         dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
+        void refreshDebugInspector(0);
         const nav = (window as unknown as Record<string, unknown>)
           .__psforge_navigateTo as
           | ((line: number, column: number) => void)
@@ -196,7 +439,9 @@ function AppInner() {
         debugLine: line,
         debugColumn: 1,
       });
+      dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: 0 });
       dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
+      void refreshDebugInspector(0);
       const nav = (window as unknown as Record<string, unknown>)
         .__psforge_navigateTo as
         | ((targetLine: number, targetColumn: number) => void)
@@ -229,6 +474,7 @@ function AppInner() {
         debugLine: null,
         debugColumn: null,
       });
+      dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     });
 
     return () => {
@@ -236,7 +482,7 @@ function AppInner() {
       unlistenDebugBreak.then((fn) => fn());
       unlistenComplete.then((fn) => fn());
     };
-  }, [dispatch]);
+  }, [dispatch, refreshDebugInspector]);
 
   const openFile = useCallback(
     async (specificPath?: string) => {
@@ -531,6 +777,7 @@ function AppInner() {
       debugLine: null,
       debugColumn: null,
     });
+    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
 
     // Auto-save before running when the setting is enabled (Rule 11 -- pre-flight).
     if (
@@ -712,9 +959,9 @@ function AppInner() {
 
     const psPath = state.selectedPsPath;
     const scriptContent = activeTab.content;
-    const breakpoints = (state.breakpoints[activeTab.id] ?? []).filter(
-      (line) => Number.isFinite(line) && line > 0,
-    );
+    const breakpoints: DebugBreakpoint[] = (state.breakpoints[activeTab.id] ?? [])
+      .map((bp) => normalizeBreakpointForDebug(bp))
+      .filter((bp): bp is DebugBreakpoint => bp !== null);
 
     let workDir: string;
     if (
@@ -756,6 +1003,7 @@ function AppInner() {
             debugLine: null,
             debugColumn: null,
           });
+          dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
           return;
         }
         scriptArgs = buildScriptArgs(required, paramValues);
@@ -775,6 +1023,8 @@ function AppInner() {
       debugLine: null,
       debugColumn: null,
     });
+    dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: 0 });
+    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     dispatch({ type: "SET_RUNNING", running: true });
 
     try {
@@ -807,6 +1057,7 @@ function AppInner() {
         debugLine: null,
         debugColumn: null,
       });
+      dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     }
   }, [
     activeTab,
@@ -826,42 +1077,90 @@ function AppInner() {
   const debugContinue = useCallback(async () => {
     if (!state.isDebugging || !state.debugPaused) return;
     dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     try {
       await cmd.debugContinue();
     } catch {
       dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+      void refreshDebugInspector();
     }
-  }, [state.isDebugging, state.debugPaused, dispatch]);
+  }, [state.isDebugging, state.debugPaused, dispatch, refreshDebugInspector]);
 
   const debugStepOver = useCallback(async () => {
     if (!state.isDebugging || !state.debugPaused) return;
     dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     try {
       await cmd.debugStepOver();
     } catch {
       dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+      void refreshDebugInspector();
     }
-  }, [state.isDebugging, state.debugPaused, dispatch]);
+  }, [state.isDebugging, state.debugPaused, dispatch, refreshDebugInspector]);
 
   const debugStepInto = useCallback(async () => {
     if (!state.isDebugging || !state.debugPaused) return;
     dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     try {
       await cmd.debugStepInto();
     } catch {
       dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+      void refreshDebugInspector();
     }
-  }, [state.isDebugging, state.debugPaused, dispatch]);
+  }, [state.isDebugging, state.debugPaused, dispatch, refreshDebugInspector]);
 
   const debugStepOut = useCallback(async () => {
     if (!state.isDebugging || !state.debugPaused) return;
     dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     try {
       await cmd.debugStepOut();
     } catch {
       dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+      void refreshDebugInspector();
     }
-  }, [state.isDebugging, state.debugPaused, dispatch]);
+  }, [state.isDebugging, state.debugPaused, dispatch, refreshDebugInspector]);
+
+  const runOrDebugScript = useCallback(() => {
+    if (state.isDebugging && state.debugPaused) {
+      void debugContinue();
+      return;
+    }
+
+    if (!activeTab || activeTab.tabType === "welcome") return;
+    const breakpoints = state.breakpoints[activeTab.id] ?? [];
+    if (breakpoints.length > 0) {
+      void startDebugSession();
+      return;
+    }
+    void runScript();
+  }, [
+    activeTab,
+    state.breakpoints,
+    state.isDebugging,
+    state.debugPaused,
+    debugContinue,
+    startDebugSession,
+    runScript,
+  ]);
+
+  const selectDebugFrame = useCallback(
+    async (frameIndex: number) => {
+      const next = normalizeFrameIndex(frameIndex);
+      dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: next });
+      if (!state.isDebugging) return;
+      try {
+        await cmd.debugSetFrame(next);
+      } catch {
+        // Non-fatal: inspector refresh still works via explicit scope.
+      }
+      if (state.debugPaused) {
+        void refreshDebugInspector(next);
+      }
+    },
+    [dispatch, state.isDebugging, state.debugPaused, refreshDebugInspector],
+  );
 
   const stopExecution = useCallback(() => {
     cmd.stopScript().catch(() => {});
@@ -875,6 +1174,7 @@ function AppInner() {
       debugLine: null,
       debugColumn: null,
     });
+    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
   }, [dispatch]);
 
   const runSelection = useCallback(async () => {
@@ -1054,14 +1354,10 @@ function AppInner() {
         void saveAllFiles();
       }
 
-      // F5: Run script
+      // F5: Run script (or start debug if the active tab has breakpoints)
       if (e.key === "F5" && !e.ctrlKey && !e.shiftKey) {
         e.preventDefault();
-        if (state.isDebugging && state.debugPaused) {
-          void debugContinue();
-        } else {
-          runScript();
-        }
+        runOrDebugScript();
       }
 
       // Shift+F5: Stop current run/debug session
@@ -1088,6 +1384,19 @@ function AppInner() {
       if (e.key === "F8") {
         e.preventDefault();
         runSelection();
+      }
+
+      // F9: Toggle line breakpoint at the current cursor location.
+      if (e.key === "F9" && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        const tab = activeTabRef.current;
+        if (!tab || tab.tabType === "welcome") return;
+        dispatch({
+          type: "TOGGLE_BREAKPOINT",
+          tabId: tab.id,
+          line: Math.max(1, cursorLineRef.current || 1),
+        });
+        dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
       }
 
       // Ctrl+Break: Stop running script
@@ -1200,7 +1509,7 @@ function AppInner() {
     saveAllFiles,
     closeActiveTab,
     activateRelativeTab,
-    runScript,
+    runOrDebugScript,
     debugContinue,
     debugStepOver,
     debugStepInto,
@@ -1344,7 +1653,7 @@ function AppInner() {
         onOpenRecent={(path) => void openFile(path)}
         onSave={() => void saveCurrentFile()}
         onSaveAll={() => void saveAllFiles()}
-        onRun={runScript}
+        onRun={runOrDebugScript}
         onDebugStart={startDebugSession}
         onDebugContinue={debugContinue}
         onDebugStepOver={debugStepOver}
@@ -1396,6 +1705,13 @@ function AppInner() {
               onDebugStepOver={debugStepOver}
               onDebugStepInto={debugStepInto}
               onDebugStepOut={debugStepOut}
+              onDebugSelectFrame={(frameIndex) =>
+                void selectDebugFrame(frameIndex)
+              }
+              onDebugRefreshInspector={() => void refreshDebugInspector()}
+              onDebugEvaluateWatch={(expression) =>
+                void evaluateDebugWatch(expression)
+              }
               onStop={stopExecution}
             />
           </div>

@@ -77,6 +77,30 @@ pub struct OutputLine {
     pub timestamp: String,
 }
 
+/// Debugger breakpoint specification received from the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugBreakpointSpec {
+    /// 1-indexed source line for line breakpoints.
+    pub line: Option<u32>,
+    /// Variable name for variable breakpoints.
+    pub variable: Option<String>,
+    /// Command/cmdlet name for command breakpoints.
+    pub target_command: Option<String>,
+    /// Variable breakpoint mode: Read | Write | ReadWrite.
+    pub mode: Option<String>,
+    /// Conditional expression that must evaluate truthy before breaking.
+    pub condition: Option<String>,
+    /// Break only on/after this hit count.
+    pub hit_count: Option<u32>,
+    /// Optional action script to run when the breakpoint triggers.
+    pub command: Option<String>,
+}
+
+fn ps_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
 /// Manages running PowerShell processes.
 /// Thread-safe via Arc<Mutex<...>> for use across Tauri async commands.
 pub struct ProcessManager {
@@ -179,7 +203,7 @@ impl ProcessManager {
         working_dir: &str,
         exec_policy: &str,
         script_args: &[String],
-        debug_breakpoints: Option<&[u32]>,
+        debug_breakpoints: Option<&[DebugBreakpointSpec]>,
         on_output: F,
     ) -> Result<i32, AppError>
     where
@@ -214,24 +238,110 @@ impl ProcessManager {
         wrapper_script.push_str("\n$__psforge_script_path = '");
         wrapper_script.push_str(&user_script_path_ps);
         wrapper_script.push_str("'\n");
-        if let Some(lines) = debug_breakpoints {
-            // Register deterministic line breakpoints. The action emits a marker
-            // the frontend can parse, then enters the debugger prompt.
-            let mut normalized = lines
-                .iter()
-                .copied()
-                .filter(|line| *line > 0)
-                .collect::<Vec<u32>>();
-            normalized.sort_unstable();
-            normalized.dedup();
-            for line in normalized {
-                wrapper_script.push_str("Set-PSBreakpoint -Script $__psforge_script_path -Line ");
-                wrapper_script.push_str(&line.to_string());
-                // Write marker to host output so it survives debugger break
-                // transitions across both Windows PowerShell and pwsh.
-                wrapper_script.push_str(" -Action { Write-Host '<<PSF_DEBUG_BREAK>>");
-                wrapper_script.push_str(&line.to_string());
-                wrapper_script.push_str("'; break } | Out-Null\n");
+        if let Some(specs) = debug_breakpoints {
+            // Register debugger breakpoints. Supports line breakpoints plus
+            // variable breakpoints, with optional condition/hit-count/action.
+            wrapper_script.push_str("$global:__psforge_debug_scope = 0\n");
+            wrapper_script.push_str("$script:__psforge_bp_hits = @{}\n");
+            wrapper_script.push_str("$script:__psforge_bp_conditions = @{}\n");
+            wrapper_script.push_str("$script:__psforge_bp_commands = @{}\n");
+
+            for (idx, spec) in specs.iter().enumerate() {
+                let line = spec.line.filter(|line| *line > 0);
+                let variable = spec
+                    .variable
+                    .as_ref()
+                    .map(|v| v.trim().trim_start_matches('$').to_string())
+                    .filter(|v| !v.is_empty());
+                let target_command = spec
+                    .target_command
+                    .as_ref()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty());
+                if line.is_none() && variable.is_none() && target_command.is_none() {
+                    continue;
+                }
+
+                let mode = match spec.mode.as_deref() {
+                    Some("Read") => "Read",
+                    Some("Write") => "Write",
+                    _ => "ReadWrite",
+                };
+                let condition = spec
+                    .condition
+                    .as_ref()
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty());
+                let command = spec
+                    .command
+                    .as_ref()
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty());
+                let hit_count = spec.hit_count.filter(|v| *v >= 1);
+
+                let bp_id = format!("bp{}", idx + 1);
+                let bp_id_ps = ps_single_quoted(&bp_id);
+
+                if let Some(cond) = condition {
+                    wrapper_script.push_str("$script:__psforge_bp_conditions['");
+                    wrapper_script.push_str(&bp_id_ps);
+                    wrapper_script.push_str("'] = '");
+                    wrapper_script.push_str(&ps_single_quoted(cond));
+                    wrapper_script.push_str("'\n");
+                }
+                if let Some(cmd_text) = command {
+                    wrapper_script.push_str("$script:__psforge_bp_commands['");
+                    wrapper_script.push_str(&bp_id_ps);
+                    wrapper_script.push_str("'] = '");
+                    wrapper_script.push_str(&ps_single_quoted(cmd_text));
+                    wrapper_script.push_str("'\n");
+                }
+
+                let mut action = String::new();
+                action.push_str("$__psf_id = '");
+                action.push_str(&bp_id_ps);
+                action.push_str("'; ");
+                action.push_str(
+                    "$script:__psforge_bp_hits[$__psf_id] = ([int]$script:__psforge_bp_hits[$__psf_id]) + 1; ",
+                );
+                if let Some(hit) = hit_count {
+                    action.push_str("if ($script:__psforge_bp_hits[$__psf_id] -lt ");
+                    action.push_str(&hit.to_string());
+                    action.push_str(") { return } ");
+                }
+                action.push_str("$__psf_cond = $script:__psforge_bp_conditions[$__psf_id]; ");
+                action.push_str(
+                    "if ($__psf_cond) { try { if (-not (& ([scriptblock]::Create($__psf_cond)))) { return } } catch { return } } ",
+                );
+                action.push_str("$__psf_cmd = $script:__psforge_bp_commands[$__psf_id]; ");
+                action.push_str(
+                    "if ($__psf_cmd) { try { & ([scriptblock]::Create($__psf_cmd)) | Out-Null } catch {} } ",
+                );
+                action.push_str("Write-Host '<<PSF_DEBUG_BREAK>>");
+                action.push_str(&line.unwrap_or(0).to_string());
+                action.push_str("'; break");
+
+                if let Some(line_no) = line {
+                    wrapper_script.push_str("Set-PSBreakpoint -Script $__psforge_script_path -Line ");
+                    wrapper_script.push_str(&line_no.to_string());
+                    wrapper_script.push_str(" -Action { ");
+                    wrapper_script.push_str(&action);
+                    wrapper_script.push_str(" } | Out-Null\n");
+                } else if let Some(var_name) = variable {
+                    wrapper_script.push_str("Set-PSBreakpoint -Variable '");
+                    wrapper_script.push_str(&ps_single_quoted(&var_name));
+                    wrapper_script.push_str("' -Mode ");
+                    wrapper_script.push_str(mode);
+                    wrapper_script.push_str(" -Action { ");
+                    wrapper_script.push_str(&action);
+                    wrapper_script.push_str(" } | Out-Null\n");
+                } else if let Some(command_name) = target_command {
+                    wrapper_script.push_str("Set-PSBreakpoint -Command '");
+                    wrapper_script.push_str(&ps_single_quoted(&command_name));
+                    wrapper_script.push_str("' -Action { ");
+                    wrapper_script.push_str(&action);
+                    wrapper_script.push_str(" } | Out-Null\n");
+                }
             }
         }
         wrapper_script.push_str("& $__psforge_script_path @args\n");
