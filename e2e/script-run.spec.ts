@@ -270,4 +270,24 @@ describe('Script Execution', () => {
       expect(text).not.toContain('NeverReached_E2E');
     });
   });
+
+  describe('F8 Selection Semantics', () => {
+    it('F8 should run the current line when no text is selected', async () => {
+      const marker = 'F8_CurrentLine_E2E';
+      await setEditorContent(`Write-Host "${marker}"`);
+
+      const editorArea = await $('.monaco-editor');
+      await editorArea.click();
+      await browser.pause(120);
+
+      await browser.keys(['F8']);
+      await browser.pause(250);
+
+      const outputTab = await $('[data-testid="output-tab-output"]');
+      await outputTab.click();
+
+      const found = await waitForOutputText(marker, SCRIPT_OUTPUT_TIMEOUT);
+      expect(found).toBe(true);
+    });
+  });
 });

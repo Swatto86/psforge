@@ -222,10 +222,12 @@ pub async fn start_terminal(
     shell_path: String,
     cols: Option<u16>,
     rows: Option<u16>,
+    load_profile: Option<bool>,
 ) -> Result<u64, AppError> {
+    let load_profile = load_profile.unwrap_or(false);
     info!(
-        "start_terminal: shell_path={:?}, cols={:?}, rows={:?}",
-        shell_path, cols, rows
+        "start_terminal: shell_path={:?}, cols={:?}, rows={:?}, load_profile={}",
+        shell_path, cols, rows, load_profile
     );
 
     // Stop any existing session cleanly before starting a new one.
@@ -273,7 +275,9 @@ pub async fn start_terminal(
 
     let mut cmd = CommandBuilder::new(program.clone());
     cmd.arg("-NoLogo");
-    cmd.arg("-NoProfile");
+    if !load_profile {
+        cmd.arg("-NoProfile");
+    }
     cmd.arg("-ExecutionPolicy");
     cmd.arg("Bypass");
     cmd.arg("-NoExit");

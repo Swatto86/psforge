@@ -252,62 +252,143 @@ function AppInner() {
     };
   }, [openFile, dispatch]);
 
-  const saveCurrentFile = useCallback(async () => {
-    if (!activeTab) return;
+  const mergeRecentFiles = useCallback(
+    (existing: string[], savedPaths: string[]) => {
+      const maxRecent = state.settings.maxRecentFiles ?? 20;
+      let next = [...existing];
+      for (const path of savedPaths) {
+        next = [path, ...next.filter((f) => f !== path)];
+      }
+      return next.slice(0, maxRecent);
+    },
+    [state.settings.maxRecentFiles],
+  );
 
-    let filePath = activeTab.filePath;
+  const saveTab = useCallback(
+    async (tab: EditorTab): Promise<{ saved: boolean; cancelled: boolean; path?: string }> => {
+      let filePath = tab.filePath;
 
-    if (!filePath) {
-      // Save As dialog
-      try {
-        const { save } = await import("@tauri-apps/plugin-dialog");
-        const selected = await save({
-          filters: [
-            {
-              name: "PowerShell Files",
-              extensions: ["ps1", "psm1", "psd1", "ps1xml", "pssc", "cdxml"],
-            },
-            { name: "All Files", extensions: ["*"] },
-          ],
-        });
-        if (selected) {
-          filePath = selected;
-        } else {
-          return;
+      if (!filePath) {
+        // Save As dialog for untitled tabs.
+        try {
+          const { save } = await import("@tauri-apps/plugin-dialog");
+          const selected = await save({
+            filters: [
+              {
+                name: "PowerShell Files",
+                extensions: ["ps1", "psm1", "psd1", "ps1xml", "pssc", "cdxml"],
+              },
+              { name: "All Files", extensions: ["*"] },
+            ],
+          });
+          if (selected) {
+            filePath = selected;
+          } else {
+            return { saved: false, cancelled: true };
+          }
+        } catch {
+          return { saved: false, cancelled: true };
         }
-      } catch {
-        return;
+      }
+
+      try {
+        await cmd.saveFileContent(filePath, tab.content, tab.encoding);
+        const fileName = filePath.split("\\").pop() || filePath;
+        dispatch({
+          type: "UPDATE_TAB",
+          id: tab.id,
+          changes: {
+            filePath,
+            title: fileName,
+            savedContent: tab.content,
+            isDirty: false,
+          },
+        });
+
+        // Update working directory to the most recently saved file location.
+        const dir = filePath.substring(0, filePath.lastIndexOf("\\"));
+        if (dir) {
+          dispatch({ type: "SET_WORKING_DIR", dir });
+        }
+
+        return { saved: true, cancelled: false, path: filePath };
+      } catch (err) {
+        console.error(`saveTab failed for "${tab.title}":`, err);
+        return { saved: false, cancelled: false };
+      }
+    },
+    [dispatch],
+  );
+
+  const saveCurrentFile = useCallback(async () => {
+    if (!activeTab || activeTab.tabType === "welcome") return;
+    const result = await saveTab(activeTab);
+    if (!result.saved || !result.path) return;
+
+    const recent = mergeRecentFiles(state.settings.recentFiles, [result.path]);
+    dispatch({
+      type: "SET_SETTINGS",
+      settings: { ...state.settings, recentFiles: recent },
+    });
+  }, [activeTab, saveTab, mergeRecentFiles, state.settings, dispatch]);
+
+  const saveAllFiles = useCallback(async () => {
+    // Save all code tabs that are dirty OR unsaved (untitled).
+    const targets = state.tabs.filter(
+      (tab) => tab.tabType !== "welcome" && (tab.isDirty || !tab.filePath),
+    );
+    if (targets.length === 0) return;
+
+    // Save existing-path tabs first so one unsaved-tab Save-As cancel does not
+    // prevent already-named files from being written.
+    const withPath = targets.filter((tab) => !!tab.filePath);
+    const withoutPath = targets.filter((tab) => !tab.filePath);
+    const orderedTargets = [...withPath, ...withoutPath];
+
+    const savedPaths: string[] = [];
+    for (const tab of orderedTargets) {
+      const result = await saveTab(tab);
+      if (result.cancelled) {
+        break;
+      }
+      if (result.saved && result.path) {
+        savedPaths.push(result.path);
       }
     }
 
-    try {
-      await cmd.saveFileContent(
-        filePath,
-        activeTab.content,
-        activeTab.encoding,
-      );
-      const fileName = filePath.split("\\").pop() || filePath;
+    if (savedPaths.length > 0) {
+      const recent = mergeRecentFiles(state.settings.recentFiles, savedPaths);
       dispatch({
-        type: "UPDATE_TAB",
-        id: activeTab.id,
-        changes: {
-          filePath,
-          title: fileName,
-          savedContent: activeTab.content,
-          isDirty: false,
-        },
+        type: "SET_SETTINGS",
+        settings: { ...state.settings, recentFiles: recent },
       });
-
-      // Update working directory
-      const dir = filePath.substring(0, filePath.lastIndexOf("\\"));
-      if (dir) {
-        dispatch({ type: "SET_WORKING_DIR", dir });
-      }
-    } catch (err) {
-      // Save failed -- log for diagnostics.
-      console.error("saveCurrentFile failed:", err);
     }
-  }, [activeTab, dispatch]);
+  }, [state.tabs, state.settings, saveTab, mergeRecentFiles, dispatch]);
+
+  /** Close the active tab, mirroring tab-bar close confirmation semantics. */
+  const closeActiveTab = useCallback(() => {
+    if (!activeTab || state.tabs.length <= 1) return;
+    if (activeTab.isDirty) {
+      const confirmed = window.confirm(
+        `"${activeTab.title}" has unsaved changes.\n\nClose without saving?`,
+      );
+      if (!confirmed) return;
+    }
+    dispatch({ type: "CLOSE_TAB", id: activeTab.id });
+  }, [activeTab, state.tabs.length, dispatch]);
+
+  /** Activate the next/previous tab by offset (+1 next, -1 previous). */
+  const activateRelativeTab = useCallback(
+    (offset: number) => {
+      if (state.tabs.length <= 1) return;
+      const currentIndex = state.tabs.findIndex((t) => t.id === state.activeTabId);
+      if (currentIndex === -1) return;
+      const nextIndex =
+        (currentIndex + offset + state.tabs.length) % state.tabs.length;
+      dispatch({ type: "SET_ACTIVE_TAB", id: state.tabs[nextIndex].id });
+    },
+    [state.tabs, state.activeTabId, dispatch],
+  );
 
   const runScript = useCallback(async () => {
     // BUG-NEW-2 fix: welcome tabs have no runnable content; guard here so
@@ -484,10 +565,16 @@ function AppInner() {
     if (runGuardRef.current) return;
     runGuardRef.current = true;
 
-    // Get selection from Monaco via the global ref.
-    const selection = (window as unknown as Record<string, unknown>)
-      .__psforge_selection as string | undefined;
-    if (!selection) {
+    // Get run text from Monaco: selected text when available, otherwise
+    // the current line (PowerShell ISE F8 behavior).
+    const runText = (
+      (window as unknown as Record<string, unknown>)
+        .__psforge_getRunText as (() => string) | undefined
+    )?.() ??
+      ((window as unknown as Record<string, unknown>)
+        .__psforge_selection as string | undefined) ??
+      "";
+    if (!runText.trim()) {
       runGuardRef.current = false;
       return;
     }
@@ -508,7 +595,12 @@ function AppInner() {
     }
 
     try {
-      await cmd.executeSelection(psPath, selection, workDir, state.settings.executionPolicy);
+      await cmd.executeSelection(
+        psPath,
+        runText,
+        workDir,
+        state.settings.executionPolicy,
+      );
     } catch (err) {
       console.error("runSelection failed:", err);
       runGuardRef.current = false;
@@ -572,17 +664,20 @@ function AppInner() {
     if (!activeTab || !activeTab.content) return;
     const w = window.open("", "_blank", "width=900,height=700");
     if (!w) return;
-    const escaped = activeTab.content
+    const escapeHtml = (value: string) =>
+      value
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+    const escaped = escapeHtml(activeTab.content);
     const title = activeTab.title || "Script";
+    const safeTitle = escapeHtml(title);
     w.document.write(
-      `<!DOCTYPE html><html><head><title>${title}</title>` +
+      `<!DOCTYPE html><html><head><title>${safeTitle}</title>` +
         `<style>body{font-family:Consolas,'Courier New',monospace;font-size:10pt;` +
         `margin:2cm}pre{white-space:pre-wrap;word-break:break-all}` +
         `@page{margin:2cm}h2{font-size:12pt;margin-bottom:8px}</style>` +
-        `</head><body><h2>${title}</h2><pre>${escaped}</pre></body></html>`,
+        `</head><body><h2>${safeTitle}</h2><pre>${escaped}</pre></body></html>`,
     );
     w.document.close();
     w.print();
@@ -619,10 +714,16 @@ function AppInner() {
         openFile();
       }
 
-      // Ctrl+S: Save
-      if (e.ctrlKey && e.key === "s") {
+      // Ctrl+S: Save current file
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        saveCurrentFile();
+        void saveCurrentFile();
+      }
+
+      // Ctrl+Shift+S: Save all files (ISE parity)
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void saveAllFiles();
       }
 
       // F5: Run script
@@ -631,7 +732,7 @@ function AppInner() {
         runScript();
       }
 
-      // F8: Run selection
+      // F8: Run selection, or current line when no selection (ISE behavior)
       if (e.key === "F8") {
         e.preventDefault();
         runSelection();
@@ -650,7 +751,25 @@ function AppInner() {
       // Ctrl+Shift+P: Command palette
       if (e.ctrlKey && e.shiftKey && e.key === "P") {
         e.preventDefault();
-        dispatch({ type: "TOGGLE_COMMAND_PALETTE" });
+        dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "all" });
+      }
+
+      // Ctrl+W: close active tab.
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        closeActiveTab();
+      }
+
+      // Ctrl+Tab / Ctrl+Shift+Tab: cycle through open tabs.
+      if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault();
+        activateRelativeTab(e.shiftKey ? -1 : 1);
+      }
+
+      // Ctrl+J: ISE-style snippets picker
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "snippets" });
       }
 
       // F1: Keyboard shortcut reference panel
@@ -725,6 +844,9 @@ function AppInner() {
     dispatch,
     openFile,
     saveCurrentFile,
+    saveAllFiles,
+    closeActiveTab,
+    activateRelativeTab,
     runScript,
     runSelection,
     formatCurrentScript,
@@ -862,7 +984,8 @@ function AppInner() {
         }}
         onOpen={() => void openFile()}
         onOpenRecent={(path) => void openFile(path)}
-        onSave={saveCurrentFile}
+        onSave={() => void saveCurrentFile()}
+        onSaveAll={() => void saveAllFiles()}
         onRun={runScript}
         onStop={() => {
           cmd.stopScript().catch(() => {});

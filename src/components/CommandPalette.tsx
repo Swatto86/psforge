@@ -17,6 +17,7 @@ interface PaletteItem {
 
 export function CommandPalette() {
   const { state, dispatch } = useAppState();
+  const snippetsOnly = state.commandPaletteMode === "snippets";
   const [query, setQuery] = useState("");
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -39,7 +40,19 @@ export function CommandPalette() {
     };
   }, []);
 
-  const close = () => dispatch({ type: "TOGGLE_COMMAND_PALETTE" });
+  const close = () => dispatch({ type: "CLOSE_COMMAND_PALETTE" });
+
+  // Close on Escape even if focus has left the input.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [dispatch]);
 
   // Build list of palette items
   const items = useMemo<PaletteItem[]>(() => {
@@ -61,87 +74,89 @@ export function CommandPalette() {
       });
     });
 
-    // Built-in commands
-    result.push({
-      id: "cmd-settings",
-      label: "Open Settings",
-      category: "Command",
-      description: "Open the settings panel",
-      action: () => {
-        close();
-        dispatch({ type: "TOGGLE_SETTINGS" });
-      },
-    });
+    if (!snippetsOnly) {
+      // Built-in commands
+      result.push({
+        id: "cmd-settings",
+        label: "Open Settings",
+        category: "Command",
+        description: "Open the settings panel",
+        action: () => {
+          close();
+          dispatch({ type: "TOGGLE_SETTINGS" });
+        },
+      });
 
-    result.push({
-      id: "cmd-toggle-sidebar",
-      label: "Toggle Sidebar",
-      category: "Command",
-      description: "Show or hide the module browser sidebar",
-      action: () => {
-        close();
-        dispatch({ type: "TOGGLE_SIDEBAR" });
-      },
-    });
+      result.push({
+        id: "cmd-toggle-sidebar",
+        label: "Toggle Sidebar",
+        category: "Command",
+        description: "Show or hide the module browser sidebar",
+        action: () => {
+          close();
+          dispatch({ type: "TOGGLE_SIDEBAR" });
+        },
+      });
 
-    result.push({
-      id: "cmd-theme-dark",
-      label: "Set Theme: Dark",
-      category: "Theme",
-      description: "Switch to the dark theme",
-      action: () => {
-        document.documentElement.setAttribute("data-theme", "dark");
-        dispatch({
-          type: "SET_SETTINGS",
-          settings: { ...state.settings, theme: "dark" },
-        });
-        close();
-      },
-    });
+      result.push({
+        id: "cmd-theme-dark",
+        label: "Set Theme: Dark",
+        category: "Theme",
+        description: "Switch to the dark theme",
+        action: () => {
+          document.documentElement.setAttribute("data-theme", "dark");
+          dispatch({
+            type: "SET_SETTINGS",
+            settings: { ...state.settings, theme: "dark" },
+          });
+          close();
+        },
+      });
 
-    result.push({
-      id: "cmd-theme-light",
-      label: "Set Theme: Light",
-      category: "Theme",
-      description: "Switch to the light theme",
-      action: () => {
-        document.documentElement.setAttribute("data-theme", "light");
-        dispatch({
-          type: "SET_SETTINGS",
-          settings: { ...state.settings, theme: "light" },
-        });
-        close();
-      },
-    });
+      result.push({
+        id: "cmd-theme-light",
+        label: "Set Theme: Light",
+        category: "Theme",
+        description: "Switch to the light theme",
+        action: () => {
+          document.documentElement.setAttribute("data-theme", "light");
+          dispatch({
+            type: "SET_SETTINGS",
+            settings: { ...state.settings, theme: "light" },
+          });
+          close();
+        },
+      });
 
-    result.push({
-      id: "cmd-theme-ise",
-      label: "Set Theme: ISE Classic",
-      category: "Theme",
-      description: "Switch to the PowerShell ISE classic theme",
-      action: () => {
-        document.documentElement.setAttribute("data-theme", "ise-classic");
-        dispatch({
-          type: "SET_SETTINGS",
-          settings: { ...state.settings, theme: "ise-classic" },
-        });
-        close();
-      },
-    });
+      result.push({
+        id: "cmd-theme-ise",
+        label: "Set Theme: ISE Classic",
+        category: "Theme",
+        description: "Switch to the PowerShell ISE classic theme",
+        action: () => {
+          document.documentElement.setAttribute("data-theme", "ise-classic");
+          dispatch({
+            type: "SET_SETTINGS",
+            settings: { ...state.settings, theme: "ise-classic" },
+          });
+          close();
+        },
+      });
 
-    result.push({
-      id: "cmd-clear-output",
-      label: "Clear Output",
-      category: "Command",
-      description: "Clear the output pane",
-      action: () => {
-        dispatch({ type: "CLEAR_OUTPUT" });
-        close();
-      },
-    });
+      result.push({
+        id: "cmd-clear-output",
+        label: "Clear Output",
+        category: "Command",
+        description: "Clear the output pane",
+        action: () => {
+          dispatch({ type: "CLEAR_OUTPUT" });
+          close();
+        },
+      });
+    }
 
     return result;
-  }, [snippets, state.settings, dispatch]);
+  }, [snippets, snippetsOnly, state.settings, dispatch]);
 
   // Filter items
   const filtered = items.filter((item) => {
@@ -188,6 +203,7 @@ export function CommandPalette() {
 
   return (
     <div
+      data-testid="command-palette"
       className="fixed inset-0 z-50 flex justify-center pt-[15%]"
       style={{ backgroundColor: "rgba(0,0,0,0.3)" }}
       onClick={(e) => {
@@ -215,6 +231,7 @@ export function CommandPalette() {
             &gt;
           </span>
           <input
+            data-testid="command-palette-input"
             ref={inputRef}
             value={query}
             onChange={(e) => {
@@ -222,7 +239,11 @@ export function CommandPalette() {
               setSelectedIndex(0);
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Type a command or snippet name..."
+            placeholder={
+              snippetsOnly
+                ? "Type a snippet name (ISE: Ctrl+J)..."
+                : "Type a command or snippet name..."
+            }
             className="flex-1 py-2 text-sm"
             style={{
               backgroundColor: "transparent",

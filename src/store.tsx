@@ -57,6 +57,8 @@ export interface AppState {
   bottomPanelTab: "output" | "variables" | "problems" | "terminal";
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
+  /** Command palette mode: full command list or snippets-only picker. */
+  commandPaletteMode: "all" | "snippets";
   /** Whether the keyboard shortcut reference panel is open. */
   shortcutPanelOpen: boolean;
   /** Current editor cursor line (1-indexed). Updated on every cursor move. */
@@ -120,6 +122,7 @@ const initialState: AppState = {
   bottomPanelTab: "terminal",
   settingsOpen: false,
   commandPaletteOpen: false,
+  commandPaletteMode: "all",
   shortcutPanelOpen: false,
   cursorLine: 1,
   cursorColumn: 1,
@@ -158,6 +161,8 @@ type Action =
       tab: "output" | "variables" | "problems" | "terminal";
     }
   | { type: "TOGGLE_SETTINGS" }
+  | { type: "OPEN_COMMAND_PALETTE"; mode?: "all" | "snippets" }
+  | { type: "CLOSE_COMMAND_PALETTE" }
   | { type: "TOGGLE_COMMAND_PALETTE" }
   | { type: "TOGGLE_SHORTCUT_PANEL" }
   | { type: "SET_CURSOR_POSITION"; line: number; column: number }
@@ -402,8 +407,24 @@ function reducer(state: AppState, action: Action): AppState {
     case "TOGGLE_SETTINGS":
       return { ...state, settingsOpen: !state.settingsOpen };
 
+    case "OPEN_COMMAND_PALETTE":
+      return {
+        ...state,
+        commandPaletteOpen: true,
+        commandPaletteMode: action.mode ?? "all",
+      };
+
+    case "CLOSE_COMMAND_PALETTE":
+      return {
+        ...state,
+        commandPaletteOpen: false,
+        commandPaletteMode: "all",
+      };
+
     case "TOGGLE_COMMAND_PALETTE":
-      return { ...state, commandPaletteOpen: !state.commandPaletteOpen };
+      return state.commandPaletteOpen
+        ? { ...state, commandPaletteOpen: false, commandPaletteMode: "all" }
+        : { ...state, commandPaletteOpen: true, commandPaletteMode: "all" };
 
     case "TOGGLE_SHORTCUT_PANEL":
       return { ...state, shortcutPanelOpen: !state.shortcutPanelOpen };
@@ -472,8 +493,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Load settings and PS versions on mount
   useEffect(() => {
     (async () => {
+      let loadedSettings = DEFAULT_SETTINGS;
       try {
         const settings = await cmd.loadSettings();
+        loadedSettings = settings;
         dispatch({ type: "SET_SETTINGS", settings });
 
         // Apply theme
@@ -505,7 +528,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const versions = await cmd.getPsVersions();
         dispatch({ type: "SET_PS_VERSIONS", versions });
         if (versions.length > 0) {
-          dispatch({ type: "SET_SELECTED_PS", path: versions[0].path });
+          const preferredPath = loadedSettings.defaultPsVersion;
+          const preferred = versions.find((v) => v.path === preferredPath);
+          dispatch({
+            type: "SET_SELECTED_PS",
+            path: preferred?.path || versions[0].path,
+          });
         }
       } catch {
         // No PS versions found

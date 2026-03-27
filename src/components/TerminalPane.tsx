@@ -178,6 +178,21 @@ type TerminalExitEvent = {
   exitCode: number | null;
 };
 
+/** Best-effort parser for PowerShell command-not-found error text (English locale). */
+const MISSING_COMMAND_RE =
+  /The term ['"`]([^'"`\r\n]+)['"`] is not recognized as (?:the )?name of a cmdlet, function, script file, or (?:executable|operable) program\./gi;
+
+/** Removes common ANSI escape/control sequences from terminal text chunks. */
+function stripAnsi(text: string): string {
+  return (
+    text
+      // CSI sequences (colors, cursor movement, etc.)
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+      // OSC sequences (title updates, hyperlinks, etc.)
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+  );
+}
+
 export function TerminalPane() {
   const { state } = useAppState();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -193,15 +208,20 @@ export function TerminalPane() {
   const writeQueueRef = useRef<string>("");
   const writeInFlightRef = useRef<boolean>(false);
   const fitRafRef = useRef<number | null>(null);
+  const outputTailRef = useRef<string>("");
+  const suggestedCommandsRef = useRef<Set<string>>(new Set());
+  const suggestInFlightRef = useRef<Set<string>>(new Set());
 
   const fontFamilyRef = useRef(state.settings.outputFontFamily);
   const fontSizeRef = useRef(state.settings.outputFontSize);
   const shellPathRef = useRef(state.selectedPsPath);
+  const loadProfileRef = useRef(state.settings.terminalLoadProfile === true);
 
   // Keep snapshot refs current for async callbacks.
   fontFamilyRef.current = state.settings.outputFontFamily;
   fontSizeRef.current = state.settings.outputFontSize;
   shellPathRef.current = state.selectedPsPath;
+  loadProfileRef.current = state.settings.terminalLoadProfile === true;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -314,6 +334,9 @@ export function TerminalPane() {
       isReadyRef.current = false;
       writeQueueRef.current = "";
       writeInFlightRef.current = false;
+      outputTailRef.current = "";
+      suggestedCommandsRef.current.clear();
+      suggestInFlightRef.current.clear();
       pendingOldSessionIdRef.current = sessionIdRef.current;
       // Allow early PTY output for the new session to be accepted before the
       // invoke() promise resolves with the new session id.
@@ -327,6 +350,7 @@ export function TerminalPane() {
           shellPathRef.current || "",
           cols,
           rows,
+          loadProfileRef.current,
         );
         if (cancelled) return;
 
@@ -407,6 +431,59 @@ export function TerminalPane() {
       }
       const chunk = event.payload.data;
       term.write(chunk);
+
+      // Command-not-found helper: suggest modules that export the missing cmdlet.
+      const psPath = shellPathRef.current;
+      if (psPath) {
+        const plainChunk = stripAnsi(chunk);
+        outputTailRef.current = (outputTailRef.current + plainChunk).slice(-12000);
+        const tail = outputTailRef.current;
+
+        MISSING_COMMAND_RE.lastIndex = 0;
+        const commandsToSuggest: string[] = [];
+        let m: RegExpExecArray | null;
+        while ((m = MISSING_COMMAND_RE.exec(tail)) !== null) {
+          const commandName = m[1]?.trim();
+          // PowerShell command names are single tokens; ignore multi-word captures.
+          if (!commandName || /\s/.test(commandName)) continue;
+          commandsToSuggest.push(commandName);
+        }
+
+        const sessionSnapshot = event.payload.sessionId;
+        for (const commandName of commandsToSuggest) {
+          const key = commandName.toLowerCase();
+          if (
+            suggestedCommandsRef.current.has(key) ||
+            suggestInFlightRef.current.has(key)
+          ) {
+            continue;
+          }
+          suggestInFlightRef.current.add(key);
+          void cmd
+            .suggestModulesForCommand(psPath, commandName)
+            .then((suggestions) => {
+              if (cancelled) return;
+              if (sessionIdRef.current !== sessionSnapshot) return;
+              if (!suggestions.length) return;
+
+              term.write(
+                `\r\n\x1b[36m[PSForge] '${commandName}' may be available in:\x1b[0m\r\n`,
+              );
+              for (const item of suggestions.slice(0, 5)) {
+                const parts = [item.name];
+                if (item.version) parts.push(item.version);
+                if (item.repository) parts.push(`(${item.repository})`);
+                term.write(`\x1b[36m  - ${parts.join(" ")}\x1b[0m\r\n`);
+                term.write(`\x1b[36m    ${item.installCommand}\x1b[0m\r\n`);
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              suggestInFlightRef.current.delete(key);
+              suggestedCommandsRef.current.add(key);
+            });
+        }
+      }
 
       // PSReadLine may probe cursor position with DSR (ESC[6n). In some
       // WebView2/xterm attach timings this response can be missed, which

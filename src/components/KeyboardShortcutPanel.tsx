@@ -37,13 +37,14 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "Ctrl+N", description: "New file tab" },
       { keys: "Ctrl+O", description: "Open file" },
       { keys: "Ctrl+S", description: "Save current file" },
+      { keys: "Ctrl+Shift+S", description: "Save all open files" },
     ],
   },
   {
     category: "Script Execution",
     shortcuts: [
       { keys: "F5", description: "Run script" },
-      { keys: "F8", description: "Run selected text" },
+      { keys: "F8", description: "Run selection (or current line)" },
       { keys: "Ctrl+Break", description: "Stop running script" },
     ],
   },
@@ -67,6 +68,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     category: "Interface",
     shortcuts: [
+      { keys: "Ctrl+J", description: "Open snippets picker (ISE style)" },
       { keys: "Ctrl+Shift+P", description: "Open Command Palette" },
       { keys: "Ctrl+,", description: "Open Settings" },
       { keys: "Ctrl+B", description: "Toggle sidebar" },
@@ -77,7 +79,9 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     category: "Tabs",
     shortcuts: [
-      { keys: "Ctrl+W", description: "Close current tab (browser shortcut)" },
+      { keys: "Ctrl+W", description: "Close current tab" },
+      { keys: "Ctrl+Tab", description: "Next tab" },
+      { keys: "Ctrl+Shift+Tab", description: "Previous tab" },
       {
         keys: "Drag & Drop",
         description: "Reorder tabs by dragging them",

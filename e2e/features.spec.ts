@@ -1,13 +1,15 @@
 /**
  * E2E Tests: New Features (ISE Parity)
  *
- * Covers the 6 features added to close the ISE feature gap:
+ * Covers feature work added to close ISE parity gaps:
  *   1. Script formatter toolbar button (Shift+Alt+F / toolbar-format)
  *   2. Find & Replace toolbar button (toolbar-find-replace)
  *   3. File drag-and-drop (onDrop handler on app-root)
  *   4. $PROFILE quick-edit toolbar button (toolbar-open-profile)
  *   5. Script signing dialog (toolbar-sign / signing-dialog)
  *   6. Print toolbar button (toolbar-print)
+ *   7. Save All workflow (Ctrl+Shift+S / toolbar-save-all)
+ *   8. Sidebar Outline navigator (functions/classes/regions)
  *
  * Run: npm run test:e2e -- --spec e2e/features.spec.ts
  */
@@ -39,6 +41,23 @@ async function openNewCodeTab(): Promise<void> {
   const btn = await $('[data-testid="toolbar-new"]');
   await btn.click();
   await browser.pause(200);
+}
+
+/** Ensure the sidebar is visible (toggles it on via toolbar if needed). */
+async function ensureSidebarVisible(): Promise<void> {
+  const sidebar = await $('[data-testid="sidebar-root"]');
+  if (await sidebar.isExisting()) return;
+
+  const toggle = await $('[data-testid="toolbar-modules"]');
+  await toggle.click();
+  await browser.waitUntil(
+    async () => (await $('[data-testid="sidebar-root"]')).isDisplayed(),
+    {
+      timeout: DIALOG_TIMEOUT,
+      interval: POLL_MS,
+      timeoutMsg: "Sidebar did not become visible",
+    },
+  );
 }
 
 /** Open the signing dialog and wait for it to appear. */
@@ -454,6 +473,141 @@ describe("Feature: Print Support", () => {
   });
 });
 
+// ── 7. Save All ───────────────────────────────────────────────────────────────
+describe("Feature: Save All", () => {
+  it("toolbar-save-all button exists and is displayed", async () => {
+    const btn = await $('[data-testid="toolbar-save-all"]');
+    await expect(btn).toBeDisplayed();
+  });
+
+  it("Ctrl+Shift+S saves the active dirty saved tab", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+
+    const tmpDir = path.join(process.cwd(), "e2e", ".tmp");
+    const tmpFile = path.join(tmpDir, `save-all-${Date.now()}.ps1`);
+    const marker = `SaveAll_E2E_${Date.now()}`;
+    await fs.mkdir(tmpDir, { recursive: true });
+    await fs.writeFile(tmpFile, "Write-Host 'seed'", "utf8");
+
+    try {
+      await browser.execute((filePath: string) => {
+        const openByPath = (window as any).__psforge_openFileByPath as
+          | ((p: string) => void)
+          | undefined;
+        if (!openByPath) {
+          throw new Error("__psforge_openFileByPath not available");
+        }
+        openByPath(filePath);
+      }, tmpFile);
+
+      // Wait for the opened file tab to become active (saved path => Sign enabled).
+      await browser.waitUntil(
+        async () => (await (await $('[data-testid="toolbar-sign"]')).getAttribute("disabled")) === null,
+        {
+          timeout: TAB_TIMEOUT,
+          interval: POLL_MS,
+          timeoutMsg: "Could not activate saved file tab for save-all test",
+        },
+      );
+
+      await typeIntoEditor(`Write-Host "${marker}"`);
+      await browser.pause(200);
+
+      // Active tab is dirty, so Save should be enabled.
+      const saveBtn = await $('[data-testid="toolbar-save"]');
+      expect(await saveBtn.getAttribute("disabled")).toBeNull();
+
+      await browser.keys(["Control", "Shift", "s"]);
+
+      // After save-all, the active tab should be clean so Save becomes disabled.
+      await browser.waitUntil(
+        async () => (await saveBtn.getAttribute("disabled")) !== null,
+        {
+          timeout: DIALOG_TIMEOUT,
+          interval: POLL_MS,
+          timeoutMsg: "Active tab did not become clean after Ctrl+Shift+S",
+        },
+      );
+
+      const savedContent = await fs.readFile(tmpFile, "utf8");
+      expect(savedContent).toContain(marker);
+    } finally {
+      await fs.unlink(tmpFile).catch(() => undefined);
+    }
+  });
+});
+
+// ── 8. Sidebar Outline ───────────────────────────────────────────────────────
+describe("Feature: Sidebar Outline", () => {
+  it("outline view lists symbols for the active script", async () => {
+    await ensureSidebarVisible();
+    await openNewCodeTab();
+    await browser.waitUntil(
+      async () => (await $('[data-testid="editor-container"]')).isDisplayed(),
+      {
+        timeout: TAB_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Editor did not appear",
+      },
+    );
+
+    await typeIntoEditor(
+      "#region Nav\nfunction Get-Widget { }\nclass DemoType { }\n#endregion",
+    );
+    await browser.pause(250);
+
+    const outlineTab = await $('[data-testid="sidebar-view-outline"]');
+    await outlineTab.click();
+
+    await browser.waitUntil(
+      async () => {
+        const items = await $$('[data-testid="sidebar-outline-item"]');
+        return items.length >= 2;
+      },
+      {
+        timeout: DIALOG_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Outline items did not appear",
+      },
+    );
+
+    const sidebarText = await (await $('[data-testid="sidebar-root"]')).getText();
+    expect(sidebarText).toContain("Get-Widget");
+    expect(sidebarText).toContain("DemoType");
+  });
+
+  it("clicking an outline symbol navigates the editor cursor to that line", async () => {
+    await ensureSidebarVisible();
+    const outlineTab = await $('[data-testid="sidebar-view-outline"]');
+    await outlineTab.click();
+
+    const target = await browser.execute(() => {
+      const rows = Array.from(
+        document.querySelectorAll('[data-testid="sidebar-outline-item"]'),
+      ) as HTMLElement[];
+      const match = rows.find((row) => row.innerText.includes("DemoType"));
+      if (!match) return false;
+      match.click();
+      return true;
+    });
+    expect(target).toBe(true);
+
+    const status = await $('[data-testid="status-bar"]');
+    await browser.waitUntil(
+      async () => {
+        const text = await status.getText();
+        return /Ln 3, Col \d+/.test(text);
+      },
+      {
+        timeout: DIALOG_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Cursor did not navigate to expected outline line",
+      },
+    );
+  });
+});
+
 // ── Keyboard Shortcut Panel: new entries ──────────────────────────────────────
 describe("Feature: Keyboard Shortcut Panel - new entries", () => {
   beforeEach(async () => {
@@ -520,5 +674,11 @@ describe("Feature: Keyboard Shortcut Panel - new entries", () => {
   it("shortcut panel contains Script Tools category", async () => {
     const text = await browser.execute(() => document.body.innerText);
     expect(text.toLowerCase()).toContain("script tools");
+  });
+
+  it("shortcut panel contains Save All shortcut entry", async () => {
+    const text = await browser.execute(() => document.body.innerText);
+    expect(text).toContain("Ctrl + Shift + S");
+    expect(text.toLowerCase()).toContain("save all");
   });
 });
