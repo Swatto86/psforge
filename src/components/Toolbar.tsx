@@ -15,6 +15,16 @@ interface ToolbarProps {
   onSave: () => void;
   onSaveAll: () => void;
   onRun: () => void;
+  /** Start running the active script under the debugger. */
+  onDebugStart: () => void;
+  /** Continue execution from the current debugger stop point. */
+  onDebugContinue: () => void;
+  /** Debugger: step over. */
+  onDebugStepOver: () => void;
+  /** Debugger: step into. */
+  onDebugStepInto: () => void;
+  /** Debugger: step out. */
+  onDebugStepOut: () => void;
   onStop: () => void;
   /** Format current script with Invoke-Formatter (Shift+Alt+F). */
   onFormat: () => void;
@@ -35,6 +45,11 @@ export function Toolbar({
   onSave,
   onSaveAll,
   onRun,
+  onDebugStart,
+  onDebugContinue,
+  onDebugStepOver,
+  onDebugStepInto,
+  onDebugStepOut,
   onStop,
   onFormat,
   onFindReplace,
@@ -269,7 +284,64 @@ export function Toolbar({
         </svg>
       </ToolbarBtn>
       <ToolbarBtn
-        title="Stop (Ctrl+Break)"
+        title="Start Debugging (sets line breakpoints from gutter)"
+        onClick={onDebugStart}
+        testId="toolbar-debug-start"
+        disabled={
+          state.isRunning ||
+          !state.selectedPsPath ||
+          !activeTab ||
+          activeTab.tabType === "welcome"
+        }
+        className="text-yellow-400 hover:text-yellow-300"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="8" cy="8" r="5" />
+          <rect x="7" y="1" width="2" height="2" />
+          <rect x="7" y="13" width="2" height="2" />
+        </svg>
+      </ToolbarBtn>
+      <ToolbarBtn
+        title="Continue (F5 while paused)"
+        onClick={onDebugContinue}
+        testId="toolbar-debug-continue"
+        disabled={!state.isDebugging || !state.debugPaused}
+        className="text-yellow-300 hover:text-yellow-200"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M4 2l8 6-8 6V2z" />
+          <rect x="12" y="3" width="1.5" height="10" />
+        </svg>
+      </ToolbarBtn>
+      <ToolbarBtn
+        title="Step Over (F10)"
+        onClick={onDebugStepOver}
+        testId="toolbar-debug-step-over"
+        disabled={!state.isDebugging || !state.debugPaused}
+        className="text-yellow-300 hover:text-yellow-200"
+      >
+        <span style={{ fontSize: "10px", fontWeight: 700 }}>SO</span>
+      </ToolbarBtn>
+      <ToolbarBtn
+        title="Step Into (F11)"
+        onClick={onDebugStepInto}
+        testId="toolbar-debug-step-into"
+        disabled={!state.isDebugging || !state.debugPaused}
+        className="text-yellow-300 hover:text-yellow-200"
+      >
+        <span style={{ fontSize: "10px", fontWeight: 700 }}>SI</span>
+      </ToolbarBtn>
+      <ToolbarBtn
+        title="Step Out (Shift+F11)"
+        onClick={onDebugStepOut}
+        testId="toolbar-debug-step-out"
+        disabled={!state.isDebugging || !state.debugPaused}
+        className="text-yellow-300 hover:text-yellow-200"
+      >
+        <span style={{ fontSize: "10px", fontWeight: 700 }}>SU</span>
+      </ToolbarBtn>
+      <ToolbarBtn
+        title="Stop (Ctrl+Break / Shift+F5)"
         onClick={onStop}
         testId="toolbar-stop"
         disabled={!state.isRunning}

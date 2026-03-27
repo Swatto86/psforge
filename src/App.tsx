@@ -91,6 +91,12 @@ function AppInner() {
    *  This ref is set to `true` synchronously before dispatch, preventing the
    *  second invocation from passing the guard check. */
   const runGuardRef = useRef(false);
+  /** Tracks whether the active process was started in debugger mode. */
+  const debugSessionRef = useRef(false);
+  /** Last known debugger stop location, updated from debug markers/output. */
+  const debugLocationRef = useRef<{ line: number; column: number } | null>(
+    null,
+  );
 
   /**
    * Pending parameter-prompt state.  When a script has mandatory parameters
@@ -102,6 +108,17 @@ function AppInner() {
     params: ScriptParameter[];
     resolve: (values: Record<string, string> | null) => void;
   } | null>(null);
+
+  useEffect(() => {
+    if (state.debugLine && state.debugColumn) {
+      debugLocationRef.current = {
+        line: state.debugLine,
+        column: state.debugColumn,
+      };
+    } else {
+      debugLocationRef.current = null;
+    }
+  }, [state.debugLine, state.debugColumn]);
 
   // Remove the startup loading mask once React has successfully mounted.
   // This completes the white-flash prevention sequence started by preload.js
@@ -130,6 +147,61 @@ function AppInner() {
   useEffect(() => {
     const unlisten = listen<OutputLine>("ps-output", (event) => {
       dispatch({ type: "ADD_OUTPUT", line: event.payload });
+
+      if (!debugSessionRef.current) return;
+
+      const trimmed = event.payload.text.trim();
+      const locationMatch = /At\s+(?:.+:)?(\d+)\s+char:(\d+)/i.exec(trimmed);
+      if (locationMatch) {
+        const line = parseInt(locationMatch[1], 10);
+        const column = parseInt(locationMatch[2], 10);
+        if (Number.isFinite(line) && line > 0) {
+          const nextColumn = Number.isFinite(column) && column > 0 ? column : 1;
+          debugLocationRef.current = { line, column: nextColumn };
+          dispatch({
+            type: "SET_DEBUG_STATE",
+            debugLine: line,
+            debugColumn: nextColumn,
+          });
+        }
+      }
+
+      // [DBG]: prompt indicates the PowerShell debugger is paused and ready
+      // for continue/step commands.
+      if (trimmed.includes("[DBG]:")) {
+        dispatch({
+          type: "SET_DEBUG_STATE",
+          isDebugging: true,
+          debugPaused: true,
+        });
+        dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
+        const nav = (window as unknown as Record<string, unknown>)
+          .__psforge_navigateTo as
+          | ((line: number, column: number) => void)
+          | undefined;
+        const loc = debugLocationRef.current;
+        if (loc) nav?.(loc.line, loc.column);
+      }
+    });
+
+    const unlistenDebugBreak = listen<number>("ps-debug-break", (event) => {
+      if (!debugSessionRef.current) return;
+      const line = event.payload;
+      if (!Number.isFinite(line) || line < 1) return;
+      debugLocationRef.current = { line, column: 1 };
+      dispatch({
+        type: "SET_DEBUG_STATE",
+        isDebugging: true,
+        debugPaused: true,
+        debugLine: line,
+        debugColumn: 1,
+      });
+      dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
+      const nav = (window as unknown as Record<string, unknown>)
+        .__psforge_navigateTo as
+        | ((targetLine: number, targetColumn: number) => void)
+        | undefined;
+      nav?.(line, 1);
     });
 
     // Show exit code in output for non-zero exits so the user knows the script
@@ -148,11 +220,20 @@ function AppInner() {
       }
       // Clear the synchronous run guard so subsequent runs are possible.
       runGuardRef.current = false;
+      debugSessionRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
+      dispatch({
+        type: "SET_DEBUG_STATE",
+        isDebugging: false,
+        debugPaused: false,
+        debugLine: null,
+        debugColumn: null,
+      });
     });
 
     return () => {
       unlisten.then((fn) => fn());
+      unlistenDebugBreak.then((fn) => fn());
       unlistenComplete.then((fn) => fn());
     };
   }, [dispatch]);
@@ -227,6 +308,31 @@ function AppInner() {
     [state.tabs, state.settings, dispatch],
   );
 
+  /** Open (or focus) the Welcome tab so users can restore onboarding content. */
+  const openWelcomePage = useCallback(() => {
+    const existing = state.tabs.find((t) => t.tabType === "welcome");
+    if (existing) {
+      dispatch({ type: "SET_ACTIVE_TAB", id: existing.id });
+      return;
+    }
+
+    const id = newTabId();
+    dispatch({
+      type: "ADD_TAB",
+      tab: {
+        id,
+        title: "Welcome",
+        filePath: "",
+        content: "",
+        savedContent: "",
+        encoding: "utf8",
+        language: "markdown",
+        isDirty: false,
+        tabType: "welcome",
+      },
+    });
+  }, [state.tabs, dispatch]);
+
   // Register window globals so WelcomePane and other components can trigger
   // file-open actions without prop-threading through the full component tree.
   // Must be declared after openFile to satisfy declaration order rules.
@@ -234,6 +340,7 @@ function AppInner() {
     const w = window as unknown as Record<string, unknown>;
     w.__psforge_openFile = () => void openFile();
     w.__psforge_openFileByPath = (p: string) => void openFile(p);
+    w.__psforge_openWelcome = () => openWelcomePage();
     /** Expose dispatch for E2E tests that need to trigger state changes
      *  (e.g. open the signing dialog on a tab without a saved file path). */
     w.__psforge_dispatch = dispatch;
@@ -247,10 +354,11 @@ function AppInner() {
     return () => {
       delete w.__psforge_openFile;
       delete w.__psforge_openFileByPath;
+      delete w.__psforge_openWelcome;
       delete w.__psforge_dispatch;
       delete w.__psforge_reset_variables;
     };
-  }, [openFile, dispatch]);
+  }, [openFile, openWelcomePage, dispatch]);
 
   const mergeRecentFiles = useCallback(
     (existing: string[], savedPaths: string[]) => {
@@ -414,6 +522,15 @@ function AppInner() {
     // before React applies the SET_RUNNING dispatch from the first invocation.
     if (runGuardRef.current) return;
     runGuardRef.current = true;
+    debugSessionRef.current = false;
+    debugLocationRef.current = null;
+    dispatch({
+      type: "SET_DEBUG_STATE",
+      isDebugging: false,
+      debugPaused: false,
+      debugLine: null,
+      debugColumn: null,
+    });
 
     // Auto-save before running when the setting is enabled (Rule 11 -- pre-flight).
     if (
@@ -548,6 +665,217 @@ function AppInner() {
     setParamPrompt,
     dispatch,
   ]);
+
+  const startDebugSession = useCallback(async () => {
+    if (!activeTab || activeTab.tabType === "welcome" || state.isRunning) {
+      return;
+    }
+
+    if (!state.selectedPsPath) {
+      dispatch({
+        type: "ADD_OUTPUT",
+        line: {
+          stream: "stderr",
+          text: "Debug failed: no PowerShell executable is selected.",
+          timestamp: String(Math.floor(Date.now() / 1000)),
+        },
+      });
+      return;
+    }
+
+    if (runGuardRef.current) return;
+    runGuardRef.current = true;
+    debugSessionRef.current = true;
+    debugLocationRef.current = null;
+
+    // Auto-save before debugging when enabled.
+    if (
+      state.settings.autoSaveOnRun &&
+      activeTab.isDirty &&
+      activeTab.filePath
+    ) {
+      try {
+        await cmd.saveFileContent(
+          activeTab.filePath,
+          activeTab.content,
+          activeTab.encoding,
+        );
+        dispatch({
+          type: "UPDATE_TAB",
+          id: activeTab.id,
+          changes: { savedContent: activeTab.content, isDirty: false },
+        });
+      } catch {
+        // Save failed -- continue with in-memory content.
+      }
+    }
+
+    const psPath = state.selectedPsPath;
+    const scriptContent = activeTab.content;
+    const breakpoints = (state.breakpoints[activeTab.id] ?? []).filter(
+      (line) => Number.isFinite(line) && line > 0,
+    );
+
+    let workDir: string;
+    if (
+      state.settings.workingDirMode === "custom" &&
+      state.settings.customWorkingDir
+    ) {
+      workDir = state.settings.customWorkingDir;
+    } else {
+      workDir =
+        state.workingDir ||
+        (activeTab.filePath
+          ? activeTab.filePath.substring(
+              0,
+              activeTab.filePath.lastIndexOf("\\"),
+            )
+          : "C:\\") ||
+        "C:\\";
+    }
+
+    let scriptArgs: string[] = [];
+    try {
+      const allParams = await cmd.getScriptParameters(psPath, scriptContent);
+      const required = allParams.filter((p) => p.isMandatory && !p.hasDefault);
+      if (required.length > 0) {
+        const paramValues = await new Promise<Record<string, string> | null>(
+          (resolve) => {
+            setParamPrompt({ params: required, resolve });
+          },
+        );
+        setParamPrompt(null);
+
+        if (paramValues === null) {
+          runGuardRef.current = false;
+          debugSessionRef.current = false;
+          dispatch({
+            type: "SET_DEBUG_STATE",
+            isDebugging: false,
+            debugPaused: false,
+            debugLine: null,
+            debugColumn: null,
+          });
+          return;
+        }
+        scriptArgs = buildScriptArgs(required, paramValues);
+      }
+    } catch {
+      // Graceful degradation: run debug without preflight params.
+    }
+
+    if (state.settings.clearOutputOnRun !== false) {
+      dispatch({ type: "CLEAR_OUTPUT" });
+    }
+    dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
+    dispatch({
+      type: "SET_DEBUG_STATE",
+      isDebugging: true,
+      debugPaused: false,
+      debugLine: null,
+      debugColumn: null,
+    });
+    dispatch({ type: "SET_RUNNING", running: true });
+
+    try {
+      await cmd.executeScriptDebug(
+        psPath,
+        scriptContent,
+        workDir,
+        state.settings.executionPolicy,
+        breakpoints,
+        scriptArgs,
+      );
+    } catch (err) {
+      console.error("startDebugSession failed:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      dispatch({
+        type: "ADD_OUTPUT",
+        line: {
+          stream: "stderr",
+          text: `Debug failed: ${message}`,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+        },
+      });
+      runGuardRef.current = false;
+      debugSessionRef.current = false;
+      dispatch({ type: "SET_RUNNING", running: false });
+      dispatch({
+        type: "SET_DEBUG_STATE",
+        isDebugging: false,
+        debugPaused: false,
+        debugLine: null,
+        debugColumn: null,
+      });
+    }
+  }, [
+    activeTab,
+    state.isRunning,
+    state.selectedPsPath,
+    state.breakpoints,
+    state.workingDir,
+    state.settings.autoSaveOnRun,
+    state.settings.clearOutputOnRun,
+    state.settings.workingDirMode,
+    state.settings.customWorkingDir,
+    state.settings.executionPolicy,
+    setParamPrompt,
+    dispatch,
+  ]);
+
+  const debugContinue = useCallback(async () => {
+    if (!state.isDebugging || !state.debugPaused) return;
+    dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+    try {
+      await cmd.debugContinue();
+    } catch {
+      dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+    }
+  }, [state.isDebugging, state.debugPaused, dispatch]);
+
+  const debugStepOver = useCallback(async () => {
+    if (!state.isDebugging || !state.debugPaused) return;
+    dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+    try {
+      await cmd.debugStepOver();
+    } catch {
+      dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+    }
+  }, [state.isDebugging, state.debugPaused, dispatch]);
+
+  const debugStepInto = useCallback(async () => {
+    if (!state.isDebugging || !state.debugPaused) return;
+    dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+    try {
+      await cmd.debugStepInto();
+    } catch {
+      dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+    }
+  }, [state.isDebugging, state.debugPaused, dispatch]);
+
+  const debugStepOut = useCallback(async () => {
+    if (!state.isDebugging || !state.debugPaused) return;
+    dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+    try {
+      await cmd.debugStepOut();
+    } catch {
+      dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+    }
+  }, [state.isDebugging, state.debugPaused, dispatch]);
+
+  const stopExecution = useCallback(() => {
+    cmd.stopScript().catch(() => {});
+    runGuardRef.current = false;
+    debugSessionRef.current = false;
+    dispatch({ type: "SET_RUNNING", running: false });
+    dispatch({
+      type: "SET_DEBUG_STATE",
+      isDebugging: false,
+      debugPaused: false,
+      debugLine: null,
+      debugColumn: null,
+    });
+  }, [dispatch]);
 
   const runSelection = useCallback(async () => {
     // Guard: welcome tabs have no Monaco editor, so stale selection from a
@@ -727,9 +1055,33 @@ function AppInner() {
       }
 
       // F5: Run script
-      if (e.key === "F5" && !e.ctrlKey) {
+      if (e.key === "F5" && !e.ctrlKey && !e.shiftKey) {
         e.preventDefault();
-        runScript();
+        if (state.isDebugging && state.debugPaused) {
+          void debugContinue();
+        } else {
+          runScript();
+        }
+      }
+
+      // Shift+F5: Stop current run/debug session
+      if (e.key === "F5" && e.shiftKey) {
+        e.preventDefault();
+        stopExecution();
+      }
+
+      // F10/F11/Shift+F11: Debug step controls while paused.
+      if (e.key === "F10") {
+        e.preventDefault();
+        void debugStepOver();
+      }
+      if (e.key === "F11" && !e.shiftKey) {
+        e.preventDefault();
+        void debugStepInto();
+      }
+      if (e.key === "F11" && e.shiftKey) {
+        e.preventDefault();
+        void debugStepOut();
       }
 
       // F8: Run selection, or current line when no selection (ISE behavior)
@@ -744,8 +1096,7 @@ function AppInner() {
       // canonical ISE stop shortcut and does not conflict with copy.
       if (e.ctrlKey && e.key === "Pause") {
         e.preventDefault();
-        cmd.stopScript().catch(() => {});
-        dispatch({ type: "SET_RUNNING", running: false });
+        stopExecution();
       }
 
       // Ctrl+Shift+P: Command palette
@@ -840,6 +1191,8 @@ function AppInner() {
   }, [
     state.tabs.length,
     state.isRunning,
+    state.isDebugging,
+    state.debugPaused,
     state.settings,
     dispatch,
     openFile,
@@ -848,6 +1201,11 @@ function AppInner() {
     closeActiveTab,
     activateRelativeTab,
     runScript,
+    debugContinue,
+    debugStepOver,
+    debugStepInto,
+    debugStepOut,
+    stopExecution,
     runSelection,
     formatCurrentScript,
   ]);
@@ -987,10 +1345,12 @@ function AppInner() {
         onSave={() => void saveCurrentFile()}
         onSaveAll={() => void saveAllFiles()}
         onRun={runScript}
-        onStop={() => {
-          cmd.stopScript().catch(() => {});
-          dispatch({ type: "SET_RUNNING", running: false });
-        }}
+        onDebugStart={startDebugSession}
+        onDebugContinue={debugContinue}
+        onDebugStepOver={debugStepOver}
+        onDebugStepInto={debugStepInto}
+        onDebugStepOut={debugStepOut}
+        onStop={stopExecution}
         onFormat={formatCurrentScript}
         onFindReplace={() => {
           const trigger = (window as unknown as Record<string, unknown>)
@@ -1030,7 +1390,14 @@ function AppInner() {
             style={{ height: `${100 - splitPercent}%` }}
             className="overflow-hidden"
           >
-            <OutputPane />
+            <OutputPane
+              onDebugStart={startDebugSession}
+              onDebugContinue={debugContinue}
+              onDebugStepOver={debugStepOver}
+              onDebugStepInto={debugStepInto}
+              onDebugStepOut={debugStepOut}
+              onStop={stopExecution}
+            />
           </div>
         </div>
 

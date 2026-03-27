@@ -1,5 +1,5 @@
 /** PSForge Output Pane.
- *  Displays script output, variable inspector, and provides stdin input.
+ *  Displays script output, variables, problems, terminal, and debugger controls.
  *
  *  Output rendering uses @tanstack/react-virtual to virtualise the line list:
  *  only the visible rows (plus a small overscan buffer) are in the DOM at any
@@ -71,8 +71,24 @@ async function saveProblemsToFile(problems: ProblemItem[]): Promise<void> {
   });
 }
 
-export function OutputPane() {
-  const { state, dispatch } = useAppState();
+interface OutputPaneProps {
+  onDebugStart: () => void;
+  onDebugContinue: () => void;
+  onDebugStepOver: () => void;
+  onDebugStepInto: () => void;
+  onDebugStepOut: () => void;
+  onStop: () => void;
+}
+
+export function OutputPane({
+  onDebugStart,
+  onDebugContinue,
+  onDebugStepOver,
+  onDebugStepInto,
+  onDebugStepOut,
+  onStop,
+}: OutputPaneProps) {
+  const { state, dispatch, activeTab } = useAppState();
   /** Scroll container for the virtualised output list. */
   const outputScrollRef = useRef<HTMLDivElement>(null);
   const [stdinInput, setStdinInput] = useState("");
@@ -201,6 +217,17 @@ export function OutputPane() {
       v.value.toLowerCase().includes(varFilter.toLowerCase()),
   );
 
+  const navigateTo = useCallback((line: number, column: number) => {
+    const nav = (window as unknown as Record<string, unknown>)
+      .__psforge_navigateTo as ((l: number, c: number) => void) | undefined;
+    nav?.(line, Math.max(1, column));
+  }, []);
+
+  const activeTabBreakpoints =
+    activeTab && activeTab.tabType !== "welcome"
+      ? state.breakpoints[activeTab.id] ?? []
+      : [];
+
   return (
     <div
       data-testid="output-pane"
@@ -218,7 +245,7 @@ export function OutputPane() {
           backgroundColor: "var(--bg-secondary)",
         }}
       >
-        {(["terminal", "output", "variables", "problems"] as const).map(
+        {(["terminal", "output", "debugger", "variables", "problems"] as const).map(
           (tab) => (
             <button
               key={tab}
@@ -266,6 +293,19 @@ export function OutputPane() {
                 >
                   {" "}
                   ({state.problems.length})
+                </span>
+              )}
+              {tab === "debugger" && state.isDebugging && (
+                <span
+                  style={{
+                    color: state.debugPaused
+                      ? "var(--stream-warning)"
+                      : "var(--text-accent)",
+                    fontWeight: 600,
+                  }}
+                >
+                  {" "}
+                  ({state.debugPaused ? "paused" : "active"})
                 </span>
               )}
             </button>
@@ -455,6 +495,156 @@ export function OutputPane() {
           </>
         )}
 
+        {state.bottomPanelTab === "debugger" && (
+          <>
+            <button
+              onClick={onDebugStart}
+              disabled={
+                state.isRunning ||
+                !state.selectedPsPath ||
+                !activeTab ||
+                activeTab.tabType === "welcome"
+              }
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                color:
+                  state.isRunning ||
+                  !state.selectedPsPath ||
+                  !activeTab ||
+                  activeTab.tabType === "welcome"
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor:
+                  state.isRunning ||
+                  !state.selectedPsPath ||
+                  !activeTab ||
+                  activeTab.tabType === "welcome"
+                    ? "default"
+                    : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "4px",
+              }}
+              title="Start debugging"
+            >
+              Start
+            </button>
+            <button
+              onClick={onDebugContinue}
+              disabled={!state.isDebugging || !state.debugPaused}
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                color:
+                  !state.isDebugging || !state.debugPaused
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor:
+                  !state.isDebugging || !state.debugPaused
+                    ? "default"
+                    : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "4px",
+              }}
+              title="Continue (F5)"
+            >
+              Continue
+            </button>
+            <button
+              onClick={onDebugStepOver}
+              disabled={!state.isDebugging || !state.debugPaused}
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                color:
+                  !state.isDebugging || !state.debugPaused
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor:
+                  !state.isDebugging || !state.debugPaused
+                    ? "default"
+                    : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "4px",
+              }}
+              title="Step Over (F10)"
+            >
+              Step Over
+            </button>
+            <button
+              onClick={onDebugStepInto}
+              disabled={!state.isDebugging || !state.debugPaused}
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                color:
+                  !state.isDebugging || !state.debugPaused
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor:
+                  !state.isDebugging || !state.debugPaused
+                    ? "default"
+                    : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "4px",
+              }}
+              title="Step Into (F11)"
+            >
+              Step Into
+            </button>
+            <button
+              onClick={onDebugStepOut}
+              disabled={!state.isDebugging || !state.debugPaused}
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                color:
+                  !state.isDebugging || !state.debugPaused
+                    ? "var(--text-muted)"
+                    : "var(--text-secondary)",
+                cursor:
+                  !state.isDebugging || !state.debugPaused
+                    ? "default"
+                    : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "4px",
+              }}
+              title="Step Out (Shift+F11)"
+            >
+              Step Out
+            </button>
+            <button
+              onClick={onStop}
+              disabled={!state.isRunning}
+              style={{
+                padding: "6px 12px",
+                backgroundColor: "transparent",
+                color: !state.isRunning
+                  ? "var(--text-muted)"
+                  : "var(--stream-stderr)",
+                cursor: !state.isRunning ? "default" : "pointer",
+                fontSize: "12px",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: "8px",
+              }}
+              title="Stop (Shift+F5)"
+            >
+              Stop
+            </button>
+          </>
+        )}
+
         {state.bottomPanelTab === "variables" && (
           <input
             data-testid="variables-filter"
@@ -582,7 +772,11 @@ export function OutputPane() {
                   fontSize: "11px",
                 }}
               >
-                Running…
+                {state.isDebugging
+                  ? state.debugPaused
+                    ? "Debug paused…"
+                    : "Debugging…"
+                  : "Running…"}
               </div>
             )}
           </div>
@@ -603,6 +797,34 @@ export function OutputPane() {
         {state.bottomPanelTab === "problems" && (
           <ProblemsPane
             problems={state.problems}
+            fontSize={state.settings.outputFontSize ?? 13}
+            fontFamily={
+              state.settings.outputFontFamily ??
+              "Cascadia Code, Consolas, monospace"
+            }
+          />
+        )}
+
+        {state.bottomPanelTab === "debugger" && (
+          <DebuggerPane
+            isRunning={state.isRunning}
+            isDebugging={state.isDebugging}
+            debugPaused={state.debugPaused}
+            debugLine={state.debugLine}
+            debugColumn={state.debugColumn}
+            activeTabName={
+              activeTab?.tabType === "code" ? activeTab.title : undefined
+            }
+            breakpoints={activeTabBreakpoints}
+            onNavigate={navigateTo}
+            onToggleBreakpoint={(line) => {
+              if (!activeTab || activeTab.tabType === "welcome") return;
+              dispatch({
+                type: "TOGGLE_BREAKPOINT",
+                tabId: activeTab.id,
+                line,
+              });
+            }}
             fontSize={state.settings.outputFontSize ?? 13}
             fontFamily={
               state.settings.outputFontFamily ??
@@ -677,6 +899,160 @@ function AnsiText({ text, color }: { text: string; color: string }) {
   const cleaned = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 
   return <span style={{ color }}>{cleaned}</span>;
+}
+
+function DebuggerPane({
+  isRunning,
+  isDebugging,
+  debugPaused,
+  debugLine,
+  debugColumn,
+  activeTabName,
+  breakpoints,
+  onNavigate,
+  onToggleBreakpoint,
+  fontSize,
+  fontFamily,
+}: {
+  isRunning: boolean;
+  isDebugging: boolean;
+  debugPaused: boolean;
+  debugLine: number | null;
+  debugColumn: number | null;
+  activeTabName?: string;
+  breakpoints: number[];
+  onNavigate: (line: number, column: number) => void;
+  onToggleBreakpoint: (line: number) => void;
+  fontSize: number;
+  fontFamily: string;
+}) {
+  const fontStyle: React.CSSProperties = {
+    fontSize: `${fontSize}px`,
+    fontFamily: `var(--ui-font-family, ${fontFamily})`,
+  };
+
+  const statusLabel = !isDebugging
+    ? isRunning
+      ? "Running (non-debug)"
+      : "Idle"
+    : debugPaused
+      ? "Paused"
+      : "Running";
+
+  const statusColor = !isDebugging
+    ? isRunning
+      ? "var(--text-accent)"
+      : "var(--text-muted)"
+    : debugPaused
+      ? "var(--stream-warning)"
+      : "var(--text-accent)";
+
+  return (
+    <div
+      data-testid="debugger-panel"
+      className="h-full overflow-auto p-3"
+      style={{ ...fontStyle, color: "var(--text-primary)" }}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className="inline-block w-2 h-2 rounded-full"
+          style={{ backgroundColor: statusColor }}
+        />
+        <span style={{ fontWeight: 600 }}>Debugger Status:</span>
+        <span>{statusLabel}</span>
+      </div>
+
+      <div className="mt-3">
+        <div style={{ color: "var(--text-secondary)" }}>Current Location</div>
+        {debugLine ? (
+          <button
+            data-testid="debugger-location-jump"
+            onClick={() => onNavigate(debugLine, debugColumn ?? 1)}
+            className="mt-1"
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--text-accent)",
+              textDecoration: "underline",
+              cursor: "pointer",
+            }}
+            title="Jump to current debug stop location"
+          >
+            Line {debugLine}
+            {debugColumn ? `, Column ${debugColumn}` : ""}
+          </button>
+        ) : (
+          <div className="mt-1" style={{ color: "var(--text-muted)" }}>
+            No stop location yet.
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <div style={{ color: "var(--text-secondary)" }}>
+          Breakpoints{activeTabName ? ` (${activeTabName})` : ""}
+        </div>
+        {breakpoints.length === 0 ? (
+          <div className="mt-1" style={{ color: "var(--text-muted)" }}>
+            No line breakpoints in the active tab. Click the editor gutter to add one.
+          </div>
+        ) : (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {breakpoints.map((line) => (
+              <div
+                key={line}
+                className="flex items-center gap-1 px-2 py-1 rounded"
+                style={{
+                  border: "1px solid var(--border-primary)",
+                  backgroundColor: "var(--bg-secondary)",
+                }}
+              >
+                <button
+                  data-testid={`debugger-breakpoint-${line}`}
+                  onClick={() => onNavigate(line, 1)}
+                  style={{
+                    backgroundColor: "transparent",
+                    color: "var(--text-accent)",
+                    textDecoration: "underline",
+                    cursor: "pointer",
+                    fontSize: "0.95em",
+                  }}
+                  title={`Go to breakpoint on line ${line}`}
+                >
+                  Ln {line}
+                </button>
+                <button
+                  data-testid={`debugger-breakpoint-remove-${line}`}
+                  onClick={() => onToggleBreakpoint(line)}
+                  style={{
+                    backgroundColor: "transparent",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    fontSize: "0.95em",
+                    padding: "0 2px",
+                  }}
+                  title={`Remove breakpoint on line ${line}`}
+                >
+                  x
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div
+        className="mt-4"
+        style={{
+          color: "var(--text-muted)",
+          borderTop: "1px solid var(--border-primary)",
+          paddingTop: "10px",
+          fontSize: "0.92em",
+        }}
+      >
+        F5 Continue | F10 Step Over | F11 Step Into | Shift+F11 Step Out | Shift+F5 Stop
+      </div>
+    </div>
+  );
 }
 
 /** Variable table for the inspector. */

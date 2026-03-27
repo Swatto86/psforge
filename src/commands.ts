@@ -35,6 +35,25 @@ export async function executeScript(
   });
 }
 
+/** Execute a script under the debugger with optional line breakpoints. */
+export async function executeScriptDebug(
+  psPath: string,
+  script: string,
+  workingDir: string,
+  execPolicy: string,
+  breakpoints: number[],
+  scriptArgs: string[] = [],
+): Promise<number> {
+  return invoke<number>("execute_script_debug", {
+    psPath,
+    script,
+    workingDir,
+    execPolicy,
+    breakpoints,
+    scriptArgs,
+  });
+}
+
 /** Execute selected text (F8 behaviour). */
 export async function executeSelection(
   psPath: string,
@@ -74,6 +93,26 @@ export async function getScriptParameters(
 /** Send stdin input to the running process. */
 export async function sendStdin(input: string): Promise<void> {
   return invoke("send_stdin", { input });
+}
+
+/** Continue execution from a debugger stop. */
+export async function debugContinue(): Promise<void> {
+  return invoke("debug_continue");
+}
+
+/** Step over one statement in the debugger. */
+export async function debugStepOver(): Promise<void> {
+  return invoke("debug_step_over");
+}
+
+/** Step into one statement in the debugger. */
+export async function debugStepInto(): Promise<void> {
+  return invoke("debug_step_into");
+}
+
+/** Step out of the current scope in the debugger. */
+export async function debugStepOut(): Promise<void> {
+  return invoke("debug_step_out");
 }
 
 /** Discover all installed PowerShell versions. */

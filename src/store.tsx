@@ -8,6 +8,7 @@ import React, {
   useReducer,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import type {
@@ -31,6 +32,147 @@ import * as cmd from "./commands";
  *  The Rust backend already caps at 100 000 lines; this is the UI-side bound.
  */
 const MAX_OUTPUT_LINES = 10_000;
+const SESSION_STORAGE_KEY = "psforge.session.v1";
+
+type BottomPanelTab =
+  | "output"
+  | "variables"
+  | "problems"
+  | "terminal"
+  | "debugger";
+type BreakpointMap = Record<string, number[]>;
+
+interface PersistedSession {
+  tabs: EditorTab[];
+  activeTabId: string;
+  bottomPanelTab: BottomPanelTab;
+  workingDir: string;
+  selectedPsPath: string;
+  breakpoints: BreakpointMap;
+}
+
+function isBottomPanelTab(value: unknown): value is BottomPanelTab {
+  return (
+    value === "output" ||
+    value === "variables" ||
+    value === "problems" ||
+    value === "terminal" ||
+    value === "debugger"
+  );
+}
+
+function createUntitledTab(id = "tab-1", title = "Untitled-1"): EditorTab {
+  return {
+    id,
+    title,
+    filePath: "",
+    content: "",
+    savedContent: "",
+    encoding: "utf8",
+    language: "powershell",
+    isDirty: false,
+    tabType: "code",
+  };
+}
+
+function normalizeBreakpointLines(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const unique = new Set<number>();
+  for (const item of value) {
+    if (typeof item !== "number" || !Number.isInteger(item) || item < 1) {
+      continue;
+    }
+    unique.add(item);
+  }
+  return [...unique].sort((a, b) => a - b);
+}
+
+function normalizePersistedBreakpoints(
+  value: unknown,
+  validTabIds: Set<string>,
+): BreakpointMap {
+  if (!value || typeof value !== "object") return {};
+  const rec = value as Record<string, unknown>;
+  const result: BreakpointMap = {};
+  for (const [tabId, rawLines] of Object.entries(rec)) {
+    if (!validTabIds.has(tabId)) continue;
+    const lines = normalizeBreakpointLines(rawLines);
+    if (lines.length > 0) result[tabId] = lines;
+  }
+  return result;
+}
+
+function normalizePersistedTab(value: unknown): EditorTab | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+
+  const id = typeof rec.id === "string" ? rec.id : "";
+  if (!id) return null;
+
+  const tabType = rec.tabType;
+  if (tabType === "welcome") return null;
+
+  const content = typeof rec.content === "string" ? rec.content : "";
+  const savedContent =
+    typeof rec.savedContent === "string" ? rec.savedContent : content;
+
+  return {
+    id,
+    title: typeof rec.title === "string" ? rec.title : "Untitled",
+    filePath: typeof rec.filePath === "string" ? rec.filePath : "",
+    content,
+    savedContent,
+    encoding: typeof rec.encoding === "string" ? rec.encoding : "utf8",
+    language: typeof rec.language === "string" ? rec.language : "powershell",
+    isDirty:
+      typeof rec.isDirty === "boolean" ? rec.isDirty : content !== savedContent,
+    tabType: "code",
+  };
+}
+
+function loadPersistedSession(): PersistedSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const rec = parsed as Record<string, unknown>;
+
+    if (!Array.isArray(rec.tabs)) return null;
+    const tabs = rec.tabs
+      .map((tab) => normalizePersistedTab(tab))
+      .filter((tab): tab is EditorTab => tab !== null);
+
+    const uniqueTabs: EditorTab[] = [];
+    const seenIds = new Set<string>();
+    for (const tab of tabs) {
+      if (seenIds.has(tab.id)) continue;
+      seenIds.add(tab.id);
+      uniqueTabs.push(tab);
+    }
+
+    if (uniqueTabs.length === 0) return null;
+    const validTabIds = new Set(uniqueTabs.map((t) => t.id));
+
+    return {
+      tabs: uniqueTabs,
+      activeTabId:
+        typeof rec.activeTabId === "string"
+          ? rec.activeTabId
+          : uniqueTabs[0].id,
+      bottomPanelTab: isBottomPanelTab(rec.bottomPanelTab)
+        ? rec.bottomPanelTab
+        : "terminal",
+      workingDir: typeof rec.workingDir === "string" ? rec.workingDir : "",
+      selectedPsPath:
+        typeof rec.selectedPsPath === "string" ? rec.selectedPsPath : "",
+      breakpoints: normalizePersistedBreakpoints(rec.breakpoints, validTabIds),
+    };
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // State shape
@@ -54,7 +196,7 @@ export interface AppState {
   sidebarVisible: boolean;
   /** Which side of the editor the module browser panel is docked to. */
   sidebarPosition: "left" | "right";
-  bottomPanelTab: "output" | "variables" | "problems" | "terminal";
+  bottomPanelTab: "output" | "variables" | "problems" | "terminal" | "debugger";
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
   /** Command palette mode: full command list or snippets-only picker. */
@@ -69,6 +211,16 @@ export interface AppState {
   showAbout: boolean;
   /** Whether the script signing dialog is visible. */
   showSigningDialog: boolean;
+  /** Per-tab debugger breakpoints as 1-indexed line numbers. */
+  breakpoints: BreakpointMap;
+  /** True when a debug run is active (script started via debugger command). */
+  isDebugging: boolean;
+  /** True when execution is currently paused in the debugger prompt. */
+  debugPaused: boolean;
+  /** Current debugger stop location line (1-indexed), when known. */
+  debugLine: number | null;
+  /** Current debugger stop location column (1-indexed), when known. */
+  debugColumn: number | null;
 }
 
 /** Detects first launch by checking localStorage and creates the appropriate initial tab. */
@@ -128,6 +280,11 @@ const initialState: AppState = {
   cursorColumn: 1,
   showAbout: false,
   showSigningDialog: false,
+  breakpoints: {},
+  isDebugging: false,
+  debugPaused: false,
+  debugLine: null,
+  debugColumn: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -158,7 +315,7 @@ type Action =
   | { type: "REMOVE_RECENT_FILE"; path: string }
   | {
       type: "SET_BOTTOM_TAB";
-      tab: "output" | "variables" | "problems" | "terminal";
+      tab: "output" | "variables" | "problems" | "terminal" | "debugger";
     }
   | { type: "TOGGLE_SETTINGS" }
   | { type: "OPEN_COMMAND_PALETTE"; mode?: "all" | "snippets" }
@@ -167,7 +324,16 @@ type Action =
   | { type: "TOGGLE_SHORTCUT_PANEL" }
   | { type: "SET_CURSOR_POSITION"; line: number; column: number }
   | { type: "TOGGLE_ABOUT" }
-  | { type: "TOGGLE_SIGNING_DIALOG" };
+  | { type: "TOGGLE_SIGNING_DIALOG" }
+  | { type: "TOGGLE_BREAKPOINT"; tabId: string; line: number }
+  | { type: "SET_BREAKPOINTS"; tabId: string; lines: number[] }
+  | {
+      type: "SET_DEBUG_STATE";
+      isDebugging?: boolean;
+      debugPaused?: boolean;
+      debugLine?: number | null;
+      debugColumn?: number | null;
+    };
 
 // ---------------------------------------------------------------------------
 // Problem parsing
@@ -213,7 +379,7 @@ function parseProblems(lines: OutputLine[]): ProblemItem[] {
   if (stderrLines.length === 0) return problems;
 
   // Matches "At line:N char:M" or "At C:\path\file.ps1:N char:M"
-  const locRe = /At (?:[^\s:]+:)?(\d+)\s+char:(\d+)/i;
+  const locRe = /At\s+(?:.+:)?(\d+)\s+char:(\d+)/i;
 
   // PS7-specific patterns (matched against the trimmed line)
   // e.g. "ParserError:" / "RuntimeException:" standalone type headers
@@ -307,7 +473,13 @@ function reducer(state: AppState, action: Action): AppState {
         const next = remaining[Math.min(closedIndex, remaining.length - 1)];
         newActive = next?.id ?? "";
       }
-      return { ...state, tabs: remaining, activeTabId: newActive };
+      const { [action.id]: _removed, ...restBreakpoints } = state.breakpoints;
+      return {
+        ...state,
+        tabs: remaining,
+        activeTabId: newActive,
+        breakpoints: restBreakpoints,
+      };
     }
 
     case "UPDATE_TAB":
@@ -438,6 +610,46 @@ function reducer(state: AppState, action: Action): AppState {
     case "TOGGLE_SIGNING_DIALOG":
       return { ...state, showSigningDialog: !state.showSigningDialog };
 
+    case "TOGGLE_BREAKPOINT": {
+      if (action.line < 1) return state;
+      const existing = state.breakpoints[action.tabId] ?? [];
+      const has = existing.includes(action.line);
+      const lines = has
+        ? existing.filter((line) => line !== action.line)
+        : [...existing, action.line].sort((a, b) => a - b);
+      const next = { ...state.breakpoints };
+      if (lines.length === 0) {
+        delete next[action.tabId];
+      } else {
+        next[action.tabId] = lines;
+      }
+      return { ...state, breakpoints: next };
+    }
+
+    case "SET_BREAKPOINTS": {
+      const lines = normalizeBreakpointLines(action.lines);
+      const next = { ...state.breakpoints };
+      if (lines.length === 0) {
+        delete next[action.tabId];
+      } else {
+        next[action.tabId] = lines;
+      }
+      return { ...state, breakpoints: next };
+    }
+
+    case "SET_DEBUG_STATE":
+      return {
+        ...state,
+        isDebugging: action.isDebugging ?? state.isDebugging,
+        debugPaused: action.debugPaused ?? state.debugPaused,
+        debugLine:
+          action.debugLine !== undefined ? action.debugLine : state.debugLine,
+        debugColumn:
+          action.debugColumn !== undefined
+            ? action.debugColumn
+            : state.debugColumn,
+      };
+
     default:
       return state;
   }
@@ -485,10 +697,94 @@ export function untitledCounter(): number {
   return untitledNum;
 }
 
+/** Seed tab/untitled counters from restored session tabs to avoid id/title collisions. */
+function syncTabCounters(tabs: EditorTab[]): void {
+  let maxTab = tabCounter;
+  let maxUntitled = untitledNum;
+
+  for (const tab of tabs) {
+    const idMatch = /^tab-(\d+)$/i.exec(tab.id);
+    if (idMatch) {
+      maxTab = Math.max(maxTab, parseInt(idMatch[1], 10));
+    }
+
+    const titleMatch = /^Untitled-(\d+)$/i.exec(tab.title);
+    if (titleMatch) {
+      maxUntitled = Math.max(maxUntitled, parseInt(titleMatch[1], 10));
+    }
+  }
+
+  tabCounter = Math.max(tabCounter, maxTab);
+  untitledNum = Math.max(untitledNum, maxUntitled);
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
   const activeTab = state.tabs.find((t) => t.id === state.activeTabId);
+  const sessionRestoreCompleteRef = useRef(false);
+  const selectedPsPathRef = useRef(state.selectedPsPath);
+
+  useEffect(() => {
+    selectedPsPathRef.current = state.selectedPsPath;
+  }, [state.selectedPsPath]);
+
+  // Restore tab/session state from localStorage.
+  // File-backed tabs are restored only when the source file still exists.
+  // If every saved file is gone, we fall back to a single untitled tab.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const persisted = loadPersistedSession();
+      if (!persisted) {
+        sessionRestoreCompleteRef.current = true;
+        return;
+      }
+
+      const restoredTabs: EditorTab[] = [];
+      for (const tab of persisted.tabs) {
+        if (!tab.filePath) {
+          restoredTabs.push(tab);
+          continue;
+        }
+        try {
+          await cmd.readFileContent(tab.filePath);
+          restoredTabs.push(tab);
+        } catch {
+          // File no longer exists (or is unreadable) -- skip this tab.
+        }
+      }
+
+      if (cancelled) return;
+
+      const finalTabs =
+        restoredTabs.length > 0 ? restoredTabs : [createUntitledTab()];
+      syncTabCounters(finalTabs);
+
+      dispatch({ type: "SET_TABS", tabs: finalTabs });
+      dispatch({
+        type: "SET_ACTIVE_TAB",
+        id: finalTabs.some((t) => t.id === persisted.activeTabId)
+          ? persisted.activeTabId
+          : finalTabs[0].id,
+      });
+      dispatch({ type: "SET_BOTTOM_TAB", tab: persisted.bottomPanelTab });
+      dispatch({ type: "SET_WORKING_DIR", dir: persisted.workingDir });
+      for (const [tabId, lines] of Object.entries(persisted.breakpoints)) {
+        dispatch({ type: "SET_BREAKPOINTS", tabId, lines });
+      }
+      if (persisted.selectedPsPath) {
+        dispatch({ type: "SET_SELECTED_PS", path: persisted.selectedPsPath });
+      }
+
+      sessionRestoreCompleteRef.current = true;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Load settings and PS versions on mount
   useEffect(() => {
@@ -528,7 +824,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const versions = await cmd.getPsVersions();
         dispatch({ type: "SET_PS_VERSIONS", versions });
         if (versions.length > 0) {
-          const preferredPath = loadedSettings.defaultPsVersion;
+          // Prefer a restored session shell, then fall back to persisted settings.
+          const restoredPath = selectedPsPathRef.current;
+          const preferredPath =
+            restoredPath && versions.some((v) => v.path === restoredPath)
+              ? restoredPath
+              : loadedSettings.defaultPsVersion;
           const preferred = versions.find((v) => v.path === preferredPath);
           dispatch({
             type: "SET_SELECTED_PS",
@@ -585,6 +886,59 @@ export function AppProvider({ children }: { children: ReactNode }) {
       saveSettingsDebounced(state.settings);
     }
   }, [state.settings, state.settingsLoaded, saveSettingsDebounced]);
+
+  // Keep selected shell valid when the available PowerShell list changes.
+  useEffect(() => {
+    if (state.psVersions.length === 0) return;
+    if (state.psVersions.some((v) => v.path === state.selectedPsPath)) return;
+    dispatch({ type: "SET_SELECTED_PS", path: state.psVersions[0].path });
+  }, [state.psVersions, state.selectedPsPath, dispatch]);
+
+  // Persist recoverable session state between launches.
+  useEffect(() => {
+    if (!sessionRestoreCompleteRef.current) return;
+
+    const tabs = state.tabs
+      .filter((tab) => tab.tabType !== "welcome")
+      .map((tab) => ({ ...tab, tabType: "code" as const }));
+
+    if (tabs.length === 0) {
+      try {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+      } catch {
+        // ignore storage errors
+      }
+      return;
+    }
+
+    const snapshot: PersistedSession = {
+      tabs,
+      activeTabId: tabs.some((t) => t.id === state.activeTabId)
+        ? state.activeTabId
+        : tabs[0].id,
+      bottomPanelTab: state.bottomPanelTab,
+      workingDir: state.workingDir,
+      selectedPsPath: state.selectedPsPath,
+      breakpoints: Object.fromEntries(
+        Object.entries(state.breakpoints).filter(([tabId, lines]) => {
+          return tabs.some((t) => t.id === tabId) && lines.length > 0;
+        }),
+      ),
+    };
+
+    try {
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // ignore storage errors
+    }
+  }, [
+    state.tabs,
+    state.activeTabId,
+    state.bottomPanelTab,
+    state.workingDir,
+    state.selectedPsPath,
+    state.breakpoints,
+  ]);
 
   return (
     <AppContext.Provider value={{ state, dispatch, activeTab }}>

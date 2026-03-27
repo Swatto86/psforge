@@ -45,6 +45,19 @@ export function WelcomePane() {
     fn?.();
   };
 
+  /** Remove a path from the recent-files list. */
+  const removeRecentFile = (path: string) => {
+    dispatch({ type: "REMOVE_RECENT_FILE", path });
+  };
+
+  /** Clear all recent-file entries from settings. */
+  const clearRecentFiles = () => {
+    dispatch({
+      type: "SET_SETTINGS",
+      settings: { ...state.settings, recentFiles: [] },
+    });
+  };
+
   const shortcuts: [string, string][] = [
     ["Ctrl+N", "New file"],
     ["Ctrl+O", "Open file"],
@@ -65,36 +78,42 @@ export function WelcomePane() {
   return (
     <div
       data-testid="welcome-pane"
-      className="flex flex-col items-center overflow-auto h-full"
+      className="h-full overflow-auto"
       style={{
         backgroundColor: "var(--bg-primary)",
         color: "var(--text-primary)",
-        padding: "2rem",
+        padding: "2.25rem",
       }}
     >
-      <div style={{ maxWidth: "600px", width: "100%" }}>
+      <div
+        className="mx-auto"
+        style={{ width: "100%", maxWidth: "980px" }}
+      >
         {/* Header */}
-        <div className="mb-6">
+        <div
+          className="mb-6 rounded-lg p-5"
+          style={{
+            backgroundColor: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+          }}
+        >
           <h1
-            className="text-2xl font-bold mb-1"
-            style={{ color: "var(--text-accent)" }}
+            className="font-bold mb-2"
+            style={{
+              color: "var(--text-accent)",
+              fontSize: "32px",
+              lineHeight: 1.2,
+            }}
           >
-            Welcome to PS Forge
+            Welcome to PSForge
           </h1>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          <p
+            className="mb-4"
+            style={{ color: "var(--text-secondary)", fontSize: "15px" }}
+          >
             A modern PowerShell editor built on Tauri + Monaco
           </p>
-        </div>
-
-        {/* Quick start */}
-        <div className="mb-6">
-          <h2
-            className="text-xs font-semibold uppercase mb-2"
-            style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
-          >
-            Get Started
-          </h2>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <ActionButton
               onClick={createNewFile}
               label="New File"
@@ -108,97 +127,162 @@ export function WelcomePane() {
           </div>
         </div>
 
-        {/* Recent files */}
-        {state.settings.recentFiles.length > 0 && (
-          <div className="mb-6">
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Recent files */}
+          <div
+            className="rounded-lg p-4"
+            style={{
+              backgroundColor: "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)",
+            }}
+          >
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2
+                className="text-xs font-semibold uppercase"
+                style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
+              >
+                Recent Files
+              </h2>
+              {state.settings.recentFiles.length > 0 && (
+                <button
+                  onClick={clearRecentFiles}
+                  className="text-xs rounded px-2 py-1"
+                  style={{
+                    backgroundColor: "var(--bg-tertiary)",
+                    color: "var(--text-secondary)",
+                    border: "1px solid var(--border-primary)",
+                  }}
+                  title="Remove all recent files"
+                >
+                  Remove all
+                </button>
+              )}
+            </div>
+
+            {state.settings.recentFiles.length === 0 ? (
+              <p
+                className="text-sm"
+                style={{ color: "var(--text-muted)" }}
+              >
+                No recent files yet.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {state.settings.recentFiles.slice(0, 10).map((path, idx) => {
+                  const name = path.split("\\").pop() ?? path;
+                  return (
+                    <li key={path}>
+                      <div
+                        className="flex items-start gap-2 rounded p-2"
+                        style={{
+                          backgroundColor: "var(--bg-primary)",
+                          border: "1px solid var(--border-primary)",
+                        }}
+                      >
+                        <button
+                          onClick={() => {
+                            const fn = (
+                              window as unknown as Record<string, unknown>
+                            ).__psforge_openFileByPath as
+                              | ((p: string) => void)
+                              | undefined;
+                            fn?.(path);
+                          }}
+                          className="text-left flex-1 rounded px-1 py-0.5 transition-colors"
+                          style={{
+                            backgroundColor: "transparent",
+                            color: "var(--text-primary)",
+                            cursor: "pointer",
+                          }}
+                          onMouseEnter={(e) => {
+                            (e.currentTarget as HTMLElement).style.backgroundColor =
+                              "var(--bg-hover)";
+                          }}
+                          onMouseLeave={(e) => {
+                            (e.currentTarget as HTMLElement).style.backgroundColor =
+                              "transparent";
+                          }}
+                          title={path}
+                        >
+                          <div
+                            className="font-semibold"
+                            style={{ color: "var(--text-accent)", fontSize: "15px" }}
+                          >
+                            {name}
+                          </div>
+                          <div
+                            className="mt-1 break-all"
+                            style={{ color: "var(--text-secondary)", fontSize: "12px" }}
+                          >
+                            {path}
+                          </div>
+                        </button>
+                        <button
+                          data-testid={`welcome-recent-remove-${idx}`}
+                          onClick={() => removeRecentFile(path)}
+                          className="rounded px-2 py-1 text-xs"
+                          style={{
+                            backgroundColor: "transparent",
+                            border: "1px solid var(--border-primary)",
+                            color: "var(--text-secondary)",
+                          }}
+                          title={`Remove ${name} from recent files`}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {/* Keyboard shortcuts */}
+          <div
+            className="rounded-lg p-4"
+            style={{
+              backgroundColor: "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)",
+            }}
+          >
             <h2
-              className="text-xs font-semibold uppercase mb-2"
+              className="text-xs font-semibold uppercase mb-3"
               style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
             >
-              Recent Files
+              Keyboard Shortcuts
             </h2>
-            <ul className="flex flex-col gap-0.5">
-              {state.settings.recentFiles.slice(0, 8).map((path) => {
-                const name = path.split("\\").pop() ?? path;
-                return (
-                  <li key={path}>
-                    <button
-                      onClick={() => {
-                        const fn = (
-                          window as unknown as Record<string, unknown>
-                        ).__psforge_openFileByPath as
-                          | ((p: string) => void)
-                          | undefined;
-                        fn?.(path);
-                      }}
-                      className="text-xs text-left w-full px-2 py-1 rounded transition-colors"
-                      style={{
-                        backgroundColor: "transparent",
-                        color: "var(--text-accent)",
-                        cursor: "pointer",
-                      }}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLElement).style.backgroundColor =
-                          "var(--bg-hover)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLElement).style.backgroundColor =
-                          "transparent";
-                      }}
-                      title={path}
-                    >
-                      <span className="font-medium">{name}</span>
-                      <span
-                        className="ml-2 opacity-50"
-                        style={{ fontSize: "10px" }}
-                      >
-                        {path}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-
-        {/* Keyboard shortcuts */}
-        <div>
-          <h2
-            className="text-xs font-semibold uppercase mb-2"
-            style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
-          >
-            Keyboard Shortcuts
-          </h2>
-          <table className="w-full text-xs">
-            <tbody>
-              {shortcuts.map(([key, desc]) => (
-                <tr
-                  key={key}
-                  style={{ borderBottom: "1px solid var(--border-primary)" }}
-                >
-                  <td className="py-1.5 pr-4" style={{ width: "140px" }}>
-                    <kbd
-                      className="px-1.5 py-0.5 rounded text-xs font-mono"
-                      style={{
-                        backgroundColor: "var(--bg-tertiary)",
-                        border: "1px solid var(--border-primary)",
-                        color: "var(--text-primary)",
-                      }}
-                    >
-                      {key}
-                    </kbd>
-                  </td>
-                  <td
-                    className="py-1.5"
-                    style={{ color: "var(--text-secondary)" }}
+            <table className="w-full">
+              <tbody>
+                {shortcuts.map(([key, desc]) => (
+                  <tr
+                    key={key}
+                    style={{ borderBottom: "1px solid var(--border-primary)" }}
                   >
-                    {desc}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <td className="py-2 pr-3" style={{ width: "162px" }}>
+                      <kbd
+                        className="px-2 py-0.5 rounded font-mono"
+                        style={{
+                          backgroundColor: "var(--bg-tertiary)",
+                          border: "1px solid var(--border-primary)",
+                          color: "var(--text-primary)",
+                          fontSize: "12px",
+                        }}
+                      >
+                        {key}
+                      </kbd>
+                    </td>
+                    <td
+                      className="py-2"
+                      style={{ color: "var(--text-secondary)", fontSize: "14px" }}
+                    >
+                      {desc}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -217,16 +301,18 @@ function ActionButton({
   return (
     <button
       onClick={onClick}
-      className="px-3 py-2 rounded text-xs"
+      className="px-4 py-2 rounded"
       style={{
         backgroundColor: "var(--btn-primary-bg)",
         color: "var(--btn-primary-fg)",
         border: "none",
         cursor: "pointer",
+        fontSize: "14px",
+        fontWeight: 600,
       }}
     >
       {label}
-      <span className="ml-2 opacity-60" style={{ fontSize: "10px" }}>
+      <span className="ml-2 opacity-70" style={{ fontSize: "12px" }}>
         {hint}
       </span>
     </button>

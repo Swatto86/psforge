@@ -191,11 +191,23 @@ export function StatusBar() {
 
       {/* Right side */}
       <div className="flex items-center gap-4">
-        {state.isRunning && (
+        {state.isDebugging ? (
           <span className="flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            Running
+            <span
+              className={`inline-block w-2 h-2 rounded-full ${
+                state.debugPaused ? "bg-yellow-300" : "bg-green-400 animate-pulse"
+              }`}
+            />
+            {state.debugPaused ? "Debug Paused" : "Debugging"}
+            {state.debugLine ? ` (Ln ${state.debugLine})` : ""}
           </span>
+        ) : (
+          state.isRunning && (
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              Running
+            </span>
+          )
         )}
         {psVersion && <span>{psVersion.name}</span>}
         {activeTab && activeTab.tabType !== "welcome" && (

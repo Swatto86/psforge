@@ -339,7 +339,10 @@ export function SettingsPanel() {
             <div className="flex flex-col gap-4">
               <SectionHeading>Editor</SectionHeading>
 
-              <SettingRow label="Font Size">
+              <SettingRow
+                label="Font Size"
+                tooltip="Sets the Monaco editor text size in pixels."
+              >
                 <NumberInput
                   min={8}
                   max={72}
@@ -350,7 +353,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Font Family">
+              <SettingRow
+                label="Font Family"
+                tooltip="Comma-separated font fallback list for the script editor."
+              >
                 <TextInput
                   value={state.settings.fontFamily}
                   onChange={(v) => updateSetting("fontFamily", v)}
@@ -360,7 +366,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Word Wrap">
+              <SettingRow
+                label="Word Wrap"
+                tooltip="Wraps long lines visually in the editor without changing file content."
+              >
                 <Toggle
                   checked={state.settings.wordWrap}
                   onChange={(v) => updateSetting("wordWrap", v)}
@@ -368,7 +377,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Tab Size">
+              <SettingRow
+                label="Tab Size"
+                tooltip="Number of spaces Monaco uses for each indentation level."
+              >
                 <NumberInput
                   min={1}
                   max={16}
@@ -379,7 +391,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Indentation">
+              <SettingRow
+                label="Indentation"
+                tooltip="When enabled, pressing Tab inserts spaces instead of a tab character."
+              >
                 <Toggle
                   checked={state.settings.insertSpaces !== false}
                   onChange={(v) => updateSetting("insertSpaces", v)}
@@ -387,7 +402,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Line Numbers">
+              <SettingRow
+                label="Line Numbers"
+                tooltip="Controls whether line numbers are shown, hidden, or relative."
+              >
                 <select
                   data-testid="settings-line-numbers"
                   value={state.settings.lineNumbers ?? "on"}
@@ -405,7 +423,10 @@ export function SettingsPanel() {
                 </select>
               </SettingRow>
 
-              <SettingRow label="Minimap">
+              <SettingRow
+                label="Minimap"
+                tooltip="Shows a miniature overview of the full script at the right edge."
+              >
                 <Toggle
                   checked={state.settings.showMinimap === true}
                   onChange={(v) => updateSetting("showMinimap", v)}
@@ -413,7 +434,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Indent Guides">
+              <SettingRow
+                label="Indent Guides"
+                tooltip="Displays vertical guide lines to show indentation blocks."
+              >
                 <Toggle
                   checked={state.settings.showIndentGuides !== false}
                   onChange={(v) => updateSetting("showIndentGuides", v)}
@@ -421,7 +445,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Sticky Scroll">
+              <SettingRow
+                label="Sticky Scroll"
+                tooltip="Pins the current scope header near the top while you scroll."
+              >
                 <Toggle
                   checked={state.settings.stickyScroll === true}
                   onChange={(v) => updateSetting("stickyScroll", v)}
@@ -429,7 +456,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Render Whitespace">
+              <SettingRow
+                label="Render Whitespace"
+                tooltip="Controls how whitespace characters are visually marked in the editor."
+              >
                 <select
                   data-testid="settings-render-whitespace"
                   value={state.settings.renderWhitespace ?? "selection"}
@@ -451,6 +481,27 @@ export function SettingsPanel() {
                   <option value="all">All</option>
                 </select>
               </SettingRow>
+
+              <SettingRow
+                label="Welcome Page"
+                tooltip="Reopen the PSForge Welcome page tab at any time."
+              >
+                <button
+                  data-testid="settings-open-welcome"
+                  onClick={() => {
+                    const fn = (window as unknown as Record<string, unknown>)
+                      .__psforge_openWelcome as (() => void) | undefined;
+                    fn?.();
+                  }}
+                  className="px-3 py-1 text-sm rounded"
+                  style={{
+                    backgroundColor: "var(--btn-primary-bg)",
+                    color: "var(--btn-primary-fg)",
+                  }}
+                >
+                  Open Welcome Page
+                </button>
+              </SettingRow>
             </div>
           )}
 
@@ -466,7 +517,10 @@ export function SettingsPanel() {
                 diagnostics (squiggles) as you type.
               </InfoBox>
 
-              <SettingRow label="Enable IntelliSense">
+              <SettingRow
+                label="Enable IntelliSense"
+                tooltip="Enables PowerShell completion suggestions while typing."
+              >
                 <Toggle
                   checked={state.settings.enableIntelliSense !== false}
                   onChange={(v) => updateSetting("enableIntelliSense", v)}
@@ -474,7 +528,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Enable PSSA Analysis">
+              <SettingRow
+                label="Enable PSSA Analysis"
+                tooltip="Runs PSScriptAnalyzer in the editor and shows squiggle diagnostics."
+              >
                 <Toggle
                   checked={state.settings.enablePssa !== false}
                   onChange={(v) => updateSetting("enablePssa", v)}
@@ -496,7 +553,10 @@ export function SettingsPanel() {
             <div className="flex flex-col gap-4">
               <SectionHeading>Execution</SectionHeading>
 
-              <SettingRow label="Default PowerShell">
+              <SettingRow
+                label="Default PowerShell"
+                tooltip="Chooses which discovered PowerShell executable PSForge uses by default."
+              >
                 <div className="flex flex-col gap-1">
                   <select
                     data-testid="settings-default-ps"
@@ -521,7 +581,10 @@ export function SettingsPanel() {
                 </div>
               </SettingRow>
 
-              <SettingRow label="Auto-Save on Run">
+              <SettingRow
+                label="Auto-Save on Run"
+                tooltip="Automatically saves the active file before F5 execution."
+              >
                 <Toggle
                   checked={state.settings.autoSaveOnRun === true}
                   onChange={(v) => updateSetting("autoSaveOnRun", v)}
@@ -529,7 +592,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Clear Output on Run">
+              <SettingRow
+                label="Clear Output on Run"
+                tooltip="Clears previous output before each script run."
+              >
                 <Toggle
                   checked={state.settings.clearOutputOnRun !== false}
                   onChange={(v) => updateSetting("clearOutputOnRun", v)}
@@ -537,7 +603,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Working Directory">
+              <SettingRow
+                label="Working Directory"
+                tooltip="Sets the current directory used for script execution and relative paths."
+              >
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-4">
                     <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -578,7 +647,10 @@ export function SettingsPanel() {
                 </div>
               </SettingRow>
 
-              <SettingRow label="Execution Policy">
+              <SettingRow
+                label="Execution Policy"
+                tooltip="Selects the CurrentUser PowerShell execution policy override."
+              >
                 <div className="flex flex-col gap-2">
                   <InfoBox warn>
                     This calls{" "}
@@ -670,7 +742,10 @@ export function SettingsPanel() {
             <div className="flex flex-col gap-4">
               <SectionHeading>Output &amp; Terminal</SectionHeading>
 
-              <SettingRow label="Terminal Profile Loading">
+              <SettingRow
+                label="Terminal Profile Loading"
+                tooltip="Loads PowerShell profile scripts when opening the integrated terminal."
+              >
                 <div className="flex flex-col gap-1">
                   <Toggle
                     checked={state.settings.terminalLoadProfile === true}
@@ -684,7 +759,10 @@ export function SettingsPanel() {
                 </div>
               </SettingRow>
 
-              <SettingRow label="Show Timestamps">
+              <SettingRow
+                label="Show Timestamps"
+                tooltip="Prepends local-time timestamps to output pane lines."
+              >
                 <Toggle
                   checked={state.settings.showTimestamps === true}
                   onChange={(v) => updateSetting("showTimestamps", v)}
@@ -692,7 +770,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Output Word Wrap">
+              <SettingRow
+                label="Output Word Wrap"
+                tooltip="Wraps long output lines in the Output panel."
+              >
                 <Toggle
                   checked={state.settings.outputWordWrap === true}
                   onChange={(v) => updateSetting("outputWordWrap", v)}
@@ -700,7 +781,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Output Font Size">
+              <SettingRow
+                label="Output Font Size"
+                tooltip="Sets font size for Output, Problems, Variables, and terminal text."
+              >
                 <NumberInput
                   min={8}
                   max={72}
@@ -711,7 +795,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Output Font Family">
+              <SettingRow
+                label="Output Font Family"
+                tooltip="Font stack used for Output, Problems, Variables, and terminal panes."
+              >
                 <TextInput
                   value={
                     state.settings.outputFontFamily ??
@@ -724,7 +811,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Max Recent Files">
+              <SettingRow
+                label="Max Recent Files"
+                tooltip="Maximum number of file paths kept in the Recent Files menu."
+              >
                 <NumberInput
                   min={1}
                   max={50}
@@ -742,7 +832,10 @@ export function SettingsPanel() {
             <div className="flex flex-col gap-4">
               <SectionHeading>Appearance</SectionHeading>
 
-              <SettingRow label="Theme">
+              <SettingRow
+                label="Theme"
+                tooltip="Applies the global PSForge color theme."
+              >
                 <select
                   data-testid="settings-theme"
                   value={state.settings.theme}
@@ -759,7 +852,10 @@ export function SettingsPanel() {
                 </select>
               </SettingRow>
 
-              <SettingRow label="Split Position">
+              <SettingRow
+                label="Split Position"
+                tooltip="Sets the editor/output vertical split ratio."
+              >
                 <div className="flex items-center gap-3">
                   <input
                     type="range"
@@ -782,7 +878,10 @@ export function SettingsPanel() {
 
               <SectionHeading>UI Chrome Font</SectionHeading>
 
-              <SettingRow label="Font Family">
+              <SettingRow
+                label="Font Family"
+                tooltip="Font stack for application chrome such as toolbar, status bar, and dialogs."
+              >
                 <TextInput
                   value={state.settings.uiFontFamily}
                   onChange={(v) => updateSetting("uiFontFamily", v)}
@@ -792,7 +891,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Font Size">
+              <SettingRow
+                label="Font Size"
+                tooltip="Font size for application chrome elements."
+              >
                 <NumberInput
                   min={8}
                   max={24}
@@ -805,7 +907,10 @@ export function SettingsPanel() {
 
               <SectionHeading>Modules List Font</SectionHeading>
 
-              <SettingRow label="Font Family">
+              <SettingRow
+                label="Font Family"
+                tooltip="Font stack used in the modules/sidebar list."
+              >
                 <TextInput
                   value={state.settings.sidebarFontFamily}
                   onChange={(v) => updateSetting("sidebarFontFamily", v)}
@@ -815,7 +920,10 @@ export function SettingsPanel() {
                 />
               </SettingRow>
 
-              <SettingRow label="Font Size">
+              <SettingRow
+                label="Font Size"
+                tooltip="Font size used in the modules/sidebar list."
+              >
                 <NumberInput
                   min={8}
                   max={24}
@@ -983,18 +1091,36 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 
 function SettingRow({
   label,
+  tooltip,
   children,
 }: {
   label: string;
+  tooltip?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1">
       <label
-        className="text-sm font-medium"
+        className="text-sm font-medium flex items-center gap-1"
         style={{ color: "var(--text-primary)" }}
       >
         {label}
+        {tooltip && (
+          <span
+            title={tooltip}
+            aria-label={tooltip}
+            className="inline-flex items-center justify-center text-[10px] font-bold rounded-full cursor-help select-none"
+            style={{
+              width: "14px",
+              height: "14px",
+              border: "1px solid var(--border-primary)",
+              color: "var(--text-muted)",
+              backgroundColor: "var(--bg-tertiary)",
+            }}
+          >
+            i
+          </span>
+        )}
       </label>
       <div>{children}</div>
     </div>
