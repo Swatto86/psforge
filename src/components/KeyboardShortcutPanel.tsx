@@ -306,7 +306,7 @@ export function KeyboardShortcutPanel() {
                                         border:
                                           "1px solid var(--border-primary)",
                                         backgroundColor: "var(--bg-secondary)",
-                                        fontSize: "13px",
+                                        fontSize: "var(--ui-font-size-md)",
                                         lineHeight: "20px",
                                       }}
                                     >
@@ -374,3 +374,4 @@ export function KeyboardShortcutPanel() {
     </div>
   );
 }
+

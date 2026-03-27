@@ -157,7 +157,7 @@ export function ScriptSigningDialog() {
             style={{
               fontWeight: 600,
               color: "var(--text-primary)",
-              fontSize: "15px",
+              fontSize: "var(--ui-font-size-lg)",
             }}
           >
             Sign Script
@@ -171,7 +171,7 @@ export function ScriptSigningDialog() {
               border: "none",
               color: "var(--text-secondary)",
               cursor: "pointer",
-              fontSize: "16px",
+              fontSize: "var(--ui-font-size-xl)",
               lineHeight: 1,
               padding: "2px 6px",
               borderRadius: "3px",
@@ -194,7 +194,7 @@ export function ScriptSigningDialog() {
           {activeTab?.filePath ? (
             <div
               style={{
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 color: "var(--text-secondary)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -210,7 +210,7 @@ export function ScriptSigningDialog() {
           ) : (
             <div
               style={{
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 color: "var(--text-warning, #e0a000)",
               }}
             >
@@ -223,7 +223,7 @@ export function ScriptSigningDialog() {
             <div
               data-testid="signing-dialog-unsaved-warning"
               style={{
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 color: "var(--text-warning, #e0a000)",
                 padding: "6px 10px",
                 borderRadius: "4px",
@@ -241,7 +241,7 @@ export function ScriptSigningDialog() {
               htmlFor="signing-cert-select"
               style={{
                 display: "block",
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 fontWeight: 600,
                 marginBottom: "6px",
                 color: "var(--text-primary)",
@@ -253,7 +253,7 @@ export function ScriptSigningDialog() {
             {loading && (
               <div
                 data-testid="signing-dialog-loading"
-                style={{ fontSize: "12px", color: "var(--text-muted)" }}
+                style={{ fontSize: "var(--ui-font-size-sm)", color: "var(--text-muted)" }}
               >
                 Loading certificates...
               </div>
@@ -263,7 +263,7 @@ export function ScriptSigningDialog() {
               <div
                 data-testid="signing-dialog-no-certs"
                 style={{
-                  fontSize: "12px",
+                  fontSize: "var(--ui-font-size-sm)",
                   color: "var(--text-muted)",
                   padding: "8px 10px",
                   border: "1px solid var(--border-primary)",
@@ -300,7 +300,7 @@ export function ScriptSigningDialog() {
                   border: "1px solid var(--border-primary)",
                   borderRadius: "4px",
                   padding: "4px 8px",
-                  fontSize: "12px",
+                  fontSize: "var(--ui-font-size-sm)",
                 }}
               >
                 {certs.map((c) => (
@@ -317,7 +317,7 @@ export function ScriptSigningDialog() {
                 data-testid="signing-dialog-cert-details"
                 style={{
                   marginTop: "6px",
-                  fontSize: "11px",
+                  fontSize: "var(--ui-font-size-xs)",
                   color: "var(--text-muted)",
                   fontFamily: "monospace",
                 }}
@@ -335,7 +335,7 @@ export function ScriptSigningDialog() {
             <div
               data-testid="signing-dialog-status"
               style={{
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 color: "var(--text-success, #4ec94e)",
                 padding: "6px 10px",
                 borderRadius: "4px",
@@ -353,7 +353,7 @@ export function ScriptSigningDialog() {
             <div
               data-testid="signing-dialog-error"
               style={{
-                fontSize: "12px",
+                fontSize: "var(--ui-font-size-sm)",
                 color: "var(--text-error, #f47174)",
                 padding: "6px 10px",
                 borderRadius: "4px",
@@ -388,7 +388,7 @@ export function ScriptSigningDialog() {
               borderRadius: "4px",
               padding: "5px 16px",
               cursor: "pointer",
-              fontSize: "13px",
+              fontSize: "var(--ui-font-size-md)",
             }}
           >
             Cancel
@@ -415,7 +415,7 @@ export function ScriptSigningDialog() {
               borderRadius: "4px",
               padding: "5px 16px",
               cursor: canSign ? "pointer" : "not-allowed",
-              fontSize: "13px",
+              fontSize: "var(--ui-font-size-md)",
               opacity: canSign ? 1 : 0.55,
             }}
           >
@@ -426,3 +426,4 @@ export function ScriptSigningDialog() {
     </div>
   );
 }
+

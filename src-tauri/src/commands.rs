@@ -639,16 +639,22 @@ pub async fn get_module_commands(
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_str = find_last_json(&stdout).unwrap_or(stdout.trim());
+    let trimmed = json_str.trim();
 
-    if stdout.trim().is_empty() {
+    if trimmed.is_empty() || trimmed == "[]" {
         return Ok(Vec::new());
     }
 
-    let commands: Vec<CommandInfo> = if stdout.trim().starts_with('[') {
-        serde_json::from_str(&stdout)?
+    let commands: Vec<CommandInfo> = if trimmed.starts_with('[') {
+        serde_json::from_str(trimmed).unwrap_or_default()
+    } else if trimmed.starts_with('{') {
+        match serde_json::from_str::<CommandInfo>(trimmed) {
+            Ok(single) => vec![single],
+            Err(_) => Vec::new(),
+        }
     } else {
-        let single: CommandInfo = serde_json::from_str(&stdout)?;
-        vec![single]
+        Vec::new()
     };
 
     Ok(commands)
@@ -737,7 +743,8 @@ if ($__params.Count -eq 0) { '[]' } else { $__params | ConvertTo-Json -Compress 
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
+    let json_str = find_last_json(&stdout).unwrap_or(stdout.trim());
+    let trimmed = json_str.trim();
 
     if trimmed.is_empty() || trimmed == "[]" {
         return Ok(Vec::new());
@@ -839,7 +846,8 @@ try {
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
+    let json_str = find_last_json(&stdout).unwrap_or(stdout.trim());
+    let trimmed = json_str.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
         return Ok(None);
     }

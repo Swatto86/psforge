@@ -557,7 +557,7 @@ export function Sidebar() {
                 </div>
                 <div
                   style={{
-                    fontSize: "10px",
+                    fontSize: "var(--ui-font-size-2xs)",
                     wordBreak: "break-word",
                     opacity: 0.8,
                   }}
@@ -568,7 +568,7 @@ export function Sidebar() {
                   onClick={refreshModules}
                   style={{
                     marginTop: "6px",
-                    fontSize: "10px",
+                    fontSize: "var(--ui-font-size-2xs)",
                     color: "var(--text-accent)",
                     background: "none",
                     border: "none",
@@ -615,7 +615,7 @@ export function Sidebar() {
                   </span>
                   <span
                     className="ml-auto shrink-0"
-                    style={{ color: "var(--text-muted)", fontSize: "10px" }}
+                    style={{ color: "var(--text-muted)", fontSize: "var(--ui-font-size-2xs)" }}
                   >
                     {mod.version}
                   </span>
@@ -727,3 +727,4 @@ export function Sidebar() {
     </div>
   );
 }
+

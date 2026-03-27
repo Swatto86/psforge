@@ -100,7 +100,7 @@ export function AboutDialog() {
           data-testid="about-dialog-version"
           style={{
             textAlign: "center",
-            fontSize: "13px",
+            fontSize: "var(--ui-font-size-md)",
             color: "var(--text-muted)",
             marginBottom: "16px",
           }}
@@ -112,7 +112,7 @@ export function AboutDialog() {
         <div
           data-testid="about-dialog-description"
           style={{
-            fontSize: "12px",
+            fontSize: "var(--ui-font-size-sm)",
             color: "var(--text-primary)",
             textAlign: "center",
             lineHeight: "1.6",
@@ -138,7 +138,7 @@ export function AboutDialog() {
           data-testid="about-dialog-developer"
           style={{
             textAlign: "center",
-            fontSize: "13px",
+            fontSize: "var(--ui-font-size-md)",
             fontWeight: "bold",
             color: "var(--text-primary)",
             marginBottom: "8px",
@@ -156,7 +156,7 @@ export function AboutDialog() {
               background: "none",
               border: "none",
               cursor: "pointer",
-              fontSize: "12px",
+              fontSize: "var(--ui-font-size-sm)",
               color: "var(--text-accent)",
               textDecoration: "underline",
               padding: 0,
@@ -176,7 +176,7 @@ export function AboutDialog() {
         <div
           style={{
             textAlign: "center",
-            fontSize: "11px",
+            fontSize: "var(--ui-font-size-xs)",
             color: "var(--text-muted)",
             marginBottom: "4px",
           }}
@@ -189,7 +189,7 @@ export function AboutDialog() {
           data-testid="about-dialog-tech"
           style={{
             textAlign: "center",
-            fontSize: "11px",
+            fontSize: "var(--ui-font-size-xs)",
             color: "var(--text-muted)",
             marginBottom: "20px",
           }}
@@ -208,7 +208,7 @@ export function AboutDialog() {
               border: "none",
               borderRadius: "4px",
               padding: "6px 24px",
-              fontSize: "13px",
+              fontSize: "var(--ui-font-size-md)",
               cursor: "pointer",
               fontWeight: "500",
             }}
@@ -226,3 +226,4 @@ export function AboutDialog() {
     </div>
   );
 }
+

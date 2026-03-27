@@ -720,6 +720,8 @@ export function TerminalPane() {
         style={{
           borderBottom: "1px solid var(--border-primary)",
           backgroundColor: "var(--bg-secondary)",
+          fontFamily: "var(--ui-font-family)",
+          fontSize: "var(--ui-font-size)",
         }}
       >
         <div className="flex items-center gap-1 flex-1 overflow-auto">
