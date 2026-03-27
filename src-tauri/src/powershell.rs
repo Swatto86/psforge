@@ -1,17 +1,17 @@
 /// PowerShell discovery and process management.
 /// Handles detecting installed PowerShell versions and managing script execution.
 use crate::errors::AppError;
+use crate::utils::write_secure_temp_file;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 /// Maximum number of output lines to buffer per process (memory bound).
 const MAX_OUTPUT_LINES: usize = 100_000;
@@ -184,14 +184,13 @@ impl ProcessManager {
     where
         F: Fn(OutputLine) + Send + Sync + 'static,
     {
+        validate_ps_path(ps_path)?;
+
         // Stop any existing process first
         self.stop().await?;
 
         info!("Executing script with {} in {}", ps_path, working_dir);
-        debug!(
-            "Script content (first 200 chars): {}",
-            &script[..script.len().min(200)]
-        );
+        debug!("Script size: {} bytes", script.len());
 
         // Write the user script to a uniquely-named temp file.
         // Using -File instead of -Command removes the "inline PowerShell command"

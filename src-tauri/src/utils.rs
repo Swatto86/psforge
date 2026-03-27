@@ -1,6 +1,9 @@
 /// Shared I/O utility functions for PSForge.
 /// Provides retry logic for transient I/O failures (Rule 11 - Resilience).
 use log::warn;
+use std::io::Write;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 /// Maximum number of I/O retry attempts for transient failures.
 /// Backoff sequence: 50 ms -> 100 ms -> 200 ms, then propagate the error.
@@ -57,6 +60,36 @@ fn is_transient(e: &std::io::Error) -> bool {
             | std::io::ErrorKind::TimedOut
             | std::io::ErrorKind::Interrupted
     )
+}
+
+/// Writes `content` to a unique file in the system temp directory using
+/// create_new(true), preventing accidental overwrite of pre-existing files.
+pub(crate) fn write_secure_temp_file(
+    prefix: &str,
+    suffix: &str,
+    content: &[u8],
+) -> std::io::Result<PathBuf> {
+    let temp_dir = std::env::temp_dir();
+    for _ in 0..16 {
+        let path = temp_dir.join(format!("{prefix}_{}{}", Uuid::new_v4(), suffix));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                f.write_all(content)?;
+                f.flush()?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "Failed to allocate unique temp file after 16 attempts",
+    ))
 }
 
 #[cfg(test)]

@@ -32,6 +32,9 @@ export function Sidebar() {
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Tracks the previously selected PS path so we can reset modules on change. */
   const prevPsPathRef = React.useRef(state.selectedPsPath);
+  /** Monotonic counter that invalidates stale module-load results when the
+   *  selected PS version changes mid-flight. */
+  const loadGenRef = React.useRef(0);
 
   // Reset module data when the selected PS version changes so the sidebar
   // fetches the module list for the new installation automatically.
@@ -63,17 +66,22 @@ export function Sidebar() {
       state.selectedPsPath &&
       !loadError
     ) {
+      const gen = ++loadGenRef.current;
       setLoadError(null);
       dispatch({ type: "SET_MODULES_LOADING", loading: true });
       cmd
         .getInstalledModules(state.selectedPsPath)
         .then((modules) => {
+          // Discard stale result if the PS version changed while loading.
+          if (loadGenRef.current !== gen) return;
           dispatch({ type: "SET_MODULES", modules });
         })
         .catch((err: unknown) => {
+          if (loadGenRef.current !== gen) return;
           setLoadError(extractErrorMessage(err));
         })
         .finally(() => {
+          if (loadGenRef.current !== gen) return;
           dispatch({ type: "SET_MODULES_LOADING", loading: false });
         });
     }
@@ -88,6 +96,7 @@ export function Sidebar() {
 
   const refreshModules = useCallback(() => {
     if (!state.selectedPsPath) return;
+    const gen = ++loadGenRef.current;
     setLoadError(null);
     dispatch({ type: "SET_MODULES_LOADING", loading: true });
     dispatch({ type: "SET_MODULES", modules: [] });
@@ -95,12 +104,15 @@ export function Sidebar() {
     cmd
       .getInstalledModules(state.selectedPsPath)
       .then((modules) => {
+        if (loadGenRef.current !== gen) return;
         dispatch({ type: "SET_MODULES", modules });
       })
       .catch((err: unknown) => {
+        if (loadGenRef.current !== gen) return;
         setLoadError(extractErrorMessage(err));
       })
       .finally(() => {
+        if (loadGenRef.current !== gen) return;
         dispatch({ type: "SET_MODULES_LOADING", loading: false });
       });
   }, [state.selectedPsPath, dispatch]);
