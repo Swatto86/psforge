@@ -3,8 +3,8 @@
 use crate::errors::{AppError, BatchResult};
 use crate::powershell::{self, OutputLine, ProcessManager};
 use crate::settings::{self, AppSettings};
-use crate::utils::with_retry;
-use log::{debug, error, info};
+use crate::utils::{with_retry, write_secure_temp_file};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tauri::{Emitter, Window};
@@ -46,6 +46,7 @@ pub async fn execute_script(
     script_args: Option<Vec<String>>,
 ) -> Result<i32, AppError> {
     info!("execute_script called with ps_path={}", ps_path);
+    powershell::validate_ps_path(&ps_path)?;
 
     let win = window.clone();
     let exit_code = pm()
@@ -203,6 +204,7 @@ pub async fn get_script_parameters(
     script: String,
 ) -> Result<Vec<ScriptParameterInfo>, AppError> {
     info!("get_script_parameters called");
+    powershell::validate_ps_path(&ps_path)?;
 
     if script.trim().is_empty() {
         return Ok(Vec::new());
@@ -318,10 +320,8 @@ pub struct ModuleInfo {
 /// Any path ending with `pwsh.exe` (or `pwsh`) is PowerShell 6+ and supports
 /// the additional `-SkipEditionCheck` flag on `Get-Module`.
 fn is_windows_powershell(ps_path: &str) -> bool {
-    ps_path
-        .to_lowercase()
-        .trim_end_matches('"')
-        .ends_with("powershell.exe")
+    let normalized = ps_path.to_lowercase().trim_end_matches('"').to_string();
+    normalized.ends_with("powershell.exe") || normalized == "powershell"
 }
 
 /// Returns all installed PowerShell modules (runs async, non-blocking).
@@ -336,6 +336,7 @@ fn is_windows_powershell(ps_path: &str) -> bool {
 #[tauri::command]
 pub async fn get_installed_modules(ps_path: String) -> Result<Vec<ModuleInfo>, AppError> {
     info!("get_installed_modules called (ps_path={})", ps_path);
+    powershell::validate_ps_path(&ps_path)?;
 
     // Build a version-appropriate Get-Module command.
     // -SkipEditionCheck is only available in PS 6+; it is omitted for Windows
@@ -462,6 +463,7 @@ pub async fn get_module_commands(
     module_name: String,
 ) -> Result<Vec<CommandInfo>, AppError> {
     info!("get_module_commands called for {}", module_name);
+    powershell::validate_ps_path(&ps_path)?;
 
     // Column names match the camelCase keys expected by the serde deserializer.
     let script = format!(
@@ -547,6 +549,7 @@ pub async fn get_variables_after_run(
     working_dir: String,
 ) -> Result<Vec<VariableInfo>, AppError> {
     info!("get_variables_after_run called");
+    powershell::validate_ps_path(&ps_path)?;
 
     let combined_script = format!(
         "{}\nGet-Variable | Where-Object {{ $_.Name -notmatch '^(\\?|args|input|MyInvocation|PSBoundParameters|PSCommandPath|PSScriptRoot)$' }} | Select-Object Name, @{{N='Value';E={{if ($_.Value -ne $null) {{ $_.Value.ToString() }} else {{ '<null>' }}}}}}, @{{N='TypeName';E={{if ($_.Value -ne $null) {{ $_.Value.GetType().Name }} else {{ 'Null' }}}}}} | ConvertTo-Json -Compress",
@@ -630,15 +633,32 @@ fn find_last_json(s: &str) -> Option<&str> {
     None
 }
 
-/// Scans `bytes` backwards for the last balanced `open`/`close` pair.
+/// Scans `bytes` backwards for the last balanced `open`/`close` pair,
+/// skipping brackets that appear inside JSON string literals.
 /// Returns `(start, end)` byte offsets (inclusive) of the outermost
 /// bracket pair, or `None` if no balanced pair is found.
 fn find_balanced_span(bytes: &[u8], open: u8, close: u8) -> Option<(usize, usize)> {
     let mut depth: i32 = 0;
     let mut end_pos: Option<usize> = None;
+    let mut in_string = false;
     let mut i = bytes.len();
     while i > 0 {
         i -= 1;
+        if bytes[i] == b'"' {
+            // Count consecutive backslashes before this quote to decide
+            // whether it is escaped.  Odd count → escaped, even → real.
+            let mut bs = 0usize;
+            while i >= 1 + bs && bytes[i - 1 - bs] == b'\\' {
+                bs += 1;
+            }
+            if bs % 2 == 0 {
+                in_string = !in_string;
+            }
+            continue;
+        }
+        if in_string {
+            continue;
+        }
         if bytes[i] == close {
             if depth == 0 {
                 end_pos = Some(i);
@@ -769,7 +789,14 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String) {
         )
     } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
         // UTF-16 LE
-        let u16_iter = bytes[2..]
+        let payload = &bytes[2..];
+        if payload.len() % 2 != 0 {
+            warn!(
+                "UTF-16 LE file has odd byte count ({}); trailing byte dropped",
+                bytes.len()
+            );
+        }
+        let u16_iter = payload
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]));
         let decoded: String = char::decode_utf16(u16_iter)
@@ -778,7 +805,14 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String) {
         (decoded, "utf16le".to_string())
     } else if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         // UTF-16 BE
-        let u16_iter = bytes[2..]
+        let payload = &bytes[2..];
+        if payload.len() % 2 != 0 {
+            warn!(
+                "UTF-16 BE file has odd byte count ({}); trailing byte dropped",
+                bytes.len()
+            );
+        }
+        let u16_iter = payload
             .chunks_exact(2)
             .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]));
         let decoded: String = char::decode_utf16(u16_iter)
@@ -1474,6 +1508,7 @@ pub async fn analyze_script(
     script_content: String,
 ) -> Result<Vec<PssaDiagnostic>, AppError> {
     debug!("analyze_script called ({} chars)", script_content.len());
+    powershell::validate_ps_path(&ps_path)?;
 
     // Write content to a temp file so PSSA receives accurate file-path info
     // and we avoid all single-quote escaping issues with -Command.
@@ -1569,6 +1604,7 @@ pub async fn get_completions(
     cursor_column: usize,
 ) -> Result<Vec<PsCompletion>, AppError> {
     debug!("get_completions called (cursor_column={})", cursor_column);
+    powershell::validate_ps_path(&ps_path)?;
 
     let temp_path = write_temp_ps_file(&script_content).map_err(|e| AppError {
         code: "TEMP_WRITE_FAILED".to_string(),
@@ -1778,14 +1814,8 @@ pub async fn suggest_modules_for_command(
 static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Writes `content` to a uniquely-named temp file and returns its path.
-/// Uses PID + a monotonic counter so concurrent calls always produce distinct files.
 fn write_temp_ps_file(content: &str) -> std::io::Result<std::path::PathBuf> {
-    let seq = TEMP_FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let pid = std::process::id();
-    let name = format!("psforge_tmp_{pid}_{seq}.ps1");
-    let path = std::env::temp_dir().join(name);
-    std::fs::write(&path, content.as_bytes())?;
-    Ok(path)
+    write_secure_temp_file("psforge_tmp", ".ps1", content.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -1807,6 +1837,7 @@ const ALLOWED_POLICIES: &[&str] = &[
 #[tauri::command]
 pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
     info!("get_execution_policy called");
+    powershell::validate_ps_path(&ps_path)?;
 
     let output = tokio::process::Command::new(&ps_path)
         .args([
@@ -1840,6 +1871,7 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
 #[tauri::command]
 pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(), AppError> {
     info!("set_execution_policy called with policy={}", policy);
+    powershell::validate_ps_path(&ps_path)?;
 
     // Validate against the allow-list before passing to PowerShell.
     if !ALLOWED_POLICIES
@@ -1943,6 +1975,7 @@ const FORMAT_TIMEOUT_SECS: u64 = 10;
 #[tauri::command]
 pub async fn format_script(ps_path: String, script_content: String) -> Result<String, AppError> {
     debug!("format_script called ({} chars)", script_content.len());
+    powershell::validate_ps_path(&ps_path)?;
 
     if script_content.trim().is_empty() {
         return Ok(script_content);
@@ -2031,6 +2064,7 @@ const PROFILE_TIMEOUT_SECS: u64 = 10;
 #[tauri::command]
 pub async fn get_ps_profile_path(ps_path: String) -> Result<String, AppError> {
     info!("get_ps_profile_path called");
+    powershell::validate_ps_path(&ps_path)?;
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(PROFILE_TIMEOUT_SECS),
@@ -2124,6 +2158,7 @@ const CERT_ENUM_TIMEOUT_SECS: u64 = 10;
 #[tauri::command]
 pub async fn get_signing_certificates(ps_path: String) -> Result<Vec<CertInfo>, AppError> {
     info!("get_signing_certificates called");
+    powershell::validate_ps_path(&ps_path)?;
 
     const CERT_SCRIPT: &str = "\
 $ErrorActionPreference='SilentlyContinue';\
@@ -2210,6 +2245,7 @@ pub async fn sign_script(
     thumbprint: String,
 ) -> Result<String, AppError> {
     info!("sign_script called: path={}", script_path);
+    powershell::validate_ps_path(&ps_path)?;
 
     // Validate thumbprint: exactly 40 hex characters (Rule 11 input validation).
     if thumbprint.len() != 40 || !thumbprint.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -2382,6 +2418,21 @@ mod tests {
             find_last_json(s).unwrap(),
             "[{\"Name\":\"x\",\"Value\":\"[System.String]\"}]"
         );
+    }
+
+    #[test]
+    fn find_last_json_handles_unbalanced_brackets_in_strings() {
+        // An unbalanced bracket inside a JSON string value must not throw
+        // off the bracket depth counter.
+        let s = r#"[{"Name":"x","Value":"has]bracket"}]"#;
+        assert_eq!(find_last_json(s).unwrap(), s);
+    }
+
+    #[test]
+    fn find_last_json_handles_escaped_quotes_in_strings() {
+        // Escaped quotes inside JSON strings must not toggle string tracking.
+        let s = r#"[{"Name":"x","Value":"has\"escaped\"quotes]"}]"#;
+        assert_eq!(find_last_json(s).unwrap(), s);
     }
 
     #[test]

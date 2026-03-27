@@ -2,6 +2,8 @@
 /// Manages a persistent interactive PowerShell session with piped I/O.
 /// Commands are sent via stdin; a sentinel marker signals completion.
 use crate::errors::AppError;
+use crate::powershell::validate_ps_path;
+use crate::utils::write_secure_temp_file;
 use log::{debug, error, info, warn};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -210,19 +212,20 @@ pub async fn start_terminal(window: Window, shell_path: String) -> Result<(), Ap
                 message: format!("PowerShell discovery task failed: {}", e),
             })?
     } else {
+        validate_ps_path(&shell_path)?;
         shell_path.clone()
     };
 
     // Write the REPL script to a temp file so we can launch it with -File.
     // This avoids -EncodedCommand (opaque, error-prone base64 encoding) and
     // -Command - (triggers PSReadLine interactive mode -> "handle is invalid").
-    let temp_script =
-        std::env::temp_dir().join(format!("psforge_repl_{}.ps1", uuid::Uuid::new_v4()));
-    std::fs::write(&temp_script, REPL_SCRIPT.as_bytes()).map_err(|e| AppError {
-        code: "TERMINAL_SCRIPT_WRITE_FAILED".to_string(),
-        message: format!("Failed to write REPL script to temp file: {}", e),
-    })?;
+    let temp_script = write_secure_temp_file("psforge_repl", ".ps1", REPL_SCRIPT.as_bytes())
+        .map_err(|e| AppError {
+            code: "TERMINAL_SCRIPT_WRITE_FAILED".to_string(),
+            message: format!("Failed to write REPL script to temp file: {}", e),
+        })?;
     debug!("REPL script written to: {:?}", temp_script);
+    let temp_script_arg = temp_script.to_string_lossy().into_owned();
 
     let mut child = Command::new(&program)
         .args([
@@ -231,7 +234,7 @@ pub async fn start_terminal(window: Window, shell_path: String) -> Result<(), Ap
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            temp_script.to_str().unwrap_or_default(),
+            &temp_script_arg,
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
