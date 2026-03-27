@@ -233,12 +233,19 @@ export function EditorPane() {
   // Disposable for the registered completion provider (kept so we can clean
   // up when the editor unmounts or a new provider is registered).
   const completionDisposableRef = useRef<{ dispose(): void } | null>(null);
+  const breakpointDecorationsRef = useRef<string[]>([]);
 
   // Dispose the completion provider when the component unmounts.
   useEffect(() => {
     return () => {
       completionDisposableRef.current?.dispose();
       if (pssaTimerRef.current !== null) clearTimeout(pssaTimerRef.current);
+      if (editorRef.current) {
+        breakpointDecorationsRef.current = editorRef.current.deltaDecorations(
+          breakpointDecorationsRef.current,
+          [],
+        );
+      }
     };
   }, []);
 
@@ -329,6 +336,36 @@ export function EditorPane() {
     });
   }, []);
 
+  const refreshBreakpointDecorations = useCallback(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco || !activeTab || activeTab.tabType === "welcome") {
+      return;
+    }
+    const model = editor.getModel();
+    if (!model) return;
+
+    const maxLine = model.getLineCount();
+    const lines = (state.breakpoints[activeTab.id] ?? []).filter(
+      (line) => Number.isInteger(line) && line >= 1 && line <= maxLine,
+    );
+    const decorations: MonacoEditor.IModelDeltaDecoration[] = lines.map(
+      (line) => ({
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          isWholeLine: true,
+          glyphMarginClassName: "psforge-breakpoint-glyph",
+          glyphMarginHoverMessage: { value: `Breakpoint (line ${line})` },
+          linesDecorationsClassName: "psforge-breakpoint-line",
+        },
+      }),
+    );
+    breakpointDecorationsRef.current = editor.deltaDecorations(
+      breakpointDecorationsRef.current,
+      decorations,
+    );
+  }, [activeTab, state.breakpoints]);
+
   const handleEditorMount: OnMount = useCallback(
     (editor, monaco) => {
       editorRef.current = editor;
@@ -353,6 +390,23 @@ export function EditorPane() {
           type: "SET_CURSOR_POSITION",
           line: e.position.lineNumber,
           column: e.position.column,
+        });
+      });
+
+      // Toggle breakpoints by clicking the gutter glyph margin or line numbers.
+      editor.onMouseDown((e) => {
+        if (!activeTab || activeTab.tabType === "welcome") return;
+        if (!e.target.position) return;
+        if (
+          e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
+          e.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+        ) {
+          return;
+        }
+        dispatch({
+          type: "TOGGLE_BREAKPOINT",
+          tabId: activeTab.id,
+          line: e.target.position.lineNumber,
         });
       });
 
@@ -449,8 +503,15 @@ export function EditorPane() {
 
       // Focus editor
       editor.focus();
+      refreshBreakpointDecorations();
     },
-    [state.settings.theme, state.settings.enableIntelliSense, dispatch],
+    [
+      activeTab,
+      state.settings.theme,
+      state.settings.enableIntelliSense,
+      dispatch,
+      refreshBreakpointDecorations,
+    ],
   );
 
   // Sync Monaco theme when app theme changes
@@ -462,6 +523,10 @@ export function EditorPane() {
       monacoRef.current.editor.setTheme(themeName);
     }
   }, [state.settings.theme]);
+
+  useEffect(() => {
+    refreshBreakpointDecorations();
+  }, [refreshBreakpointDecorations]);
 
   // Manage IntelliSense provider lifecycle when the setting is toggled post-mount.
   // On disable: dispose the registered provider so completions no longer fire.
@@ -667,11 +732,9 @@ export function EditorPane() {
         // step-based "phase" animations survive compositor throttling because
         // each step is a discrete paint rather than an interpolated one.
         cursorBlinking: "smooth",
-        // Remove the glyph margin column (used for debugger breakpoints in
-        // IDEs; not needed here) and tighten the decorations strip so content
-        // starts as close to the left edge as practical.
-        glyphMargin: false,
-        lineDecorationsWidth: 4,
+        // Keep glyph margin enabled for line breakpoint toggles.
+        glyphMargin: true,
+        lineDecorationsWidth: 12,
         lineNumbersMinChars: 3,
         padding: { top: 8 },
         // Disable auto-accepting suggestions on commit characters (e.g. space).

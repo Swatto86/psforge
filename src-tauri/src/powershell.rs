@@ -179,6 +179,7 @@ impl ProcessManager {
         working_dir: &str,
         exec_policy: &str,
         script_args: &[String],
+        debug_breakpoints: Option<&[u32]>,
         on_output: F,
     ) -> Result<i32, AppError>
     where
@@ -205,13 +206,35 @@ impl ProcessManager {
 
         // Wrapper script that first ensures a valid hidden Win32 console handle
         // for auth libraries, then executes the real script path with original args.
+        // In debug mode, line breakpoints are registered against the temp script path.
         let wrapper_script_path =
             std::env::temp_dir().join(format!("psforge_wrapper_{}.ps1", Uuid::new_v4()));
         let mut wrapper_script = String::new();
         wrapper_script.push_str(AUTH_WINDOW_HANDLE_BOOTSTRAP_PS);
-        wrapper_script.push_str("\n& '");
+        wrapper_script.push_str("\n$__psforge_script_path = '");
         wrapper_script.push_str(&user_script_path_ps);
-        wrapper_script.push_str("' @args\n");
+        wrapper_script.push_str("'\n");
+        if let Some(lines) = debug_breakpoints {
+            // Register deterministic line breakpoints. The action emits a marker
+            // the frontend can parse, then enters the debugger prompt.
+            let mut normalized = lines
+                .iter()
+                .copied()
+                .filter(|line| *line > 0)
+                .collect::<Vec<u32>>();
+            normalized.sort_unstable();
+            normalized.dedup();
+            for line in normalized {
+                wrapper_script.push_str("Set-PSBreakpoint -Script $__psforge_script_path -Line ");
+                wrapper_script.push_str(&line.to_string());
+                // Write marker to host output so it survives debugger break
+                // transitions across both Windows PowerShell and pwsh.
+                wrapper_script.push_str(" -Action { Write-Host '<<PSF_DEBUG_BREAK>>");
+                wrapper_script.push_str(&line.to_string());
+                wrapper_script.push_str("'; break } | Out-Null\n");
+            }
+        }
+        wrapper_script.push_str("& $__psforge_script_path @args\n");
         std::fs::write(&wrapper_script_path, wrapper_script.as_bytes()).map_err(|e| AppError {
             code: "SCRIPT_WRITE_FAILED".to_string(),
             message: format!("Failed to write wrapper script to temp file: {}", e),
@@ -221,8 +244,10 @@ impl ProcessManager {
         // Build args: only inject -ExecutionPolicy when the user has configured one.
         // "Default" means "honour the machine/user policy" so we omit the flag
         // entirely, avoiding -Bypass in process trees that trigger AV heuristics.
-        let mut ps_args: Vec<String> =
-            vec!["-NoProfile".to_string(), "-NonInteractive".to_string()];
+        let mut ps_args: Vec<String> = vec!["-NoProfile".to_string()];
+        if debug_breakpoints.is_none() {
+            ps_args.push("-NonInteractive".to_string());
+        }
         if exec_policy != "Default" {
             ps_args.push("-ExecutionPolicy".to_string());
             ps_args.push(exec_policy.to_string());

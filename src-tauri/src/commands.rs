@@ -25,10 +25,19 @@ const MODULE_TIMEOUT_SECS: u64 = 120;
 /// Global process manager for the running PowerShell instance.
 /// OnceLock ensures single initialization; Mutex inside ProcessManager handles concurrency.
 static PROCESS_MANAGER: OnceLock<ProcessManager> = OnceLock::new();
+const DEBUG_BREAK_MARKER_PREFIX: &str = "<<PSF_DEBUG_BREAK>>";
 
 /// Returns the global ProcessManager, initializing it on first access.
 fn pm() -> &'static ProcessManager {
     PROCESS_MANAGER.get_or_init(ProcessManager::new)
+}
+
+fn parse_debug_break_marker(text: &str) -> Option<u32> {
+    text.trim()
+        .strip_prefix(DEBUG_BREAK_MARKER_PREFIX)?
+        .trim()
+        .parse::<u32>()
+        .ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +65,7 @@ pub async fn execute_script(
             &working_dir,
             &exec_policy,
             script_args.as_deref().unwrap_or(&[]),
+            None,
             move |line: OutputLine| {
                 if let Err(e) = win.emit("ps-output", &line) {
                     error!("Failed to emit ps-output event: {}", e);
@@ -89,6 +99,58 @@ pub async fn execute_selection(
     execute_script(window, ps_path, selection, working_dir, exec_policy, None).await
 }
 
+/// Executes a script in debugger mode with line breakpoints.
+/// Breakpoints are 1-indexed line numbers relative to the script content.
+#[tauri::command]
+pub async fn execute_script_debug(
+    window: Window,
+    ps_path: String,
+    script: String,
+    working_dir: String,
+    exec_policy: String,
+    breakpoints: Vec<u32>,
+    script_args: Option<Vec<String>>,
+) -> Result<i32, AppError> {
+    info!(
+        "execute_script_debug called with ps_path={} breakpoints={}",
+        ps_path,
+        breakpoints.len()
+    );
+    powershell::validate_ps_path(&ps_path)?;
+
+    let win = window.clone();
+    let exit_code = pm()
+        .execute(
+            &ps_path,
+            &script,
+            &working_dir,
+            &exec_policy,
+            script_args.as_deref().unwrap_or(&[]),
+            Some(&breakpoints),
+            move |line: OutputLine| {
+                if let Some(line_number) = parse_debug_break_marker(&line.text) {
+                    if let Err(e) = win.emit("ps-debug-break", line_number) {
+                        error!("Failed to emit ps-debug-break event: {}", e);
+                    }
+                    return;
+                }
+                if let Err(e) = win.emit("ps-output", &line) {
+                    error!("Failed to emit ps-output event: {}", e);
+                }
+            },
+        )
+        .await?;
+
+    window
+        .emit("ps-complete", exit_code)
+        .map_err(|e| AppError {
+            code: "EMIT_FAILED".to_string(),
+            message: format!("Failed to emit completion event: {}", e),
+        })?;
+
+    Ok(exit_code)
+}
+
 /// Stops the currently running PowerShell process.
 #[tauri::command]
 pub async fn stop_script() -> Result<(), AppError> {
@@ -101,6 +163,30 @@ pub async fn stop_script() -> Result<(), AppError> {
 pub async fn send_stdin(input: String) -> Result<(), AppError> {
     debug!("send_stdin called");
     pm().send_stdin(&input).await
+}
+
+/// Continue execution from the current debugger stop point.
+#[tauri::command]
+pub async fn debug_continue() -> Result<(), AppError> {
+    pm().send_stdin("c").await
+}
+
+/// Step over the next statement in the debugger.
+#[tauri::command]
+pub async fn debug_step_over() -> Result<(), AppError> {
+    pm().send_stdin("v").await
+}
+
+/// Step into the next statement in the debugger.
+#[tauri::command]
+pub async fn debug_step_into() -> Result<(), AppError> {
+    pm().send_stdin("s").await
+}
+
+/// Step out of the current scope in the debugger.
+#[tauri::command]
+pub async fn debug_step_out() -> Result<(), AppError> {
+    pm().send_stdin("o").await
 }
 
 // ---------------------------------------------------------------------------

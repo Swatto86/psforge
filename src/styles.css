@@ -211,6 +211,30 @@ select:focus {
   border-color: var(--accent);
 }
 
+/* Monaco breakpoint glyphs */
+.psforge-breakpoint-glyph {
+  position: relative;
+}
+
+.psforge-breakpoint-glyph::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -4.5px;
+  margin-left: -4.5px;
+  border-radius: 999px;
+  background: var(--stream-stderr);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-primary) 60%, transparent);
+}
+
+.psforge-breakpoint-line {
+  border-left: 2px solid color-mix(in srgb, var(--stream-stderr) 55%, transparent);
+  margin-left: 2px;
+}
+
 /* Resizer handle */
 .resizer-h {
   height: 4px;

@@ -26,9 +26,14 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             commands::execute_script,
+            commands::execute_script_debug,
             commands::execute_selection,
             commands::stop_script,
             commands::send_stdin,
+            commands::debug_continue,
+            commands::debug_step_over,
+            commands::debug_step_into,
+            commands::debug_step_out,
             commands::get_script_parameters,
             commands::get_ps_versions,
             commands::get_installed_modules,
