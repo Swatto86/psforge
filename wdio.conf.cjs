@@ -182,6 +182,25 @@ exports.config = {
   runner: 'local',
 
   /**
+   * Ensure the attached WebView context is on the app URL.
+   * Some WebView2 sessions start on about:blank after attach, which makes all
+   * UI selectors appear missing even though the app process is running.
+   */
+  before: async function () {
+    // Use localhost (not 127.0.0.1) to match tauri.conf devUrl and avoid
+    // cross-origin remounts that can break Tauri event listeners.
+    await browser.url(`http://localhost:${VITE_PORT}/`);
+    await browser.waitUntil(async () => {
+      const state = await browser.execute(() => document.readyState);
+      return state === 'complete' || state === 'interactive';
+    }, {
+      timeout: 10000,
+      interval: 200,
+      timeoutMsg: 'WebView did not finish loading the app URL',
+    });
+  },
+
+  /**
    * Lifecycle: Start PSForge and msedgedriver before any tests run.
    */
   onPrepare: async function () {
@@ -253,7 +272,7 @@ exports.config = {
       env: {
         ...process.env,
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${DEBUG_PORT}`,
-        RUST_LOG: 'warn',
+        RUST_LOG: process.env.RUST_LOG || 'warn',
       },
       detached: false,
     });

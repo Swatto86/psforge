@@ -714,8 +714,10 @@ function AppInner() {
       }
     };
 
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    // Use capture phase so shortcuts (notably F1) are seen even when focus is
+    // inside Monaco or a nested interactive element.
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
   }, [
     state.tabs.length,
     state.isRunning,
@@ -890,6 +892,7 @@ function AppInner() {
 
           {/* Editor pane */}
           <div
+            data-testid="editor-container"
             style={{ height: `${splitPercent}%` }}
             className="relative overflow-hidden"
           >

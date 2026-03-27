@@ -36,8 +36,14 @@ $OutputEncoding = $utf8NoBom
 # Some auth stacks (WAM/MSAL) call GetConsoleWindow() and fail when the
 # PowerShell host is attached only to a pseudoconsole/no windowed console.
 $script:PSForgeHasAuthWindowHandle = $false
-try {
-    Add-Type -TypeDefinition @"
+$script:PSForgeIsPtyHost = ($env:PSFORGE_PTY_HOST -eq '1')
+
+# IMPORTANT: never detach/reallocate console when hosted in a PTY.
+# FreeConsole/AllocConsole can move I/O away from ConPTY, causing prompt/output
+# to disappear from the integrated terminal.
+if (-not $script:PSForgeIsPtyHost) {
+    try {
+        Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public static class PSForgeNativeConsole {
@@ -52,22 +58,23 @@ public static class PSForgeNativeConsole {
 }
 "@ -ErrorAction Stop | Out-Null
 
-    if ([PSForgeNativeConsole]::GetConsoleWindow() -eq [IntPtr]::Zero) {
-        [void][PSForgeNativeConsole]::FreeConsole()
-        if ([PSForgeNativeConsole]::AllocConsole()) {
-            $psfHwnd = [PSForgeNativeConsole]::GetConsoleWindow()
-            if ($psfHwnd -ne [IntPtr]::Zero) {
-                # SW_HIDE = 0
-                [void][PSForgeNativeConsole]::ShowWindow($psfHwnd, 0)
+        if ([PSForgeNativeConsole]::GetConsoleWindow() -eq [IntPtr]::Zero) {
+            [void][PSForgeNativeConsole]::FreeConsole()
+            if ([PSForgeNativeConsole]::AllocConsole()) {
+                $psfHwnd = [PSForgeNativeConsole]::GetConsoleWindow()
+                if ($psfHwnd -ne [IntPtr]::Zero) {
+                    # SW_HIDE = 0
+                    [void][PSForgeNativeConsole]::ShowWindow($psfHwnd, 0)
+                }
             }
         }
-    }
 
-    $script:PSForgeHasAuthWindowHandle = (
-        [PSForgeNativeConsole]::GetConsoleWindow() -ne [IntPtr]::Zero
-    )
-} catch {
-    $script:PSForgeHasAuthWindowHandle = $false
+        $script:PSForgeHasAuthWindowHandle = (
+            [PSForgeNativeConsole]::GetConsoleWindow() -ne [IntPtr]::Zero
+        )
+    } catch {
+        $script:PSForgeHasAuthWindowHandle = $false
+    }
 }
 
 # Work around ExchangeOnlineManagement WAM failures when no parent window
@@ -261,15 +268,19 @@ pub async fn start_terminal(
             })?;
     let bootstrap_path = bootstrap_script.to_string_lossy().into_owned();
 
+    let escaped_bootstrap = bootstrap_path.replace('\'', "''");
+    let bootstrap_command = format!(". '{}'", escaped_bootstrap);
+
     let mut cmd = CommandBuilder::new(program.clone());
     cmd.arg("-NoLogo");
     cmd.arg("-NoProfile");
     cmd.arg("-ExecutionPolicy");
     cmd.arg("Bypass");
     cmd.arg("-NoExit");
-    cmd.arg("-File");
-    cmd.arg(bootstrap_path);
+    cmd.arg("-Command");
+    cmd.arg(bootstrap_command);
     cmd.env("TERM", "xterm-256color");
+    cmd.env("PSFORGE_PTY_HOST", "1");
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| AppError {
         code: "TERMINAL_SPAWN_FAILED".to_string(),
@@ -293,11 +304,22 @@ pub async fn start_terminal(
     let win_out = window.clone();
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        let mut chunk_index: u32 = 0;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
                     let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    if chunk_index < 8 {
+                        let preview: String = text.chars().take(240).collect();
+                        debug!(
+                            "Terminal PTY chunk {} ({} bytes): {:?}",
+                            chunk_index,
+                            n,
+                            preview
+                        );
+                    }
+                    chunk_index = chunk_index.saturating_add(1);
                     if let Err(e) = win_out.emit(
                         "terminal-output",
                         TerminalOutputEvent {
@@ -342,6 +364,13 @@ pub async fn start_terminal(
 /// Writes raw input data to the active PTY session.
 #[tauri::command]
 pub async fn terminal_write(data: String) -> Result<(), AppError> {
+    let preview: String = data.chars().take(120).collect();
+    debug!(
+        "terminal_write: {} bytes, preview={:?}",
+        data.len(),
+        preview
+    );
+
     let mut guard = get_terminal().lock().map_err(|_| AppError {
         code: "TERMINAL_LOCK_POISONED".to_string(),
         message: "Terminal session mutex was poisoned by a previous panic".to_string(),

@@ -62,6 +62,7 @@ export function WelcomePane() {
 
   return (
     <div
+      data-testid="welcome-pane"
       className="flex flex-col items-center overflow-auto h-full"
       style={{
         backgroundColor: "var(--bg-primary)",

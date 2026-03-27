@@ -170,6 +170,7 @@ export function KeyboardShortcutPanel() {
       role="dialog"
       aria-modal="true"
       aria-label="Keyboard Shortcut Reference"
+      data-testid="shortcut-panel"
       className="fixed inset-0 flex items-center justify-center z-50"
       style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
       onClick={(e) => {
