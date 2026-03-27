@@ -26,6 +26,7 @@ export async function executeScript(
   workingDir: string,
   execPolicy: string,
   scriptArgs: string[] = [],
+  persistRunspace = true,
 ): Promise<number> {
   return invoke<number>("execute_script", {
     psPath,
@@ -33,6 +34,7 @@ export async function executeScript(
     workingDir,
     execPolicy,
     scriptArgs,
+    persistRunspace,
   });
 }
 
@@ -44,6 +46,7 @@ export async function executeScriptDebug(
   execPolicy: string,
   breakpoints: DebugBreakpoint[],
   scriptArgs: string[] = [],
+  persistRunspace = true,
 ): Promise<number> {
   return invoke<number>("execute_script_debug", {
     psPath,
@@ -52,6 +55,7 @@ export async function executeScriptDebug(
     execPolicy,
     breakpoints,
     scriptArgs,
+    persistRunspace,
   });
 }
 
@@ -61,12 +65,14 @@ export async function executeSelection(
   selection: string,
   workingDir: string,
   execPolicy: string,
+  persistRunspace = true,
 ): Promise<number> {
   return invoke<number>("execute_selection", {
     psPath,
     selection,
     workingDir,
     execPolicy,
+    persistRunspace,
   });
 }
 

@@ -876,6 +876,7 @@ function AppInner() {
         workDir,
         state.settings.executionPolicy,
         scriptArgs,
+        state.settings.persistRunspaceBetweenRuns !== false,
       );
 
       // Populate the Variables tab by re-running the *original* script in
@@ -909,6 +910,7 @@ function AppInner() {
     state.settings.workingDirMode,
     state.settings.customWorkingDir,
     state.settings.executionPolicy,
+    state.settings.persistRunspaceBetweenRuns,
     setParamPrompt,
     dispatch,
   ]);
@@ -1035,6 +1037,7 @@ function AppInner() {
         state.settings.executionPolicy,
         breakpoints,
         scriptArgs,
+        state.settings.persistRunspaceBetweenRuns !== false,
       );
     } catch (err) {
       console.error("startDebugSession failed:", err);
@@ -1070,6 +1073,7 @@ function AppInner() {
     state.settings.workingDirMode,
     state.settings.customWorkingDir,
     state.settings.executionPolicy,
+    state.settings.persistRunspaceBetweenRuns,
     setParamPrompt,
     dispatch,
   ]);
@@ -1228,6 +1232,7 @@ function AppInner() {
         runText,
         workDir,
         state.settings.executionPolicy,
+        state.settings.persistRunspaceBetweenRuns !== false,
       );
     } catch (err) {
       console.error("runSelection failed:", err);
@@ -1242,6 +1247,7 @@ function AppInner() {
     state.settings.workingDirMode,
     state.settings.customWorkingDir,
     state.settings.executionPolicy,
+    state.settings.persistRunspaceBetweenRuns,
     dispatch,
   ]);
 

@@ -195,6 +195,8 @@ export interface AppSettings {
   autoSaveOnRun: boolean;
   /** Clear the output pane before each run. */
   clearOutputOnRun: boolean;
+  /** Keep script/debug runspace state between runs in the backend host process. */
+  persistRunspaceBetweenRuns: boolean;
   /** PowerShell execution policy override ("Default" means no override). */
   executionPolicy: string;
   /** Working directory mode: "file" = use file's folder, "custom" = use customWorkingDir. */
@@ -251,6 +253,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableIntelliSense: true,
   autoSaveOnRun: false,
   clearOutputOnRun: true,
+  persistRunspaceBetweenRuns: true,
   executionPolicy: "Default",
   workingDirMode: "file",
   customWorkingDir: "",

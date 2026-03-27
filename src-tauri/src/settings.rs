@@ -79,6 +79,10 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub clear_output_on_run: bool,
 
+    /// Keep script/debug runspace state between runs in the backend host process.
+    #[serde(default = "default_true")]
+    pub persist_runspace_between_runs: bool,
+
     /// PowerShell execution policy override ("Default" means no override).
     #[serde(default = "default_execution_policy")]
     pub execution_policy: String,
@@ -247,6 +251,7 @@ impl Default for AppSettings {
             enable_intelli_sense: true,
             auto_save_on_run: false,
             clear_output_on_run: true,
+            persist_runspace_between_runs: true,
             execution_policy: default_execution_policy(),
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
