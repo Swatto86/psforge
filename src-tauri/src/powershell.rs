@@ -1,6 +1,7 @@
 /// PowerShell discovery and process management.
 /// Handles detecting installed PowerShell versions and managing script execution.
 use crate::errors::AppError;
+use crate::utils::write_secure_temp_file;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -10,11 +11,18 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 /// Maximum number of output lines to buffer per process (memory bound).
 const MAX_OUTPUT_LINES: usize = 100_000;
+/// Poll interval for checking whether the persistent PowerShell process exited.
+const PROCESS_MONITOR_POLL_MS: u64 = 120;
+/// Frontend/backend command markers for the persistent host protocol.
+const RUN_COMMAND_MARKER_PREFIX: &str = "<<PSFORGE_RUN|";
+const RUN_COMPLETE_MARKER_PREFIX: &str = "<<PSFORGE_DONE|";
+const HOST_EXIT_MARKER: &str = "<<PSFORGE_EXIT>>";
 
 /// PowerShell bootstrap that ensures a real (hidden) Win32 console window
 /// handle exists for the child process.
@@ -101,97 +109,427 @@ fn ps_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-/// Manages running PowerShell processes.
-/// Thread-safe via Arc<Mutex<...>> for use across Tauri async commands.
-pub struct ProcessManager {
-    /// Currently running child process, if any.
-    current_process: Arc<Mutex<Option<Child>>>,
-    /// Stdin writer for the current process.
+fn parse_run_complete_marker(text: &str) -> Option<(String, i32)> {
+    let trimmed = text.trim();
+    if !(trimmed.starts_with(RUN_COMPLETE_MARKER_PREFIX) && trimmed.ends_with(">>")) {
+        return None;
+    }
+    let body = trimmed
+        .strip_prefix(RUN_COMPLETE_MARKER_PREFIX)?
+        .strip_suffix(">>")?;
+    let (id, code_str) = body.split_once('|')?;
+    let code = code_str.trim().parse::<i32>().ok()?;
+    if id.is_empty() {
+        return None;
+    }
+    Some((id.to_string(), code))
+}
+
+fn persistent_host_bootstrap_script() -> String {
+    let mut script = String::new();
+    script.push_str(
+        r#"
+$ErrorActionPreference = 'Continue'
+
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
+
+"#,
+    );
+    script.push_str(AUTH_WINDOW_HANDLE_BOOTSTRAP_PS);
+    script.push_str(
+        r#"
+
+function global:Invoke-PSForgeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CommandId,
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptPath
+    )
+
+    $exitCode = 0
+    try {
+        if ([string]::IsNullOrWhiteSpace($ScriptPath) -or
+            -not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+            throw "PSForge command script not found: $ScriptPath"
+        }
+
+        & $ScriptPath
+        if (-not $?) {
+            $exitCode = 1
+        }
+    } catch {
+        Write-Error $_
+        $exitCode = 1
+    } finally {
+        [Console]::Out.WriteLine("<<PSFORGE_DONE|$CommandId|$exitCode>>")
+        [Console]::Out.Flush()
+        [Console]::Error.WriteLine("<<PSFORGE_DONE|$CommandId|$exitCode>>")
+        [Console]::Error.Flush()
+    }
+}
+
+while ($true) {
+    $line = [Console]::In.ReadLine()
+    if ($null -eq $line) { break }
+
+    if ($line -eq '<<PSFORGE_EXIT>>') { break }
+
+    if ($line -match '^<<PSFORGE_RUN\|([^|]+)\|(.+)>>$') {
+        Invoke-PSForgeCommand -CommandId $matches[1] -ScriptPath $matches[2]
+        continue
+    }
+}
+"#,
+    );
+    script
+}
+
+#[derive(Debug, Clone)]
+enum SessionEvent {
+    Output(OutputLine),
+    Exited(i32),
+}
+
+struct PersistentSession {
+    ps_path: String,
+    exec_policy: String,
+    child: Arc<Mutex<Option<Child>>>,
     stdin_writer: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
-    /// Kill-signal channel: populated by execute() just before it blocks on
-    /// child.wait(), cleared when the wait resolves.  stop() sends on this
-    /// channel so the select! inside execute() takes the kill arm -- avoiding
-    /// the deadlock that would occur if stop() blocked waiting for
-    /// current_process.lock() while execute() held it during child.wait().
-    kill_sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    event_rx: Arc<Mutex<mpsc::UnboundedReceiver<SessionEvent>>>,
+    bootstrap_script_path: PathBuf,
+}
+
+/// Manages PowerShell execution via a process-local persistent runspace.
+/// A session is reused between runs/debug sessions until stopped or invalidated.
+pub struct ProcessManager {
+    /// Persistent backend host process (one session at a time).
+    session: Arc<Mutex<Option<Arc<PersistentSession>>>>,
+    /// True while a run/debug command is currently executing inside the session.
+    active_command: Arc<Mutex<Option<String>>>,
+    /// Serializes execute() calls so command output streams never interleave.
+    execution_lock: Arc<Mutex<()>>,
+    /// Kill-signal channel for the currently active execute() call.
+    kill_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl ProcessManager {
-    /// Creates a new ProcessManager with no running process.
+    /// Creates a new ProcessManager with no persistent session.
     pub fn new() -> Self {
         Self {
-            current_process: Arc::new(Mutex::new(None)),
-            stdin_writer: Arc::new(Mutex::new(None)),
+            session: Arc::new(Mutex::new(None)),
+            active_command: Arc::new(Mutex::new(None)),
+            execution_lock: Arc::new(Mutex::new(())),
             kill_sender: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Returns true if a process is currently running.
+    /// Returns true if a script/debug command is currently executing.
     #[allow(dead_code)]
     pub async fn is_running(&self) -> bool {
-        let guard = self.current_process.lock().await;
+        let guard = self.active_command.lock().await;
         guard.is_some()
     }
 
-    /// Kills the currently running process, if any.
-    ///
-    /// Two code paths handled:
-    /// 1. execute() is in its output-reading phase (current_process holds the
-    ///    child).  We acquire the lock, kill, and clear.
-    /// 2. execute() has taken the child out of the mutex and is inside the
-    ///    select!(child.wait(), kill_rx) block.  In this case current_process
-    ///    is None but kill_sender holds a Sender.  Sending on it causes the
-    ///    select! to take the kill arm, which calls child.kill() there.
+    async fn clear_active_state(&self) {
+        {
+            let mut ks = self.kill_sender.lock().await;
+            *ks = None;
+        }
+        {
+            let mut active = self.active_command.lock().await;
+            *active = None;
+        }
+    }
+
+    async fn shutdown_session(session: Arc<PersistentSession>) {
+        {
+            let mut stdin_guard = session.stdin_writer.lock().await;
+            *stdin_guard = None;
+        }
+        {
+            let mut child_guard = session.child.lock().await;
+            if let Some(ref mut child) = *child_guard {
+                if let Err(e) = child.kill().await {
+                    debug!("Failed to kill persistent session process: {}", e);
+                }
+            }
+            *child_guard = None;
+        }
+        let _ = std::fs::remove_file(&session.bootstrap_script_path);
+    }
+
+    async fn is_session_usable(session: &Arc<PersistentSession>) -> bool {
+        let exited = {
+            let mut child_guard = session.child.lock().await;
+            match child_guard.as_mut() {
+                Some(child) => match child.try_wait() {
+                    Ok(Some(_)) => {
+                        *child_guard = None;
+                        true
+                    }
+                    Ok(None) => false,
+                    Err(e) => {
+                        debug!("Failed to poll persistent session process: {}", e);
+                        *child_guard = None;
+                        true
+                    }
+                },
+                None => true,
+            }
+        };
+        if exited {
+            let mut stdin_guard = session.stdin_writer.lock().await;
+            *stdin_guard = None;
+            return false;
+        }
+        true
+    }
+
+    async fn write_session_line(session: &PersistentSession, line: &str) -> Result<(), AppError> {
+        let mut stdin_guard = session.stdin_writer.lock().await;
+        let writer = stdin_guard.as_mut().ok_or_else(|| AppError {
+            code: "NO_PROCESS".to_string(),
+            message: "No running process to send input to".to_string(),
+        })?;
+        writer
+            .write_all(format!("{line}\n").as_bytes())
+            .await
+            .map_err(|e| AppError {
+                code: "STDIN_WRITE_FAILED".to_string(),
+                message: format!("Failed to write to stdin: {}", e),
+            })?;
+        writer.flush().await.map_err(|e| AppError {
+            code: "STDIN_FLUSH_FAILED".to_string(),
+            message: format!("Failed to flush stdin: {}", e),
+        })
+    }
+
+    fn spawn_output_reader(
+        stdout_or_stderr: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+        stream_name: &'static str,
+        tx: mpsc::UnboundedSender<SessionEvent>,
+    ) {
+        tokio::spawn(async move {
+            let reader = BufReader::new(stdout_or_stderr);
+            let mut lines = reader.lines();
+            let mut count = 0usize;
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if count < MAX_OUTPUT_LINES {
+                            let _ = tx.send(SessionEvent::Output(OutputLine {
+                                stream: stream_name.to_string(),
+                                text: line,
+                                timestamp: chrono_now(),
+                            }));
+                            count += 1;
+                        } else {
+                            if count == MAX_OUTPUT_LINES {
+                                warn!(
+                                    "{} line limit reached ({}); dropping additional lines",
+                                    stream_name, MAX_OUTPUT_LINES
+                                );
+                            }
+                            // Keep draining to avoid filling the OS pipe and
+                            // deadlocking the PowerShell process.
+                            count = count.saturating_add(1);
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        debug!("{} reader I/O error: {}", stream_name, e);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    fn spawn_process_monitor(
+        child: Arc<Mutex<Option<Child>>>,
+        stdin_writer: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
+        tx: mpsc::UnboundedSender<SessionEvent>,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                let maybe_code = {
+                    let mut child_guard = child.lock().await;
+                    match child_guard.as_mut() {
+                        Some(child_proc) => match child_proc.try_wait() {
+                            Ok(Some(status)) => {
+                                let code = status.code().unwrap_or(-1);
+                                *child_guard = None;
+                                Some(code)
+                            }
+                            Ok(None) => None,
+                            Err(e) => {
+                                debug!("Persistent session wait poll failed: {}", e);
+                                *child_guard = None;
+                                Some(-1)
+                            }
+                        },
+                        None => return,
+                    }
+                };
+
+                if let Some(code) = maybe_code {
+                    let mut stdin_guard = stdin_writer.lock().await;
+                    *stdin_guard = None;
+                    let _ = tx.send(SessionEvent::Exited(code));
+                    return;
+                }
+
+                sleep(Duration::from_millis(PROCESS_MONITOR_POLL_MS)).await;
+            }
+        });
+    }
+
+    async fn start_session(
+        ps_path: &str,
+        exec_policy: &str,
+    ) -> Result<Arc<PersistentSession>, AppError> {
+        let bootstrap_script = persistent_host_bootstrap_script();
+        let bootstrap_script_path = write_secure_temp_file(
+            "psforge_host_bootstrap",
+            ".ps1",
+            bootstrap_script.as_bytes(),
+        )
+        .map_err(|e| AppError {
+            code: "SCRIPT_WRITE_FAILED".to_string(),
+            message: format!("Failed to write host bootstrap script: {}", e),
+        })?;
+
+        let mut ps_args: Vec<String> = vec!["-NoLogo".to_string(), "-NoProfile".to_string()];
+        if exec_policy != "Default" {
+            ps_args.push("-ExecutionPolicy".to_string());
+            ps_args.push(exec_policy.to_string());
+        }
+        ps_args.push("-File".to_string());
+        ps_args.push(bootstrap_script_path.to_string_lossy().into_owned());
+
+        let mut child = Command::new(ps_path)
+            .args(ps_args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .creation_flags(0x08000000)
+            .spawn()
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&bootstrap_script_path);
+                AppError {
+                    code: "PROCESS_SPAWN_FAILED".to_string(),
+                    message: format!("Failed to start PowerShell at '{}': {}", ps_path, e),
+                }
+            })?;
+
+        let stdin = child.stdin.take().ok_or_else(|| AppError {
+            code: "PROCESS_STDIN_MISSING".to_string(),
+            message: "PowerShell process started without stdin pipe".to_string(),
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| AppError {
+            code: "PROCESS_STDOUT_MISSING".to_string(),
+            message: "PowerShell process started without stdout pipe".to_string(),
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| AppError {
+            code: "PROCESS_STDERR_MISSING".to_string(),
+            message: "PowerShell process started without stderr pipe".to_string(),
+        })?;
+
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<SessionEvent>();
+        let child = Arc::new(Mutex::new(Some(child)));
+        let stdin_writer = Arc::new(Mutex::new(Some(stdin)));
+
+        Self::spawn_output_reader(stdout, "stdout", event_tx.clone());
+        Self::spawn_output_reader(stderr, "stderr", event_tx.clone());
+        Self::spawn_process_monitor(child.clone(), stdin_writer.clone(), event_tx.clone());
+
+        Ok(Arc::new(PersistentSession {
+            ps_path: ps_path.to_string(),
+            exec_policy: exec_policy.to_string(),
+            child,
+            stdin_writer,
+            event_rx: Arc::new(Mutex::new(event_rx)),
+            bootstrap_script_path,
+        }))
+    }
+
+    async fn ensure_session(
+        &self,
+        ps_path: &str,
+        exec_policy: &str,
+    ) -> Result<Arc<PersistentSession>, AppError> {
+        let existing = {
+            let guard = self.session.lock().await;
+            guard.clone()
+        };
+        if let Some(session) = existing {
+            if session.ps_path.eq_ignore_ascii_case(ps_path)
+                && session.exec_policy == exec_policy
+                && Self::is_session_usable(&session).await
+            {
+                return Ok(session);
+            }
+        }
+
+        self.stop().await?;
+        let session = Self::start_session(ps_path, exec_policy).await?;
+        let mut guard = self.session.lock().await;
+        *guard = Some(session.clone());
+        Ok(session)
+    }
+
+    /// Stops the active command/session and tears down the persistent process.
     pub async fn stop(&self) -> Result<(), AppError> {
-        // Wake any active execute() wait so it kills the process and returns.
         {
             let mut ks = self.kill_sender.lock().await;
             if let Some(tx) = ks.take() {
                 let _ = tx.send(());
             }
         }
-
-        // Also kill via the process handle if it is still in the Mutex
-        // (handles the case where stop() is called before execute() sets up
-        // the kill channel, e.g. during the output-reading phase).
-        let mut guard = self.current_process.lock().await;
-        if let Some(ref mut child) = *guard {
-            info!("Stopping running PowerShell process");
-            child.kill().await.map_err(|e| AppError {
-                code: "PROCESS_KILL_FAILED".to_string(),
-                message: format!("Failed to kill process: {}", e),
-            })?;
-            *guard = None;
+        {
+            let mut active = self.active_command.lock().await;
+            *active = None;
         }
-        // Also drop the stdin writer
-        let mut stdin_guard = self.stdin_writer.lock().await;
-        *stdin_guard = None;
+        let session = {
+            let mut guard = self.session.lock().await;
+            guard.take()
+        };
+        if let Some(session) = session {
+            info!("Stopping persistent PowerShell session");
+            let _ = Self::write_session_line(&session, HOST_EXIT_MARKER).await;
+            Self::shutdown_session(session).await;
+        }
         Ok(())
     }
 
-    /// Sends input to the running process's stdin (for Read-Host support).
+    /// Sends input to the active command's stdin (Read-Host/debugger support).
     pub async fn send_stdin(&self, input: &str) -> Result<(), AppError> {
-        let mut guard = self.stdin_writer.lock().await;
-        if let Some(ref mut writer) = *guard {
-            let line = format!("{}\n", input);
-            writer
-                .write_all(line.as_bytes())
-                .await
-                .map_err(|e| AppError {
-                    code: "STDIN_WRITE_FAILED".to_string(),
-                    message: format!("Failed to write to stdin: {}", e),
-                })?;
-            writer.flush().await.map_err(|e| AppError {
-                code: "STDIN_FLUSH_FAILED".to_string(),
-                message: format!("Failed to flush stdin: {}", e),
-            })?;
-            Ok(())
-        } else {
-            Err(AppError {
+        let is_active = {
+            let active = self.active_command.lock().await;
+            active.is_some()
+        };
+        if !is_active {
+            return Err(AppError {
                 code: "NO_PROCESS".to_string(),
                 message: "No running process to send input to".to_string(),
-            })
+            });
         }
+
+        let session = {
+            let guard = self.session.lock().await;
+            guard.clone()
+        }
+        .ok_or_else(|| AppError {
+            code: "NO_PROCESS".to_string(),
+            message: "No running process to send input to".to_string(),
+        })?;
+
+        Self::write_session_line(&session, input).await
     }
 
     /// Executes a PowerShell script and streams output via the provided callback.
@@ -210,12 +548,13 @@ impl ProcessManager {
         F: Fn(OutputLine) + Send + Sync + 'static,
     {
         validate_ps_path(ps_path)?;
-
-        // Stop any existing process first
-        self.stop().await?;
-
-        info!("Executing script with {} in {}", ps_path, working_dir);
+        let _exec_guard = self.execution_lock.lock().await;
+        info!(
+            "Executing script with persistent session {} in {}",
+            ps_path, working_dir
+        );
         debug!("Script size: {} bytes", script.len());
+        let session = self.ensure_session(ps_path, exec_policy).await?;
 
         // Write the user script to a uniquely-named temp file.
         // Using -File instead of -Command removes the "inline PowerShell command"
@@ -322,7 +661,8 @@ impl ProcessManager {
                 action.push_str("'; break");
 
                 if let Some(line_no) = line {
-                    wrapper_script.push_str("Set-PSBreakpoint -Script $__psforge_script_path -Line ");
+                    wrapper_script
+                        .push_str("Set-PSBreakpoint -Script $__psforge_script_path -Line ");
                     wrapper_script.push_str(&line_no.to_string());
                     wrapper_script.push_str(" -Action { ");
                     wrapper_script.push_str(&action);
@@ -351,192 +691,129 @@ impl ProcessManager {
         })?;
         let wrapper_script_path_str = wrapper_script_path.to_string_lossy().into_owned();
 
-        // Build args: only inject -ExecutionPolicy when the user has configured one.
-        // "Default" means "honour the machine/user policy" so we omit the flag
-        // entirely, avoiding -Bypass in process trees that trigger AV heuristics.
-        let mut ps_args: Vec<String> = vec!["-NoProfile".to_string()];
-        if debug_breakpoints.is_none() {
-            ps_args.push("-NonInteractive".to_string());
+        // Per-run invocation script, executed by the persistent host process.
+        let invoke_script_path =
+            std::env::temp_dir().join(format!("psforge_invoke_{}.ps1", Uuid::new_v4()));
+        let mut invoke_script = String::new();
+        if exec_policy == "Default" {
+            invoke_script.push_str(
+                "Remove-Item Env:\\PSExecutionPolicyPreference -ErrorAction SilentlyContinue\n",
+            );
+        } else {
+            invoke_script.push_str("$env:PSExecutionPolicyPreference = '");
+            invoke_script.push_str(&ps_single_quoted(exec_policy));
+            invoke_script.push_str("'\n");
         }
-        if exec_policy != "Default" {
-            ps_args.push("-ExecutionPolicy".to_string());
-            ps_args.push(exec_policy.to_string());
-        }
-        ps_args.push("-File".to_string());
-        ps_args.push(wrapper_script_path_str.clone());
-        ps_args.extend(script_args.iter().cloned());
-
-        let mut child = Command::new(ps_path)
-            .args(ps_args)
-            .current_dir(working_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .spawn()
-            .map_err(|e| {
-                // Clean up temp files if the process failed to start.
-                let _ = std::fs::remove_file(&user_script_path);
-                let _ = std::fs::remove_file(&wrapper_script_path);
-                AppError {
-                    code: "PROCESS_SPAWN_FAILED".to_string(),
-                    message: format!("Failed to start PowerShell at '{}': {}", ps_path, e),
-                }
-            })?;
-
-        // Take stdin for interactive input
-        let stdin = child.stdin.take();
-        {
-            let mut stdin_guard = self.stdin_writer.lock().await;
-            *stdin_guard = stdin;
-        }
-
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-
-        // Store the child process
-        {
-            let mut guard = self.current_process.lock().await;
-            *guard = Some(child);
-        }
-
-        let on_output = Arc::new(on_output);
-        let mut handles = Vec::new();
-
-        // Stream stdout
-        if let Some(stdout) = stdout {
-            let cb = Arc::clone(&on_output);
-            let handle = tokio::spawn(async move {
-                let reader = BufReader::new(stdout);
-                let mut lines = reader.lines();
-                let mut count = 0usize;
-                loop {
-                    match lines.next_line().await {
-                        Ok(Some(line)) => {
-                            if count >= MAX_OUTPUT_LINES {
-                                warn!("stdout line limit reached ({})", MAX_OUTPUT_LINES);
-                                break;
-                            }
-                            cb(OutputLine {
-                                stream: "stdout".to_string(),
-                                text: line,
-                                timestamp: chrono_now(),
-                            });
-                            count += 1;
-                        }
-                        Ok(None) => break, // EOF
-                        Err(e) => {
-                            debug!("stdout reader I/O error: {}", e);
-                            break;
-                        }
-                    }
-                }
-            });
-            handles.push(handle);
-        }
-
-        // Stream stderr
-        if let Some(stderr) = stderr {
-            let cb = Arc::clone(&on_output);
-            let handle = tokio::spawn(async move {
-                let reader = BufReader::new(stderr);
-                let mut lines = reader.lines();
-                let mut count = 0usize;
-                loop {
-                    match lines.next_line().await {
-                        Ok(Some(line)) => {
-                            if count >= MAX_OUTPUT_LINES {
-                                warn!("stderr line limit reached ({})", MAX_OUTPUT_LINES);
-                                break;
-                            }
-                            cb(OutputLine {
-                                stream: "stderr".to_string(),
-                                text: line,
-                                timestamp: chrono_now(),
-                            });
-                            count += 1;
-                        }
-                        Ok(None) => break, // EOF
-                        Err(e) => {
-                            debug!("stderr reader I/O error: {}", e);
-                            break;
-                        }
-                    }
-                }
-            });
-            handles.push(handle);
-        }
-
-        // Wait for all output to finish
-        for handle in handles {
-            if let Err(e) = handle.await {
-                error!("Output reader task failed: {}", e);
+        invoke_script.push_str("Set-Location -LiteralPath '");
+        invoke_script.push_str(&ps_single_quoted(working_dir));
+        invoke_script.push_str("'\n");
+        invoke_script.push_str("$__psforge_args = @(");
+        for (idx, arg) in script_args.iter().enumerate() {
+            if idx > 0 {
+                invoke_script.push_str(", ");
             }
+            invoke_script.push('\'');
+            invoke_script.push_str(&ps_single_quoted(arg));
+            invoke_script.push('\'');
         }
+        invoke_script.push_str(")\n");
+        invoke_script.push_str("& '");
+        invoke_script.push_str(&ps_single_quoted(&wrapper_script_path_str));
+        invoke_script.push_str("' @__psforge_args\n");
+        std::fs::write(&invoke_script_path, invoke_script.as_bytes()).map_err(|e| AppError {
+            code: "SCRIPT_WRITE_FAILED".to_string(),
+            message: format!("Failed to write invoke script to temp file: {}", e),
+        })?;
+        let invoke_script_path_str = invoke_script_path.to_string_lossy().into_owned();
 
-        // Register a kill channel so stop() can interrupt the wait below
-        // without needing to hold current_process.lock() (which would
-        // deadlock: execute holds it, stop can never acquire it).
-        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+        let command_id = Uuid::new_v4().to_string();
+        let run_command = format!(
+            "{}{}|{}>>",
+            RUN_COMMAND_MARKER_PREFIX, command_id, invoke_script_path_str
+        );
+        let mut session_events = session.event_rx.lock().await;
+        while session_events.try_recv().is_ok() {}
+        let (kill_tx, mut kill_rx) = oneshot::channel::<()>();
         {
             let mut ks = self.kill_sender.lock().await;
             *ks = Some(kill_tx);
         }
+        {
+            let mut active = self.active_command.lock().await;
+            *active = Some(command_id.clone());
+        }
 
-        // Take child out of the Mutex NOW, before waiting.  This lets stop()
-        // acquire current_process.lock() (it will find None) and, if called
-        // before the kill channel was ready, the kill_sender path covers it.
-        let child_opt = {
-            let mut guard = self.current_process.lock().await;
-            guard.take()
-        };
+        if let Err(e) = Self::write_session_line(&session, &run_command).await {
+            self.clear_active_state().await;
+            let _ = std::fs::remove_file(&invoke_script_path);
+            let _ = std::fs::remove_file(&user_script_path);
+            let _ = std::fs::remove_file(&wrapper_script_path);
+            return Err(e);
+        }
 
-        let exit_code = if let Some(mut child) = child_opt {
-            // Race between natural process exit and a stop() kill signal.
+        let mut session_terminated = false;
+        let mut saw_done_stdout = false;
+        let mut saw_done_stderr = false;
+        let mut done_exit_code: Option<i32> = None;
+        let exit_code = loop {
             tokio::select! {
-                result = child.wait() => {
-                    match result {
-                        Ok(status) => status.code().unwrap_or(-1),
-                        Err(e) => {
-                            // Clear kill sender before propagating the error.
-                            let mut ks = self.kill_sender.lock().await;
-                            *ks = None;
-                            return Err(AppError {
-                                code: "PROCESS_WAIT_FAILED".to_string(),
-                                message: format!("Failed to wait for process: {}", e),
-                            });
+                _ = &mut kill_rx => {
+                    break -1;
+                }
+                event = session_events.recv() => {
+                    match event {
+                        Some(SessionEvent::Output(line)) => {
+                            if let Some((done_id, code)) = parse_run_complete_marker(&line.text) {
+                                if done_id == command_id {
+                                    if done_exit_code.is_none() {
+                                        done_exit_code = Some(code);
+                                    }
+                                    if line.stream == "stderr" {
+                                        saw_done_stderr = true;
+                                    } else {
+                                        saw_done_stdout = true;
+                                    }
+                                    if saw_done_stdout && saw_done_stderr {
+                                        break done_exit_code.unwrap_or(0);
+                                    }
+                                    continue;
+                                }
+                                // Marker for an unrelated command; do not surface.
+                                continue;
+                            }
+                            on_output(line);
+                        }
+                        Some(SessionEvent::Exited(code)) => {
+                            session_terminated = true;
+                            break code;
+                        }
+                        None => {
+                            session_terminated = true;
+                            break -1;
                         }
                     }
                 }
-                _ = kill_rx => {
-                    // stop() sent the signal: terminate the child process.
-                    let _ = child.kill().await;
-                    -1
-                }
             }
-        } else {
-            // Process was already taken/killed between spawn and wait setup.
-            -1
         };
 
-        // Clear the kill sender now that the wait has resolved.
-        {
-            let mut ks = self.kill_sender.lock().await;
-            *ks = None;
+        self.clear_active_state().await;
+        if session_terminated {
+            let mut guard = self.session.lock().await;
+            if guard.as_ref().is_some_and(|s| Arc::ptr_eq(s, &session)) {
+                *guard = None;
+            }
+            let _ = std::fs::remove_file(&session.bootstrap_script_path);
         }
 
-        // Clean up stdin writer
-        {
-            let mut stdin_guard = self.stdin_writer.lock().await;
-            *stdin_guard = None;
-        }
-
-        // Remove temp scripts now that execution has finished.
+        // Remove temp scripts now that execution has finished/interrupted.
+        let _ = std::fs::remove_file(&invoke_script_path);
         let _ = std::fs::remove_file(&user_script_path);
         let _ = std::fs::remove_file(&wrapper_script_path);
 
-        info!("Script execution completed with exit code {}", exit_code);
+        info!(
+            "Script execution completed with exit code {} (persistent session)",
+            exit_code
+        );
         Ok(exit_code)
     }
 }
