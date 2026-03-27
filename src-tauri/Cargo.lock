@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "psforge"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "dirs",
  "encoding_rs",

@@ -564,6 +564,30 @@ pub struct CommandInfo {
     pub command_type: String,
 }
 
+/// Parameter metadata for a command/cmdlet/function.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandParameterInfo {
+    pub name: String,
+    pub type_name: String,
+    pub is_mandatory: bool,
+    pub position: Option<i32>,
+    pub aliases: Vec<String>,
+    pub accepts_pipeline_input: bool,
+    pub is_switch: bool,
+}
+
+/// Help content for a command/topic.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandHelpInfo {
+    pub name: String,
+    pub synopsis: String,
+    pub syntax: String,
+    pub full_text: String,
+    pub online_uri: String,
+}
+
 /// Returns exported commands for a specific module.
 #[tauri::command]
 pub async fn get_module_commands(
@@ -628,6 +652,203 @@ pub async fn get_module_commands(
     };
 
     Ok(commands)
+}
+
+/// Maximum seconds to wait when inspecting command metadata.
+const COMMAND_PARAMS_TIMEOUT_SECS: u64 = 30;
+
+/// Returns parameter metadata for a command/cmdlet/function.
+#[tauri::command]
+pub async fn get_command_parameters(
+    ps_path: String,
+    command_name: String,
+) -> Result<Vec<CommandParameterInfo>, AppError> {
+    info!("get_command_parameters called for {}", command_name);
+    powershell::validate_ps_path(&ps_path)?;
+
+    let trimmed_name = command_name.trim();
+    if trimmed_name.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    const COMMAND_PARAMS_SCRIPT: &str = r#"
+$__name = $env:PSFORGE_COMMAND_NAME
+if ([string]::IsNullOrWhiteSpace($__name)) { '[]'; exit }
+$__cmd = Get-Command -Name $__name -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $__cmd) { '[]'; exit }
+$__params = @(
+  $__cmd.Parameters.Values |
+    Sort-Object @{Expression={ if ($_.Position -ge 0) { $_.Position } else { 100000 } }}, Name |
+    ForEach-Object {
+      $__attrs = @($_.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] })
+      $__mandatory = ($__attrs | Where-Object { $_.Mandatory }).Count -gt 0
+      $__pipeline = ($__attrs | Where-Object { $_.ValueFromPipeline -or $_.ValueFromPipelineByPropertyName }).Count -gt 0
+      [PSCustomObject]@{
+        name = $_.Name
+        typeName = if ($_.ParameterType) { $_.ParameterType.FullName } else { '' }
+        isMandatory = $__mandatory
+        position = if ($_.Position -ge 0) { [int]$_.Position } else { $null }
+        aliases = @($_.Aliases)
+        acceptsPipelineInput = $__pipeline
+        isSwitch = ($_.ParameterType -eq [System.Management.Automation.SwitchParameter])
+      }
+    }
+)
+if ($__params.Count -eq 0) { '[]' } else { $__params | ConvertTo-Json -Compress -Depth 4 }
+"#;
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(COMMAND_PARAMS_TIMEOUT_SECS),
+        tokio::process::Command::new(&ps_path)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                COMMAND_PARAMS_SCRIPT,
+            ])
+            .env("PSFORGE_COMMAND_NAME", trimmed_name)
+            .creation_flags(0x08000000)
+            .output(),
+    )
+    .await;
+
+    let output = match result {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            return Err(AppError {
+                code: "COMMAND_PARAMS_FAILED".to_string(),
+                message: format!(
+                    "Failed to inspect command parameters for '{}': {}",
+                    trimmed_name, e
+                ),
+            });
+        }
+        Err(_) => {
+            return Err(AppError {
+                code: "COMMAND_PARAMS_TIMEOUT".to_string(),
+                message: format!(
+                    "Command parameter inspection for '{}' timed out after {}s",
+                    trimmed_name, COMMAND_PARAMS_TIMEOUT_SECS
+                ),
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+
+    if trimmed.is_empty() || trimmed == "[]" {
+        return Ok(Vec::new());
+    }
+
+    let params: Vec<CommandParameterInfo> = if trimmed.starts_with('[') {
+        serde_json::from_str(trimmed).unwrap_or_default()
+    } else if trimmed.starts_with('{') {
+        match serde_json::from_str::<CommandParameterInfo>(trimmed) {
+            Ok(single) => vec![single],
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
+    Ok(params)
+}
+
+/// Maximum seconds to wait when rendering help content.
+const COMMAND_HELP_TIMEOUT_SECS: u64 = 30;
+
+/// Returns context-sensitive help for a command/topic (Get-Help -Full).
+#[tauri::command]
+pub async fn get_command_help(
+    ps_path: String,
+    command_name: String,
+) -> Result<Option<CommandHelpInfo>, AppError> {
+    info!("get_command_help called for {}", command_name);
+    powershell::validate_ps_path(&ps_path)?;
+
+    let trimmed_name = command_name.trim();
+    if trimmed_name.is_empty() {
+        return Ok(None);
+    }
+
+    const COMMAND_HELP_SCRIPT: &str = r#"
+$__name = $env:PSFORGE_HELP_COMMAND
+if ([string]::IsNullOrWhiteSpace($__name)) { 'null'; exit }
+$__help = Get-Help -Name $__name -Full -ErrorAction SilentlyContinue
+if ($null -eq $__help) { 'null'; exit }
+$__synopsis = ($__help.Synopsis | Out-String).Trim()
+$__syntax = ($__help.Syntax | Out-String).Trim()
+$__full = ($__help | Out-String).TrimEnd()
+$__uri = ''
+try {
+  $__uri = @(
+    $__help.relatedLinks.navigationLink |
+      Where-Object { $_.uri } |
+      Select-Object -First 1 -ExpandProperty uri
+  )[0]
+} catch {}
+[PSCustomObject]@{
+  name = if ($__help.Name) { $__help.Name } else { $__name }
+  synopsis = $__synopsis
+  syntax = $__syntax
+  fullText = $__full
+  onlineUri = if ($__uri) { $__uri } else { '' }
+} | ConvertTo-Json -Compress -Depth 6
+"#;
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(COMMAND_HELP_TIMEOUT_SECS),
+        tokio::process::Command::new(&ps_path)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                COMMAND_HELP_SCRIPT,
+            ])
+            .env("PSFORGE_HELP_COMMAND", trimmed_name)
+            .creation_flags(0x08000000)
+            .output(),
+    )
+    .await;
+
+    let output = match result {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            return Err(AppError {
+                code: "COMMAND_HELP_FAILED".to_string(),
+                message: format!(
+                    "Failed to resolve help for '{}': {}",
+                    trimmed_name, e
+                ),
+            });
+        }
+        Err(_) => {
+            return Err(AppError {
+                code: "COMMAND_HELP_TIMEOUT".to_string(),
+                message: format!(
+                    "Help query for '{}' timed out after {}s",
+                    trimmed_name, COMMAND_HELP_TIMEOUT_SECS
+                ),
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+        return Ok(None);
+    }
+
+    if trimmed.starts_with('{') {
+        return Ok(serde_json::from_str::<CommandHelpInfo>(trimmed).ok());
+    }
+
+    Ok(None)
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 [package]
 name = "psforge"
-version = "1.0.2"
+version = "1.0.3"
 description = "PSForge - Modern PowerShell Editor"
 authors = ["PSForge Contributors"]
 edition = "2021"

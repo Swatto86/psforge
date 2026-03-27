@@ -67,6 +67,38 @@ export interface CommandInfo {
   commandType: string;
 }
 
+/** Metadata for a PowerShell command parameter. */
+export interface CommandParameterInfo {
+  /** Parameter name without leading `-`. */
+  name: string;
+  /** .NET type name (for example "System.String"). */
+  typeName: string;
+  /** True when at least one ParameterAttribute marks this argument mandatory. */
+  isMandatory: boolean;
+  /** Positional index, or null when non-positional/named-only. */
+  position: number | null;
+  /** Alternative parameter names accepted by PowerShell. */
+  aliases: string[];
+  /** True when PowerShell accepts pipeline input for this parameter. */
+  acceptsPipelineInput: boolean;
+  /** True when parameter type is SwitchParameter. */
+  isSwitch: boolean;
+}
+
+/** Context-sensitive help content for a PowerShell command. */
+export interface CommandHelpInfo {
+  /** Resolved command/topic name. */
+  name: string;
+  /** Short synopsis text from Get-Help. */
+  synopsis: string;
+  /** Rendered syntax section. */
+  syntax: string;
+  /** Full help body text. */
+  fullText: string;
+  /** Best-effort online help URL when available. */
+  onlineUri: string;
+}
+
 /** A variable from the scope inspector. */
 export interface VariableInfo {
   name: string;

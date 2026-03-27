@@ -43,8 +43,11 @@ type BottomPanelTab =
   | "variables"
   | "problems"
   | "terminal"
-  | "debugger";
+  | "debugger"
+  | "show-command"
+  | "help";
 type BreakpointMap = Record<string, DebugBreakpoint[]>;
+type BookmarkMap = Record<string, number[]>;
 
 interface PersistedSession {
   tabs: EditorTab[];
@@ -53,6 +56,7 @@ interface PersistedSession {
   workingDir: string;
   selectedPsPath: string;
   breakpoints: BreakpointMap;
+  bookmarks: BookmarkMap;
 }
 
 function isBottomPanelTab(value: unknown): value is BottomPanelTab {
@@ -61,7 +65,9 @@ function isBottomPanelTab(value: unknown): value is BottomPanelTab {
     value === "variables" ||
     value === "problems" ||
     value === "terminal" ||
-    value === "debugger"
+    value === "debugger" ||
+    value === "show-command" ||
+    value === "help"
   );
 }
 
@@ -168,6 +174,32 @@ function normalizePersistedBreakpoints(
   return result;
 }
 
+function normalizeBookmarkList(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const unique = new Set<number>();
+  for (const item of value) {
+    if (typeof item === "number" && Number.isInteger(item) && item >= 1) {
+      unique.add(item);
+    }
+  }
+  return [...unique.values()].sort((a, b) => a - b);
+}
+
+function normalizePersistedBookmarks(
+  value: unknown,
+  validTabIds: Set<string>,
+): BookmarkMap {
+  if (!value || typeof value !== "object") return {};
+  const rec = value as Record<string, unknown>;
+  const result: BookmarkMap = {};
+  for (const [tabId, rawLines] of Object.entries(rec)) {
+    if (!validTabIds.has(tabId)) continue;
+    const lines = normalizeBookmarkList(rawLines);
+    if (lines.length > 0) result[tabId] = lines;
+  }
+  return result;
+}
+
 function normalizePersistedTab(value: unknown): EditorTab | null {
   if (!value || typeof value !== "object") return null;
   const rec = value as Record<string, unknown>;
@@ -234,6 +266,7 @@ function loadPersistedSession(): PersistedSession | null {
       selectedPsPath:
         typeof rec.selectedPsPath === "string" ? rec.selectedPsPath : "",
       breakpoints: normalizePersistedBreakpoints(rec.breakpoints, validTabIds),
+      bookmarks: normalizePersistedBookmarks(rec.bookmarks, validTabIds),
     };
   } catch {
     return null;
@@ -262,7 +295,7 @@ export interface AppState {
   sidebarVisible: boolean;
   /** Which side of the editor the module browser panel is docked to. */
   sidebarPosition: "left" | "right";
-  bottomPanelTab: "output" | "variables" | "problems" | "terminal" | "debugger";
+  bottomPanelTab: BottomPanelTab;
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
   /** Command palette mode: full command list or snippets-only picker. */
@@ -279,6 +312,8 @@ export interface AppState {
   showSigningDialog: boolean;
   /** Per-tab debugger breakpoints (line and variable). */
   breakpoints: BreakpointMap;
+  /** Per-tab bookmarked source lines. */
+  bookmarks: BookmarkMap;
   /** True when a debug run is active (script started via debugger command). */
   isDebugging: boolean;
   /** True when execution is currently paused in the debugger prompt. */
@@ -355,6 +390,7 @@ const initialState: AppState = {
   showAbout: false,
   showSigningDialog: false,
   breakpoints: {},
+  bookmarks: {},
   isDebugging: false,
   debugPaused: false,
   debugLine: null,
@@ -393,7 +429,7 @@ type Action =
   | { type: "REMOVE_RECENT_FILE"; path: string }
   | {
       type: "SET_BOTTOM_TAB";
-      tab: "output" | "variables" | "problems" | "terminal" | "debugger";
+      tab: BottomPanelTab;
     }
   | { type: "TOGGLE_SETTINGS" }
   | { type: "OPEN_COMMAND_PALETTE"; mode?: "all" | "snippets" }
@@ -407,6 +443,8 @@ type Action =
   | { type: "SET_BREAKPOINTS"; tabId: string; breakpoints: DebugBreakpoint[] }
   | { type: "UPSERT_BREAKPOINT"; tabId: string; breakpoint: DebugBreakpoint }
   | { type: "REMOVE_BREAKPOINT"; tabId: string; breakpoint: DebugBreakpoint }
+  | { type: "TOGGLE_BOOKMARK"; tabId: string; line: number }
+  | { type: "SET_BOOKMARKS"; tabId: string; lines: number[] }
   | {
       type: "SET_DEBUG_STATE";
       isDebugging?: boolean;
@@ -561,11 +599,13 @@ function reducer(state: AppState, action: Action): AppState {
         newActive = next?.id ?? "";
       }
       const { [action.id]: _removed, ...restBreakpoints } = state.breakpoints;
+      const { [action.id]: _removedBookmarks, ...restBookmarks } = state.bookmarks;
       return {
         ...state,
         tabs: remaining,
         activeTabId: newActive,
         breakpoints: restBreakpoints,
+        bookmarks: restBookmarks,
       };
     }
 
@@ -755,6 +795,33 @@ function reducer(state: AppState, action: Action): AppState {
         next[action.tabId] = filtered;
       }
       return { ...state, breakpoints: next };
+    }
+
+    case "TOGGLE_BOOKMARK": {
+      if (action.line < 1 || !Number.isInteger(action.line)) return state;
+      const existing = state.bookmarks[action.tabId] ?? [];
+      const has = existing.includes(action.line);
+      const lines = has
+        ? existing.filter((line) => line !== action.line)
+        : [...existing, action.line].sort((a, b) => a - b);
+      const next = { ...state.bookmarks };
+      if (lines.length === 0) {
+        delete next[action.tabId];
+      } else {
+        next[action.tabId] = lines;
+      }
+      return { ...state, bookmarks: next };
+    }
+
+    case "SET_BOOKMARKS": {
+      const lines = normalizeBookmarkList(action.lines);
+      const next = { ...state.bookmarks };
+      if (lines.length === 0) {
+        delete next[action.tabId];
+      } else {
+        next[action.tabId] = lines;
+      }
+      return { ...state, bookmarks: next };
     }
 
     case "SET_DEBUG_STATE":
@@ -955,6 +1022,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const [tabId, breakpoints] of Object.entries(persisted.breakpoints)) {
         dispatch({ type: "SET_BREAKPOINTS", tabId, breakpoints });
       }
+      for (const [tabId, lines] of Object.entries(persisted.bookmarks)) {
+        dispatch({ type: "SET_BOOKMARKS", tabId, lines });
+      }
       if (persisted.selectedPsPath) {
         dispatch({ type: "SET_SELECTED_PS", path: persisted.selectedPsPath });
       }
@@ -1105,6 +1175,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return tabs.some((t) => t.id === tabId) && lines.length > 0;
         }),
       ),
+      bookmarks: Object.fromEntries(
+        Object.entries(state.bookmarks).filter(([tabId, lines]) => {
+          return tabs.some((t) => t.id === tabId) && lines.length > 0;
+        }),
+      ),
     };
 
     try {
@@ -1119,6 +1194,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     state.workingDir,
     state.selectedPsPath,
     state.breakpoints,
+    state.bookmarks,
   ]);
 
   return (
