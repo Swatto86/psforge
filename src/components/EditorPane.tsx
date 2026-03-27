@@ -22,7 +22,7 @@ import type {
 import { useAppState } from "../store";
 import { getMonacoThemeData, monacoThemeName } from "../themes";
 import { getPsMonarchGrammar } from "../ps-grammar";
-import type { ThemeName } from "../types";
+import type { PsCompletion, ThemeName } from "../types";
 import { WelcomePane } from "./WelcomePane";
 import { analyzeScript, getCompletions } from "../commands";
 
@@ -57,6 +57,7 @@ function completionKind(
     case "Command":
       return monaco.languages.CompletionItemKind.Function;
     case "Parameter":
+    case "ParameterName":
       return monaco.languages.CompletionItemKind.Property;
     case "Variable":
       return monaco.languages.CompletionItemKind.Variable;
@@ -74,12 +75,132 @@ function completionKind(
     case "Namespace":
       return monaco.languages.CompletionItemKind.Module;
     case "File":
+    case "ProviderItem":
       return monaco.languages.CompletionItemKind.File;
     case "Folder":
+    case "ProviderContainer":
       return monaco.languages.CompletionItemKind.Folder;
     default:
       return monaco.languages.CompletionItemKind.Text;
   }
+}
+
+/** Token boundary characters for PowerShell completion range detection. */
+const PS_TOKEN_BOUNDARY_RE = /[\s,;|(){}\[\]`"'<>@#%&*!?+^]/;
+
+/** Finds the start offset (0-based) of the token that ends at `offset`. */
+function findTokenStart(scriptContent: string, offset: number): number {
+  let tokenStart = offset;
+  while (
+    tokenStart > 0 &&
+    !PS_TOKEN_BOUNDARY_RE.test(scriptContent[tokenStart - 1])
+  ) {
+    tokenStart--;
+  }
+  return tokenStart;
+}
+
+/** Adjusts the cursor offset for TabExpansion2 in parameter-name contexts. */
+function completionCursorOffset(
+  scriptContent: string,
+  offset: number,
+  tokenStart: number,
+): number {
+  // TabExpansion2 returns file/provider candidates at "Get-Command -" when
+  // using the raw cursor index. Nudging by +1 for dash-prefixed tokens keeps
+  // parameter completions stable while preserving other contexts.
+  if (scriptContent[tokenStart] === "-") {
+    // Normalize to at least one character past "-" so TabExpansion2 enters
+    // parameter-name completion mode instead of provider path completion.
+    return Math.max(offset, tokenStart + 2);
+  }
+  return offset;
+}
+
+/** Sort bucket so parameter candidates appear first in mixed suggestion lists. */
+function completionSortWeight(resultType: string): string {
+  switch (resultType) {
+    case "Parameter":
+    case "ParameterName":
+      return "0";
+    case "Command":
+      return "1";
+    case "Variable":
+      return "2";
+    case "Keyword":
+    case "DynamicKeyword":
+      return "3";
+    case "Type":
+    case "Namespace":
+      return "4";
+    case "File":
+    case "Folder":
+    case "ProviderItem":
+    case "ProviderContainer":
+      return "5";
+    default:
+      return "9";
+  }
+}
+
+/** Result types that represent parameter-name completions. */
+const PARAM_RESULT_TYPES = new Set(["Parameter", "ParameterName"]);
+
+/** Result types that represent filesystem/provider path value completions. */
+const PATHLIKE_RESULT_TYPES = new Set([
+  "File",
+  "Folder",
+  "ProviderItem",
+  "ProviderContainer",
+]);
+
+/** True when at least one completion candidate is a parameter name. */
+function hasParameterCandidates(items: PsCompletion[]): boolean {
+  return items.some((item) => PARAM_RESULT_TYPES.has(item.resultType));
+}
+
+/** True when all candidates are path/provider completions (or list is empty). */
+function onlyPathLikeCandidates(items: PsCompletion[]): boolean {
+  return items.length > 0 && items.every((item) => PATHLIKE_RESULT_TYPES.has(item.resultType));
+}
+
+/**
+ * Fetch completions and retry nearby offsets in dash-prefixed parameter
+ * contexts when TabExpansion2 returns only provider/file candidates.
+ */
+async function fetchCompletionsForContext(
+  psPath: string,
+  scriptContent: string,
+  offset: number,
+  tokenStart: number,
+  completionOffset: number,
+): Promise<PsCompletion[]> {
+  const base = await getCompletions(psPath, scriptContent, completionOffset);
+  if (scriptContent[tokenStart] !== "-") return base;
+  if (hasParameterCandidates(base)) return base;
+  if (!onlyPathLikeCandidates(base)) return base;
+
+  const retryOffsets = Array.from(
+    new Set([offset, tokenStart + 1, tokenStart + 2]),
+  ).filter((candidate) => candidate >= 0 && candidate <= scriptContent.length);
+
+  let best = base;
+  for (const retryOffset of retryOffsets) {
+    if (retryOffset === completionOffset) continue;
+    try {
+      const retried = await getCompletions(psPath, scriptContent, retryOffset);
+      if (hasParameterCandidates(retried)) {
+        return retried;
+      }
+      if (retried.length > best.length) {
+        best = retried;
+      }
+    } catch {
+      // Ignore retry failures and keep the best-known completion set.
+    }
+  }
+
+  return best;
 }
 
 export function EditorPane() {
@@ -257,28 +378,21 @@ export function EditorPane() {
                 offset += context.triggerCharacter.length;
               }
 
+              const tokenStart = findTokenStart(scriptContent, offset);
+              const completionOffset = completionCursorOffset(
+                scriptContent,
+                offset,
+                tokenStart,
+              );
+
               try {
-                const items = await getCompletions(
+                const items = await fetchCompletionsForContext(
                   psPath,
                   scriptContent,
                   offset,
+                  tokenStart,
+                  completionOffset,
                 );
-
-                // Walk back from the cursor to find the start of the current
-                // PowerShell token.  The completion item's range must cover the
-                // partial token already typed (e.g. "Get-C") so Monaco replaces
-                // it with the full completion text (e.g. "Get-ChildItem") rather
-                // than inserting after it.  Boundary characters that end a PS
-                // token are: whitespace and common shell operators/delimiters.
-                let tokenStart = offset;
-                while (
-                  tokenStart > 0 &&
-                  !/[\s,;|(){}\[\]`"'<>@#%&*!?+^]/.test(
-                    scriptContent[tokenStart - 1],
-                  )
-                ) {
-                  tokenStart--;
-                }
                 const tokenStartPos = model.getPositionAt(tokenStart);
                 const completionRange = {
                   startLineNumber: tokenStartPos.lineNumber,
@@ -296,6 +410,9 @@ export function EditorPane() {
                   // (e.g. "Path"), which would cause parameter suggestions to be
                   // hidden when the trigger character "-" is already in the range.
                   filterText: c.completionText,
+                  sortText: `${completionSortWeight(c.resultType)}_${(
+                    c.listItemText || c.completionText
+                  ).toLowerCase()}`,
                   detail: c.resultType,
                   documentation: c.toolTip || undefined,
                   range: completionRange,
@@ -365,17 +482,20 @@ export function EditorPane() {
               scriptContent.slice(offset);
             offset += context.triggerCharacter.length;
           }
+          const tokenStart = findTokenStart(scriptContent, offset);
+          const completionOffset = completionCursorOffset(
+            scriptContent,
+            offset,
+            tokenStart,
+          );
           try {
-            const items = await getCompletions(psPath, scriptContent, offset);
-            let tokenStart = offset;
-            while (
-              tokenStart > 0 &&
-              !/[\s,;|(){}\[\]`"'<>@#%&*!?+^]/.test(
-                scriptContent[tokenStart - 1],
-              )
-            ) {
-              tokenStart--;
-            }
+            const items = await fetchCompletionsForContext(
+              psPath,
+              scriptContent,
+              offset,
+              tokenStart,
+              completionOffset,
+            );
             const tokenStartPos = model.getPositionAt(tokenStart);
             const completionRange = {
               startLineNumber: tokenStartPos.lineNumber,
@@ -393,6 +513,9 @@ export function EditorPane() {
                 // (e.g. "Path"), which would cause parameter suggestions to be
                 // hidden when the trigger character "-" is already in the range.
                 filterText: c.completionText,
+                sortText: `${completionSortWeight(c.resultType)}_${(
+                  c.listItemText || c.completionText
+                ).toLowerCase()}`,
                 detail: c.resultType,
                 documentation: c.toolTip || undefined,
                 range: completionRange,

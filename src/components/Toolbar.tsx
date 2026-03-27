@@ -468,6 +468,7 @@ export function Toolbar({
       {/* Keyboard shortcut help button */}
       <ToolbarBtn
         title="Keyboard Shortcuts (F1)"
+        testId="toolbar-shortcuts"
         onClick={() => dispatch({ type: "TOGGLE_SHORTCUT_PANEL" })}
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">

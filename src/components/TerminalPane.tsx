@@ -178,8 +178,6 @@ type TerminalExitEvent = {
   exitCode: number | null;
 };
 
-const MAX_RESTART_ATTEMPTS = 5;
-
 export function TerminalPane() {
   const { state } = useAppState();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -189,11 +187,12 @@ export function TerminalPane() {
   const isReadyRef = useRef<boolean>(false);
   const isStoppingRef = useRef<boolean>(false);
   const sessionIdRef = useRef<number>(0);
-  const restartAttemptsRef = useRef<number>(0);
-  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startInFlightRef = useRef<boolean>(false);
+  const pendingOldSessionIdRef = useRef<number>(0);
 
   const writeQueueRef = useRef<string>("");
   const writeInFlightRef = useRef<boolean>(false);
+  const fitRafRef = useRef<number | null>(null);
 
   const fontFamilyRef = useRef(state.settings.outputFontFamily);
   const fontSizeRef = useRef(state.settings.outputFontSize);
@@ -245,7 +244,32 @@ export function TerminalPane() {
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(containerRef.current);
-    fitAddon.fit();
+
+    const safeFit = () => {
+      if (cancelled) return;
+      const host = containerRef.current;
+      // FitAddon can throw if called during StrictMode teardown/race windows.
+      if (!host || !host.isConnected) return;
+      if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
+      try {
+        fitAddon.fit();
+      } catch {
+        // Best-effort: next resize/focus event will retry.
+      }
+    };
+
+    const scheduleFit = () => {
+      if (fitRafRef.current !== null) {
+        cancelAnimationFrame(fitRafRef.current);
+      }
+      fitRafRef.current = requestAnimationFrame(() => {
+        fitRafRef.current = null;
+        safeFit();
+      });
+    };
+
+    // Defer initial fit until after first layout pass.
+    scheduleFit();
 
     termRef.current = term;
     fitRef.current = fitAddon;
@@ -257,8 +281,9 @@ export function TerminalPane() {
       void cmd.terminalResize(cols, rows).catch(() => {});
     };
 
-    const flushWriteQueue = () => {
-      if (!isReadyRef.current || writeInFlightRef.current) return;
+    const flushWriteQueue = (allowWhenNotReady = false) => {
+      if (!allowWhenNotReady && !isReadyRef.current) return;
+      if (writeInFlightRef.current) return;
       const chunk = writeQueueRef.current;
       if (!chunk) return;
 
@@ -275,16 +300,24 @@ export function TerminalPane() {
         });
     };
 
-    const queueInput = (data: string) => {
-      if (!isReadyRef.current || isStoppingRef.current || cancelled) return;
+    const queueInput = (data: string, allowWhenNotReady = false) => {
+      if (isStoppingRef.current || cancelled) return;
+      if (!allowWhenNotReady && !isReadyRef.current) return;
       writeQueueRef.current += data;
-      flushWriteQueue();
+      flushWriteQueue(allowWhenNotReady);
     };
 
     const startSession = async (showBanner = false) => {
+      if (startInFlightRef.current) return;
+      startInFlightRef.current = true;
+
       isReadyRef.current = false;
       writeQueueRef.current = "";
       writeInFlightRef.current = false;
+      pendingOldSessionIdRef.current = sessionIdRef.current;
+      // Allow early PTY output for the new session to be accepted before the
+      // invoke() promise resolves with the new session id.
+      sessionIdRef.current = 0;
 
       const cols = Math.max(term.cols || 120, 1);
       const rows = Math.max(term.rows || 30, 1);
@@ -298,7 +331,15 @@ export function TerminalPane() {
         if (cancelled) return;
 
         sessionIdRef.current = sessionId;
+        pendingOldSessionIdRef.current = 0;
         isReadyRef.current = true;
+        flushWriteQueue();
+        // Startup safeguard: if the initial DSR probe was emitted before
+        // listeners were attached, proactively send a cursor report so
+        // PSReadLine does not stall waiting on ESC[6n.
+        const initRow = term.buffer.active.cursorY + 1;
+        const initCol = term.buffer.active.cursorX + 1;
+        queueInput(`\x1b[${initRow};${initCol}R`, true);
 
         if (showBanner) {
           term.write("\x1b[1;36mPSForge Terminal\x1b[0m\r\n");
@@ -312,38 +353,13 @@ export function TerminalPane() {
         }
       } catch (err: unknown) {
         if (cancelled) return;
+        pendingOldSessionIdRef.current = 0;
         term.write(
           `\r\n\x1b[1;31m[Failed to start terminal: ${String(err)}]\x1b[0m\r\n`,
         );
+      } finally {
+        startInFlightRef.current = false;
       }
-    };
-
-    const scheduleRestart = () => {
-      const attempt = restartAttemptsRef.current + 1;
-      restartAttemptsRef.current = attempt;
-
-      if (attempt > MAX_RESTART_ATTEMPTS) {
-        term.write(
-          `\r\n\x1b[31m[Session exited and could not be restarted after ${MAX_RESTART_ATTEMPTS} attempts.]\x1b[0m\r\n`,
-        );
-        return;
-      }
-
-      const delayMs = Math.min(2000 * Math.pow(2, attempt - 1), 32000);
-      term.write(
-        `\r\n\x1b[33m[Session ended. Restarting in ${delayMs / 1000}s (attempt ${attempt}/${MAX_RESTART_ATTEMPTS})...]\x1b[0m\r\n`,
-      );
-
-      if (restartTimerRef.current !== null) {
-        clearTimeout(restartTimerRef.current);
-      }
-
-      restartTimerRef.current = setTimeout(() => {
-        restartTimerRef.current = null;
-        if (isStoppingRef.current || cancelled) return;
-        term.write("\x1b[33m[Restarting session...]\x1b[0m\r\n");
-        void startSession(false);
-      }, delayMs);
     };
 
     const dataDisposable = term.onData((data) => {
@@ -356,36 +372,89 @@ export function TerminalPane() {
     });
 
     const onWindowResize = () => {
-      fitAddon.fit();
+      scheduleFit();
       syncSizeToBackend();
     };
     window.addEventListener("resize", onWindowResize);
 
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
+      scheduleFit();
       syncSizeToBackend();
     });
     resizeObserver.observe(containerRef.current);
 
-    const unlistenOutputPromise: Promise<UnlistenFn> = listen<TerminalOutputEvent>(
-      "terminal-output",
-      (event) => {
-        if (event.payload.sessionId !== sessionIdRef.current) return;
-        // Session has produced output; treat it as healthy and reset backoff.
-        restartAttemptsRef.current = 0;
-        term.write(event.payload.data);
-      },
-    );
+    let unlistenOutput: UnlistenFn | null = null;
+    let unlistenExit: UnlistenFn | null = null;
+    let listenersAttached = false;
+    let listenerRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const unlistenExitPromise: Promise<UnlistenFn> = listen<TerminalExitEvent>(
-      "terminal-exit",
-      (event) => {
-        if (event.payload.sessionId !== sessionIdRef.current) return;
-        isReadyRef.current = false;
-        if (isStoppingRef.current) return;
-        scheduleRestart();
-      },
-    );
+    const onTerminalOutput = (event: { payload: TerminalOutputEvent }) => {
+      const activeSessionId = sessionIdRef.current;
+      const pendingOldSessionId = pendingOldSessionIdRef.current;
+      if (activeSessionId === 0 && pendingOldSessionId !== 0) {
+        if (event.payload.sessionId === pendingOldSessionId) {
+          // Ignore teardown bytes from the previous session during startup.
+          return;
+        }
+      }
+      if (activeSessionId !== 0 && event.payload.sessionId !== activeSessionId) {
+        return;
+      }
+      // During startup, backend output can arrive before startTerminal()
+      // resolves; latch the first output event's session id.
+      if (activeSessionId === 0) {
+        sessionIdRef.current = event.payload.sessionId;
+      }
+      const chunk = event.payload.data;
+      term.write(chunk);
+
+      // PSReadLine may probe cursor position with DSR (ESC[6n). In some
+      // WebView2/xterm attach timings this response can be missed, which
+      // stalls prompt rendering. Reply explicitly with current cursor coords.
+      if (chunk.includes("\x1b[6n")) {
+        const row = term.buffer.active.cursorY + 1;
+        const col = term.buffer.active.cursorX + 1;
+        // Reply even during startup: PSReadLine may request DSR before the
+        // startTerminal() invoke promise resolves on the frontend.
+        queueInput(`\x1b[${row};${col}R`, true);
+      }
+    };
+
+    const onTerminalExit = (event: { payload: TerminalExitEvent }) => {
+      if (sessionIdRef.current === 0) return;
+      if (event.payload.sessionId !== sessionIdRef.current) return;
+      isReadyRef.current = false;
+      if (isStoppingRef.current) return;
+      term.write("\r\n\x1b[33m[Terminal session ended. Use Restart to start a new shell.]\x1b[0m\r\n");
+    };
+
+    const attachListeners = async (attempt = 1): Promise<void> => {
+      if (cancelled || listenersAttached) return;
+      try {
+        const [outputFn, exitFn] = await Promise.all([
+          listen<TerminalOutputEvent>("terminal-output", onTerminalOutput),
+          listen<TerminalExitEvent>("terminal-exit", onTerminalExit),
+        ]);
+        if (cancelled) {
+          outputFn();
+          exitFn();
+          return;
+        }
+        unlistenOutput = outputFn;
+        unlistenExit = exitFn;
+        listenersAttached = true;
+      } catch {
+        if (cancelled) return;
+        const delayMs = Math.min(250 * attempt, 2000);
+        if (listenerRetryTimer !== null) {
+          clearTimeout(listenerRetryTimer);
+        }
+        listenerRetryTimer = setTimeout(() => {
+          listenerRetryTimer = null;
+          void attachListeners(attempt + 1);
+        }, delayMs);
+      }
+    };
 
     const w = window as unknown as Record<string, unknown>;
     w.__psforge_terminal_clear = () => {
@@ -394,13 +463,12 @@ export function TerminalPane() {
     };
     w.__psforge_terminal_focus = () => {
       if (cancelled) return;
-      fitAddon.fit();
+      scheduleFit();
       syncSizeToBackend();
       term.focus();
     };
     w.__psforge_terminal_restart = () => {
       if (cancelled) return;
-      restartAttemptsRef.current = 0;
       void startSession(false);
     };
     w.__psforge_terminal_get_content = (lineCount?: number) => {
@@ -423,23 +491,36 @@ export function TerminalPane() {
     };
     w.__psforge_highlight_ps = highlightPs;
 
-    // Initial startup.
-    void startSession(true);
+    // Initial startup: give event listeners a short head-start so the first
+    // PTY control/query burst is not dropped.
+    const startAfterListenerWarmup = async () => {
+      void attachListeners();
+      const deadline = Date.now() + 2000;
+      while (!cancelled && !listenersAttached && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if (cancelled) return;
+      void startSession(true);
+    };
+    void startAfterListenerWarmup();
 
     return () => {
       cancelled = true;
       isStoppingRef.current = true;
       isReadyRef.current = false;
 
-      if (restartTimerRef.current !== null) {
-        clearTimeout(restartTimerRef.current);
-        restartTimerRef.current = null;
-      }
-
       window.removeEventListener("resize", onWindowResize);
       resizeObserver.disconnect();
       dataDisposable.dispose();
       resizeDisposable.dispose();
+      if (fitRafRef.current !== null) {
+        cancelAnimationFrame(fitRafRef.current);
+        fitRafRef.current = null;
+      }
+      if (listenerRetryTimer !== null) {
+        clearTimeout(listenerRetryTimer);
+        listenerRetryTimer = null;
+      }
 
       delete w.__psforge_terminal_clear;
       delete w.__psforge_terminal_focus;
@@ -450,11 +531,8 @@ export function TerminalPane() {
       delete w.__psforge_terminal_reset_input;
       delete w.__psforge_highlight_ps;
 
-      void Promise.all([unlistenOutputPromise, unlistenExitPromise])
-        .then((fns) => {
-          for (const fn of fns) fn();
-        })
-        .catch(() => {});
+      unlistenOutput?.();
+      unlistenExit?.();
 
       void cmd.stopTerminal().catch(() => {});
       term.dispose();
@@ -469,7 +547,11 @@ export function TerminalPane() {
     if (!termRef.current) return;
     termRef.current.options.fontFamily = state.settings.outputFontFamily;
     termRef.current.options.fontSize = state.settings.outputFontSize;
-    fitRef.current?.fit();
+    try {
+      fitRef.current?.fit();
+    } catch {
+      // Ignore transient fit races; resize observer will recover.
+    }
     if (isReadyRef.current && termRef.current) {
       const cols = Math.max(termRef.current.cols || 120, 1);
       const rows = Math.max(termRef.current.rows || 30, 1);
@@ -481,7 +563,11 @@ export function TerminalPane() {
   useEffect(() => {
     if (state.bottomPanelTab !== "terminal" || !termRef.current) return;
     requestAnimationFrame(() => {
-      fitRef.current?.fit();
+      try {
+        fitRef.current?.fit();
+      } catch {
+        // Ignore transient fit races; resize observer will recover.
+      }
       termRef.current?.focus();
       if (isReadyRef.current && termRef.current) {
         const cols = Math.max(termRef.current.cols || 120, 1);

@@ -137,6 +137,12 @@ describe('Editor and Tab Management', () => {
       // Click the Monaco editor area and type a short comment.
       const editorContainer = await $('.monaco-editor');
       await editorContainer.click();
+      await browser.execute(() => {
+        const editors = (window as any).monaco?.editor?.getEditors?.();
+        if (editors && editors.length > 0) {
+          editors[0].focus();
+        }
+      });
       await browser.pause(200);
 
       // Select all and delete existing content to start clean.
@@ -146,7 +152,7 @@ describe('Editor and Tab Management', () => {
       await browser.pause(100);
 
       // Type a comment and verify it appears in the model.
-      const testText = '# e2e-test-marker';
+      const testText = 'e2etestmarker';
       await browser.keys(testText.split(''));
       await browser.pause(300);
 
@@ -160,14 +166,14 @@ describe('Editor and Tab Management', () => {
       });
 
       if (content !== null) {
-        expect(content).toContain('e2e-test-marker');
+        expect(content).toContain(testText);
       } else {
         // Monaco API not directly accessible; verify via DOM.
         const lines = await $$('.monaco-editor .view-line');
         let found = false;
         for (const line of lines) {
           const text = await line.getText();
-          if (text.includes('e2e-test-marker')) { found = true; break; }
+          if (text.includes(testText)) { found = true; break; }
         }
         expect(found).toBe(true);
       }
