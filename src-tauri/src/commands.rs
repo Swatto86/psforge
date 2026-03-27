@@ -1407,6 +1407,9 @@ const ANALYSIS_TIMEOUT_SECS: u64 = 5;
 
 /// Maximum seconds to wait for a TabExpansion2 completion request.
 const COMPLETION_TIMEOUT_SECS: u64 = 3;
+/// Maximum seconds to wait when querying online module suggestions for an
+/// unknown command in the integrated terminal.
+const MODULE_SUGGEST_TIMEOUT_SECS: u64 = 8;
 
 /// Diagnostic produced by PSScriptAnalyzer. All line/column numbers are 1-indexed,
 /// matching Monaco editor conventions.
@@ -1440,6 +1443,20 @@ pub struct PsCompletion {
     pub tool_tip: String,
     /// PS completion result type as a string (e.g. "Command", "Parameter", "Variable").
     pub result_type: String,
+}
+
+/// Suggested module install candidate for a missing command.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModuleInstallSuggestion {
+    /// Module/package name published to PSGallery or another repository.
+    pub name: String,
+    /// Module version string when available.
+    pub version: String,
+    /// Repository name (for example "PSGallery") when provided by the source.
+    pub repository: String,
+    /// Concrete install command users can run in the terminal.
+    pub install_command: String,
 }
 
 /// Runs PSScriptAnalyzer on `script_content` and returns structured diagnostics.
@@ -1630,6 +1647,129 @@ if (-not $r.CompletionMatches) {{ '[]'; exit }}\
 
     debug!("get_completions: {} items", completions.len());
     Ok(completions)
+}
+
+/// PowerShell snippet that queries the best-available package-discovery command
+/// for modules exporting a missing command name.
+///
+/// Preference order:
+/// 1) PSResourceGet (`Find-PSResource -CommandName`) on newer systems.
+/// 2) PowerShellGet (`Find-Module -Command`) as a fallback.
+///
+/// Output is always JSON in the `ModuleInstallSuggestion` shape, or `[]`.
+const MODULE_SUGGEST_SCRIPT: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$cmd = $env:PSFORGE_MISSING_CMDLET
+if ([string]::IsNullOrWhiteSpace($cmd)) { '[]'; exit }
+
+if (Get-Command -Name Find-PSResource -ErrorAction SilentlyContinue) {
+    try {
+        $r = Find-PSResource -CommandName $cmd -ErrorAction SilentlyContinue |
+            Sort-Object -Property Name -Unique |
+            Select-Object -First 5
+        if ($r) {
+            ($r | Select-Object
+                @{N='name';E={$_.Name}},
+                @{N='version';E={ if ($_.Version) { $_.Version.ToString() } else { '' } }},
+                @{N='repository';E={ if ($_.Repository) { $_.Repository } else { '' } }},
+                @{N='installCommand';E={ "Install-PSResource -Name '$($_.Name)'" }}
+            | ConvertTo-Json -Compress)
+            exit
+        }
+    } catch {}
+}
+
+if (Get-Command -Name Find-Module -ErrorAction SilentlyContinue) {
+    try {
+        $r = Find-Module -Command $cmd -ErrorAction SilentlyContinue |
+            Sort-Object -Property Name -Unique |
+            Select-Object -First 5
+        if ($r) {
+            ($r | Select-Object
+                @{N='name';E={$_.Name}},
+                @{N='version';E={ if ($_.Version) { $_.Version.ToString() } else { '' } }},
+                @{N='repository';E={ if ($_.Repository) { $_.Repository } else { '' } }},
+                @{N='installCommand';E={ "Install-Module -Name '$($_.Name)' -Scope CurrentUser" }}
+            | ConvertTo-Json -Compress)
+            exit
+        }
+    } catch {}
+}
+
+'[]'
+"#;
+
+/// Suggests module installs for a command name that PowerShell could not
+/// resolve, returning up to five candidates.
+///
+/// This is used by the integrated terminal to provide actionable "command not
+/// found" hints without hard-failing if discovery tooling/network is missing.
+#[tauri::command]
+pub async fn suggest_modules_for_command(
+    ps_path: String,
+    command_name: String,
+) -> Result<Vec<ModuleInstallSuggestion>, AppError> {
+    let command_name = command_name.trim().to_string();
+    debug!("suggest_modules_for_command called for {:?}", command_name);
+
+    if command_name.is_empty() || command_name.len() > 256 {
+        return Ok(Vec::new());
+    }
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(MODULE_SUGGEST_TIMEOUT_SECS),
+        tokio::process::Command::new(&ps_path)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "RemoteSigned",
+                "-Command",
+                MODULE_SUGGEST_SCRIPT,
+            ])
+            .env("PSFORGE_MISSING_CMDLET", &command_name)
+            .creation_flags(0x08000000)
+            .output(),
+    )
+    .await;
+
+    let output = match result {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            debug!("suggest_modules_for_command: process error: {}", e);
+            return Ok(Vec::new());
+        }
+        Err(_) => {
+            debug!(
+                "suggest_modules_for_command: timed out after {}s",
+                MODULE_SUGGEST_TIMEOUT_SECS
+            );
+            return Ok(Vec::new());
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed == "[]" {
+        return Ok(Vec::new());
+    }
+
+    let suggestions: Vec<ModuleInstallSuggestion> = if trimmed.starts_with('[') {
+        serde_json::from_str(trimmed).unwrap_or_default()
+    } else {
+        match serde_json::from_str::<ModuleInstallSuggestion>(trimmed) {
+            Ok(single) => vec![single],
+            Err(e) => {
+                debug!(
+                    "suggest_modules_for_command: JSON parse error: {} | raw: {}",
+                    e, trimmed
+                );
+                Vec::new()
+            }
+        }
+    };
+
+    Ok(suggestions)
 }
 
 /// Monotonically-increasing counter used to generate unique temp-file names.

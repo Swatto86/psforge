@@ -282,6 +282,21 @@ export interface PsCompletion {
   resultType: string;
 }
 
+/**
+ * Suggested module to install when a command is not available locally.
+ * Returned by the `suggest_modules_for_command` Tauri command.
+ */
+export interface ModuleInstallSuggestion {
+  /** Module/package name to install. */
+  name: string;
+  /** Version string from the repository metadata, if available. */
+  version: string;
+  /** Source repository name (for example "PSGallery"), if available. */
+  repository: string;
+  /** Ready-to-run install command for this module. */
+  installCommand: string;
+}
+
 /** A code-signing certificate from the current user's certificate store. */
 export interface CertInfo {
   /** 40-char hex thumbprint. */

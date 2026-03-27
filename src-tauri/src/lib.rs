@@ -48,6 +48,7 @@ pub fn run() {
             commands::reveal_in_explorer,
             commands::analyze_script,
             commands::get_completions,
+            commands::suggest_modules_for_command,
             commands::get_execution_policy,
             commands::set_execution_policy,
             commands::get_launch_path,

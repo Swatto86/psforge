@@ -9,6 +9,7 @@ import type {
   CommandInfo,
   FileContent,
   ModuleInfo,
+  ModuleInstallSuggestion,
   PsCompletion,
   PssaDiagnostic,
   PsVersion,
@@ -250,6 +251,20 @@ export async function getCompletions(
     psPath,
     scriptContent,
     cursorColumn,
+  });
+}
+
+/**
+ * Suggests installable modules that provide `commandName`.
+ * Returns an empty array when discovery tooling is unavailable or no matches exist.
+ */
+export async function suggestModulesForCommand(
+  psPath: string,
+  commandName: string,
+): Promise<ModuleInstallSuggestion[]> {
+  return invoke<ModuleInstallSuggestion[]>("suggest_modules_for_command", {
+    psPath,
+    commandName,
   });
 }
 
