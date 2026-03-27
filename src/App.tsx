@@ -229,6 +229,7 @@ function AppInner() {
   );
   const activeTabRef = useRef<EditorTab | undefined>(activeTab);
   const cursorLineRef = useRef(state.cursorLine);
+  const bookmarksRef = useRef(state.bookmarks);
 
   /**
    * Pending parameter-prompt state.  When a script has mandatory parameters
@@ -259,6 +260,10 @@ function AppInner() {
   useEffect(() => {
     cursorLineRef.current = state.cursorLine;
   }, [state.cursorLine]);
+
+  useEffect(() => {
+    bookmarksRef.current = state.bookmarks;
+  }, [state.bookmarks]);
 
   const debugWatchesRef = useRef<DebugWatch[]>(state.debugWatches);
   const debugSelectedFrameRef = useRef<number>(state.debugSelectedFrame);
@@ -1317,6 +1322,39 @@ function AppInner() {
     w.print();
   }, [activeTab]);
 
+  const toggleBookmarkAtCursor = useCallback(() => {
+    const tab = activeTabRef.current;
+    if (!tab || tab.tabType === "welcome") return;
+    dispatch({
+      type: "TOGGLE_BOOKMARK",
+      tabId: tab.id,
+      line: Math.max(1, cursorLineRef.current || 1),
+    });
+  }, [dispatch]);
+
+  const jumpToBookmark = useCallback((direction: 1 | -1) => {
+    const tab = activeTabRef.current;
+    if (!tab || tab.tabType === "welcome") return;
+    const lines = bookmarksRef.current[tab.id] ?? [];
+    if (lines.length === 0) return;
+
+    const currentLine = Math.max(1, cursorLineRef.current || 1);
+    let targetLine = lines[0];
+    if (direction > 0) {
+      targetLine = lines.find((line) => line > currentLine) ?? lines[0];
+    } else {
+      targetLine =
+        [...lines].reverse().find((line) => line < currentLine) ??
+        lines[lines.length - 1];
+    }
+
+    const nav = (window as unknown as Record<string, unknown>)
+      .__psforge_navigateTo as
+      | ((line: number, column: number) => void)
+      | undefined;
+    nav?.(targetLine, 1);
+  }, []);
+
   // Keyboard shortcuts
   // Placed AFTER all useCallback declarations so TypeScript can see each
   // captured function's type.  The dependency array keeps the listener
@@ -1405,6 +1443,18 @@ function AppInner() {
         dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
       }
 
+      // Ctrl+F2: Toggle bookmark on the current line.
+      if (e.key === "F2" && e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        toggleBookmarkAtCursor();
+      }
+
+      // F2 / Shift+F2: Jump to next/previous bookmark.
+      if (e.key === "F2" && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        jumpToBookmark(e.shiftKey ? -1 : 1);
+      }
+
       // Ctrl+Break: Stop running script
       // NOTE: Ctrl+C is intentionally NOT intercepted here because it must
       // remain available for clipboard copy at all times.  Ctrl+Break is the
@@ -1438,8 +1488,27 @@ function AppInner() {
         dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "snippets" });
       }
 
-      // F1: Keyboard shortcut reference panel
-      if (e.key === "F1") {
+      // Ctrl+Shift+C: Open Show Command tab.
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        dispatch({ type: "SET_BOTTOM_TAB", tab: "show-command" });
+      }
+
+      // F1: Context-sensitive help for selected token/command.
+      if (e.key === "F1" && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        const query = (
+          (window as unknown as Record<string, unknown>)
+            .__psforge_getHelpQuery as (() => string) | undefined
+        )?.() ?? "";
+        dispatch({ type: "SET_BOTTOM_TAB", tab: "help" });
+        window.dispatchEvent(
+          new CustomEvent("psforge-help-request", { detail: { query } }),
+        );
+      }
+
+      // Ctrl+F1: Keyboard shortcut reference panel
+      if (e.key === "F1" && e.ctrlKey && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         dispatch({ type: "TOGGLE_SHORTCUT_PANEL" });
       }
@@ -1523,6 +1592,8 @@ function AppInner() {
     stopExecution,
     runSelection,
     formatCurrentScript,
+    toggleBookmarkAtCursor,
+    jumpToBookmark,
   ]);
 
   // Sync local state from persisted settings the first time they load from

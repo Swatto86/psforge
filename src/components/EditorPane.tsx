@@ -6,6 +6,7 @@
  *  - window.__psforge_triggerFindReplace()  -- opens Monaco Find & Replace widget
  *  - window.__psforge_triggerGoToLine()     -- opens Monaco Go To Line widget
  *  - window.__psforge_getRunText()          -- returns selection, or current line
+ *  - window.__psforge_getHelpQuery()        -- returns selection/token for context help
  *
  *  Editor enhancements wired here:
  *  - Cursor position tracking (dispatched to store -> displayed in StatusBar).
@@ -234,6 +235,7 @@ export function EditorPane() {
   // up when the editor unmounts or a new provider is registered).
   const completionDisposableRef = useRef<{ dispose(): void } | null>(null);
   const breakpointDecorationsRef = useRef<string[]>([]);
+  const bookmarkDecorationsRef = useRef<string[]>([]);
   const contextMenuLineRef = useRef<number | null>(null);
 
   // Dispose the completion provider when the component unmounts.
@@ -244,6 +246,10 @@ export function EditorPane() {
       if (editorRef.current) {
         breakpointDecorationsRef.current = editorRef.current.deltaDecorations(
           breakpointDecorationsRef.current,
+          [],
+        );
+        bookmarkDecorationsRef.current = editorRef.current.deltaDecorations(
+          bookmarkDecorationsRef.current,
           [],
         );
       }
@@ -310,11 +316,43 @@ export function EditorPane() {
       if (!pos) return "";
       return model.getLineContent(pos.lineNumber);
     };
+    // Returns selected text or the token at cursor for context help (F1).
+    w.__psforge_getHelpQuery = () => {
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !model) return "";
+
+      const selection = editor.getSelection();
+      if (selection && !selection.isEmpty()) {
+        return model.getValueInRange(selection).trim();
+      }
+
+      const pos = editor.getPosition();
+      if (!pos) return "";
+      const line = model.getLineContent(pos.lineNumber);
+      const idx = Math.max(0, pos.column - 1);
+      const left = line.slice(0, idx);
+      const right = line.slice(idx);
+      const leftMatch = /[A-Za-z0-9_.-]+$/.exec(left);
+      const rightMatch = /^[A-Za-z0-9_.-]+/.exec(right);
+      const token = `${leftMatch?.[0] ?? ""}${rightMatch?.[0] ?? ""}`.trim();
+      const cleaned = token.replace(/^['"`]+|['"`]+$/g, "");
+      if (cleaned.startsWith("-")) {
+        const commandCandidates = left.match(
+          /[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z][A-Za-z0-9]*)*/g,
+        );
+        if (commandCandidates && commandCandidates.length > 0) {
+          return commandCandidates[commandCandidates.length - 1];
+        }
+      }
+      return cleaned;
+    };
     return () => {
       delete w.__psforge_triggerFindReplace;
       delete w.__psforge_triggerGoToLine;
       delete w.__psforge_navigateTo;
       delete w.__psforge_getRunText;
+      delete w.__psforge_getHelpQuery;
     };
   }, []);
 
@@ -378,6 +416,36 @@ export function EditorPane() {
       decorations,
     );
   }, [activeTab, state.breakpoints]);
+
+  const refreshBookmarkDecorations = useCallback(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco || !activeTab || activeTab.tabType === "welcome") {
+      return;
+    }
+    const model = editor.getModel();
+    if (!model) return;
+
+    const maxLine = model.getLineCount();
+    const lines = (state.bookmarks[activeTab.id] ?? [])
+      .filter((line) => line >= 1 && line <= maxLine)
+      .sort((a, b) => a - b);
+    const decorations: MonacoEditor.IModelDeltaDecoration[] = lines.map((line) => ({
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        isWholeLine: true,
+        glyphMarginClassName: "psforge-bookmark-glyph",
+        glyphMarginHoverMessage: {
+          value: `Bookmark (line ${line})`,
+        },
+        linesDecorationsClassName: "psforge-bookmark-line",
+      },
+    }));
+    bookmarkDecorationsRef.current = editor.deltaDecorations(
+      bookmarkDecorationsRef.current,
+      decorations,
+    );
+  }, [activeTab, state.bookmarks]);
 
   const handleEditorMount: OnMount = useCallback(
     (editor, monaco) => {
@@ -478,6 +546,23 @@ export function EditorPane() {
         },
       });
 
+      editor.addAction({
+        id: "psforge-toggle-bookmark",
+        label: "Toggle Bookmark",
+        contextMenuGroupId: "navigation",
+        contextMenuOrder: 1.7,
+        run: () => {
+          if (!activeTab || activeTab.tabType === "welcome") return;
+          const line = getTargetLine();
+          if (!line) return;
+          dispatch({
+            type: "TOGGLE_BOOKMARK",
+            tabId: activeTab.id,
+            line,
+          });
+        },
+      });
+
       // --- Feature 3: PowerShell IntelliSense via TabExpansion2 ---
       // Disposed when enable_intellisense is toggled off; re-registered when turned back on.
       // The outer useEffect below handles toggling; this block registers on first mount.
@@ -572,6 +657,7 @@ export function EditorPane() {
       // Focus editor
       editor.focus();
       refreshBreakpointDecorations();
+      refreshBookmarkDecorations();
     },
     [
       activeTab,
@@ -579,6 +665,7 @@ export function EditorPane() {
       state.settings.enableIntelliSense,
       dispatch,
       refreshBreakpointDecorations,
+      refreshBookmarkDecorations,
     ],
   );
 
@@ -595,6 +682,10 @@ export function EditorPane() {
   useEffect(() => {
     refreshBreakpointDecorations();
   }, [refreshBreakpointDecorations]);
+
+  useEffect(() => {
+    refreshBookmarkDecorations();
+  }, [refreshBookmarkDecorations]);
 
   // Manage IntelliSense provider lifecycle when the setting is toggled post-mount.
   // On disable: dispose the registered provider so completions no longer fire.

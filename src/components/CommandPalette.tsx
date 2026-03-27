@@ -99,6 +99,35 @@ export function CommandPalette() {
       });
 
       result.push({
+        id: "cmd-show-command",
+        label: "Open Show Command Tab",
+        category: "Command",
+        description: "Open the ISE-style command builder tab",
+        action: () => {
+          close();
+          dispatch({ type: "SET_BOTTOM_TAB", tab: "show-command" });
+        },
+      });
+
+      result.push({
+        id: "cmd-help-tab",
+        label: "Open Help Tab",
+        category: "Command",
+        description: "Open context-sensitive help (Get-Help)",
+        action: () => {
+          close();
+          dispatch({ type: "SET_BOTTOM_TAB", tab: "help" });
+          const query = (
+            (window as unknown as Record<string, unknown>)
+              .__psforge_getHelpQuery as (() => string) | undefined
+          )?.() ?? "";
+          window.dispatchEvent(
+            new CustomEvent("psforge-help-request", { detail: { query } }),
+          );
+        },
+      });
+
+      result.push({
         id: "cmd-theme-dark",
         label: "Set Theme: Dark",
         category: "Theme",

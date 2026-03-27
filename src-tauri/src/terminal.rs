@@ -7,6 +7,7 @@ use crate::utils::write_secure_temp_file;
 use log::{debug, error, info};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -200,18 +201,18 @@ struct Session {
     bootstrap_script: PathBuf,
 }
 
-/// Global terminal session (at most one active at a time).
-static TERMINAL: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
+/// Global terminal sessions keyed by session id.
+static TERMINALS: OnceLock<Mutex<HashMap<u64, Session>>> = OnceLock::new();
 
 /// Monotonic id used to correlate async terminal events with the active session.
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Returns the global terminal session mutex, initializing it on first call.
-fn get_terminal() -> &'static Mutex<Option<Session>> {
-    TERMINAL.get_or_init(|| Mutex::new(None))
+/// Returns the global terminal session map mutex, initializing it on first call.
+fn get_terminals() -> &'static Mutex<HashMap<u64, Session>> {
+    TERMINALS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Starts a new PTY terminal session, stopping any existing one.
+/// Starts a new PTY terminal session.
 ///
 /// Emits Tauri events:
 /// - `terminal-output` with `{ sessionId, data }` UTF-8 chunks
@@ -229,9 +230,6 @@ pub async fn start_terminal(
         "start_terminal: shell_path={:?}, cols={:?}, rows={:?}, load_profile={}",
         shell_path, cols, rows, load_profile
     );
-
-    // Stop any existing session cleanly before starting a new one.
-    kill_session();
 
     let program = if shell_path.is_empty() || shell_path == "auto" {
         // find_powershell() makes blocking .status() calls; run it off the
@@ -349,17 +347,22 @@ pub async fn start_terminal(
                 exit_code: None,
             },
         );
+        // Remove session bookkeeping when the PTY stream ends naturally.
+        stop_session(session_id, false);
         debug!("Terminal PTY reader exited (session_id={})", session_id);
     });
 
-    let mut guard = get_terminal().lock().unwrap_or_else(|e| e.into_inner());
-    *guard = Some(Session {
+    let mut guard = get_terminals().lock().unwrap_or_else(|e| e.into_inner());
+    guard.insert(
+        session_id,
+        Session {
         id: session_id,
         child,
         writer,
         master: pair.master,
         bootstrap_script,
-    });
+        },
+    );
 
     info!("Terminal PTY session started (session_id={})", session_id);
     Ok(session_id)
@@ -367,7 +370,15 @@ pub async fn start_terminal(
 
 /// Writes raw input data to the active PTY session.
 #[tauri::command]
-pub async fn terminal_write(data: String) -> Result<(), AppError> {
+pub async fn terminal_write(session_id: Option<u64>, data: String) -> Result<(), AppError> {
+    terminal_write_for_session(session_id, data).await
+}
+
+/// Writes raw input data to a specific PTY session.
+async fn terminal_write_for_session(
+    session_id: Option<u64>,
+    data: String,
+) -> Result<(), AppError> {
     let preview: String = data.chars().take(120).collect();
     debug!(
         "terminal_write: {} bytes, preview={:?}",
@@ -375,14 +386,23 @@ pub async fn terminal_write(data: String) -> Result<(), AppError> {
         preview
     );
 
-    let mut guard = get_terminal().lock().map_err(|_| AppError {
+    let mut guard = get_terminals().lock().map_err(|_| AppError {
         code: "TERMINAL_LOCK_POISONED".to_string(),
         message: "Terminal session mutex was poisoned by a previous panic".to_string(),
     })?;
 
-    let session = guard.as_mut().ok_or_else(|| AppError {
+    let target_id = if let Some(id) = session_id {
+        id
+    } else {
+        guard.keys().copied().max().ok_or_else(|| AppError {
+            code: "TERMINAL_NOT_RUNNING".to_string(),
+            message: "No terminal session is active. Open the Terminal tab to start one.".to_string(),
+        })?
+    };
+
+    let session = guard.get_mut(&target_id).ok_or_else(|| AppError {
         code: "TERMINAL_NOT_RUNNING".to_string(),
-        message: "No terminal session is active. Open the Terminal tab to start one.".to_string(),
+        message: format!("Terminal session {} is not active.", target_id),
     })?;
 
     session
@@ -403,21 +423,30 @@ pub async fn terminal_write(data: String) -> Result<(), AppError> {
 
 /// Compatibility shim: submits a full command followed by Enter.
 #[tauri::command]
-pub async fn terminal_exec(command: String) -> Result<(), AppError> {
-    terminal_write(format!("{}\r", command)).await
+pub async fn terminal_exec(session_id: Option<u64>, command: String) -> Result<(), AppError> {
+    terminal_write_for_session(session_id, format!("{}\r", command)).await
 }
 
 /// Resizes the active PTY to match the xterm.js viewport.
 #[tauri::command]
-pub async fn terminal_resize(cols: u16, rows: u16) -> Result<(), AppError> {
-    let mut guard = get_terminal().lock().map_err(|_| AppError {
+pub async fn terminal_resize(session_id: Option<u64>, cols: u16, rows: u16) -> Result<(), AppError> {
+    let mut guard = get_terminals().lock().map_err(|_| AppError {
         code: "TERMINAL_LOCK_POISONED".to_string(),
         message: "Terminal session mutex was poisoned by a previous panic".to_string(),
     })?;
 
-    let session = guard.as_mut().ok_or_else(|| AppError {
+    let target_id = if let Some(id) = session_id {
+        id
+    } else {
+        guard.keys().copied().max().ok_or_else(|| AppError {
+            code: "TERMINAL_NOT_RUNNING".to_string(),
+            message: "No terminal session is active. Open the Terminal tab to start one.".to_string(),
+        })?
+    };
+
+    let session = guard.get_mut(&target_id).ok_or_else(|| AppError {
         code: "TERMINAL_NOT_RUNNING".to_string(),
-        message: "No terminal session is active. Open the Terminal tab to start one.".to_string(),
+        message: format!("Terminal session {} is not active.", target_id),
     })?;
 
     session
@@ -438,21 +467,38 @@ pub async fn terminal_resize(cols: u16, rows: u16) -> Result<(), AppError> {
 
 /// Stops the active terminal session and cleans up the child process.
 #[tauri::command]
-pub async fn stop_terminal() -> Result<(), AppError> {
-    info!("stop_terminal called");
-    kill_session();
+pub async fn stop_terminal(session_id: Option<u64>) -> Result<(), AppError> {
+    info!("stop_terminal called (session_id={:?})", session_id);
+    if let Some(id) = session_id {
+        stop_session(id, true);
+    } else {
+        stop_all_sessions();
+    }
     Ok(())
 }
 
-/// Terminates the current session by closing writer and killing the child process.
-/// Safe to call when no session is active (no-op).
-fn kill_session() {
-    let mut guard = match get_terminal().lock() {
+/// Stops all sessions.
+fn stop_all_sessions() {
+    let ids: Vec<u64> = {
+        let guard = match get_terminals().lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        guard.keys().copied().collect()
+    };
+    for id in ids {
+        stop_session(id, true);
+    }
+}
+
+/// Stops/cleans one session.
+fn stop_session(session_id: u64, kill_process: bool) {
+    let mut guard = match get_terminals().lock() {
         Ok(g) => g,
         Err(e) => e.into_inner(),
     };
 
-    if let Some(session) = guard.take() {
+    if let Some(session) = guard.remove(&session_id) {
         let Session {
             id,
             mut child,
@@ -465,7 +511,9 @@ fn kill_session() {
         drop(writer);
 
         // Kill in case the process ignores EOF or is busy.
-        let _ = child.kill();
+        if kill_process {
+            let _ = child.kill();
+        }
 
         // Reap child and clean bootstrap temp file in the background.
         thread::spawn(move || {

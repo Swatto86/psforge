@@ -39,6 +39,8 @@ pub fn run() {
             commands::get_ps_versions,
             commands::get_installed_modules,
             commands::get_module_commands,
+            commands::get_command_parameters,
+            commands::get_command_help,
             commands::get_variables_after_run,
             commands::read_file_content,
             commands::save_file_content,

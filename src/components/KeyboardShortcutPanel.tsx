@@ -1,7 +1,7 @@
 /** PSForge Keyboard Shortcut Reference Panel.
  *
  *  Displays a searchable, categorised list of all keyboard shortcuts available
- *  in PSForge.  Opened with F1 or the "?" toolbar button; closed with Escape
+ *  in PSForge.  Opened with Ctrl+F1 or the "?" toolbar button; closed with Escape
  *  or the close button.
  *
  *  The panel is a modal overlay so it is always readable regardless of the
@@ -48,6 +48,9 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
         description: "Run script, or start debugger if breakpoints exist",
       },
       { keys: "F9", description: "Toggle breakpoint on current line" },
+      { keys: "Ctrl+F2", description: "Toggle bookmark on current line" },
+      { keys: "F2", description: "Go to next bookmark" },
+      { keys: "Shift+F2", description: "Go to previous bookmark" },
       { keys: "F8", description: "Run selection (or current line)" },
       { keys: "F10", description: "Debugger step over (when paused)" },
       { keys: "F11", description: "Debugger step into (when paused)" },
@@ -78,9 +81,11 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     shortcuts: [
       { keys: "Ctrl+J", description: "Open snippets picker (ISE style)" },
       { keys: "Ctrl+Shift+P", description: "Open Command Palette" },
+      { keys: "Ctrl+Shift+C", description: "Open Show Command tab" },
       { keys: "Ctrl+,", description: "Open Settings" },
       { keys: "Ctrl+B", description: "Toggle sidebar" },
-      { keys: "F1", description: "Open this keyboard shortcut reference" },
+      { keys: "F1", description: "Context help for token/command under cursor" },
+      { keys: "Ctrl+F1", description: "Open this keyboard shortcut reference" },
       { keys: "Escape", description: "Close palette / settings / this panel" },
     ],
   },
@@ -133,7 +138,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
 // Component
 // ---------------------------------------------------------------------------
 
-/** Modal panel listing all keyboard shortcuts. Toggled by TOGGLE_SHORTCUT_PANEL. */
+/** Modal panel listing all keyboard shortcuts. */
 export function KeyboardShortcutPanel() {
   const { state, dispatch } = useAppState();
   const [query, setQuery] = useState("");

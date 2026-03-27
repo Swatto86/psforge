@@ -21,6 +21,8 @@ import type {
   DebugWatch,
 } from "../types";
 import { TerminalPane } from "./TerminalPane";
+import { ShowCommandPane } from "./ShowCommandPane";
+import { HelpPane } from "./HelpPane";
 
 /** Prompt the user for a save path and write plain text to disk. */
 async function saveTextToFile({
@@ -310,6 +312,26 @@ export function OutputPane({
     [activeTab, dispatch],
   );
 
+  const bottomTabs: Array<{
+    id:
+      | "terminal"
+      | "output"
+      | "debugger"
+      | "variables"
+      | "problems"
+      | "show-command"
+      | "help";
+    label: string;
+  }> = [
+    { id: "terminal", label: "terminal" },
+    { id: "output", label: "output" },
+    { id: "debugger", label: "debugger" },
+    { id: "show-command", label: "show command" },
+    { id: "help", label: "help" },
+    { id: "variables", label: "variables" },
+    { id: "problems", label: "problems" },
+  ];
+
   return (
     <div
       data-testid="output-pane"
@@ -327,17 +349,16 @@ export function OutputPane({
           backgroundColor: "var(--bg-secondary)",
         }}
       >
-        {(["terminal", "output", "debugger", "variables", "problems"] as const).map(
-          (tab) => (
+        {bottomTabs.map((tab) => (
             <button
-              key={tab}
-              data-testid={`output-tab-${tab}`}
+              key={tab.id}
+              data-testid={`output-tab-${tab.id}`}
               onClick={() => {
-                dispatch({ type: "SET_BOTTOM_TAB", tab });
+                dispatch({ type: "SET_BOTTOM_TAB", tab: tab.id });
                 // When switching to the terminal, focus it immediately while
                 // we are still inside the user-gesture call stack so WebView2
                 // allows the focus() call to succeed.
-                if (tab === "terminal") {
+                if (tab.id === "terminal") {
                   requestAnimationFrame(() => {
                     (
                       window as unknown as Record<string, () => void>
@@ -345,28 +366,28 @@ export function OutputPane({
                   });
                 }
               }}
-              className="capitalize transition-colors"
+              className="transition-colors"
               style={{
                 padding: "8px 28px",
                 backgroundColor: "transparent",
                 color:
-                  state.bottomPanelTab === tab
+                  state.bottomPanelTab === tab.id
                     ? "var(--text-primary)"
                     : "var(--text-secondary)",
                 borderBottom:
-                  state.bottomPanelTab === tab
+                  state.bottomPanelTab === tab.id
                     ? "2px solid var(--accent)"
                     : "2px solid transparent",
               }}
             >
-              {tab}
-              {tab === "output" && state.outputLines.length > 0 && (
+              {tab.label}
+              {tab.id === "output" && state.outputLines.length > 0 && (
                 <span className="opacity-60">
                   {" "}
                   ({state.outputLines.length})
                 </span>
               )}
-              {tab === "problems" && state.problems.length > 0 && (
+              {tab.id === "problems" && state.problems.length > 0 && (
                 <span
                   style={{
                     color: "var(--stream-stderr)",
@@ -377,7 +398,7 @@ export function OutputPane({
                   ({state.problems.length})
                 </span>
               )}
-              {tab === "debugger" && state.isDebugging && (
+              {tab.id === "debugger" && state.isDebugging && (
                 <span
                   style={{
                     color: state.debugPaused
@@ -391,8 +412,7 @@ export function OutputPane({
                 </span>
               )}
             </button>
-          ),
-        )}
+          ))}
 
         <div className="flex-1" />
 
@@ -954,6 +974,10 @@ export function OutputPane({
             }
           />
         )}
+
+        {state.bottomPanelTab === "show-command" && <ShowCommandPane />}
+
+        {state.bottomPanelTab === "help" && <HelpPane />}
 
         {/* TerminalPane is always mounted (never conditionally removed) so the
             xterm.js instance and PS session survive tab switches.

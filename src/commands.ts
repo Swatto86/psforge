@@ -6,7 +6,9 @@ import type {
   AssociationStatus,
   BatchResult,
   CertInfo,
+  CommandHelpInfo,
   CommandInfo,
+  CommandParameterInfo,
   DebugBreakpoint,
   FileContent,
   ModuleInfo,
@@ -156,6 +158,28 @@ export async function getModuleCommands(
   return invoke<CommandInfo[]>("get_module_commands", { psPath, moduleName });
 }
 
+/** Get parameter metadata for a specific command/cmdlet/function. */
+export async function getCommandParameters(
+  psPath: string,
+  commandName: string,
+): Promise<CommandParameterInfo[]> {
+  return invoke<CommandParameterInfo[]>("get_command_parameters", {
+    psPath,
+    commandName,
+  });
+}
+
+/** Get context-sensitive help content for a command/topic. */
+export async function getCommandHelp(
+  psPath: string,
+  commandName: string,
+): Promise<CommandHelpInfo | null> {
+  return invoke<CommandHelpInfo | null>("get_command_help", {
+    psPath,
+    commandName,
+  });
+}
+
 /** Get variables after running a script. */
 export async function getVariablesAfterRun(
   psPath: string,
@@ -264,29 +288,36 @@ export async function startTerminal(
   return invoke<number>("start_terminal", { shellPath, cols, rows, loadProfile });
 }
 
-/** Writes raw terminal input bytes to the active PTY session. */
-export async function terminalWrite(data: string): Promise<void> {
-  return invoke("terminal_write", { data });
+/** Writes raw terminal input bytes to a PTY session. */
+export async function terminalWrite(
+  sessionId: number,
+  data: string,
+): Promise<void> {
+  return invoke("terminal_write", { sessionId, data });
 }
 
 /** Execute a PS command in the active terminal session.
  *  Compatibility shim for callers that submit whole commands.
  */
-export async function terminalExec(command: string): Promise<void> {
-  return invoke("terminal_exec", { command });
+export async function terminalExec(
+  sessionId: number,
+  command: string,
+): Promise<void> {
+  return invoke("terminal_exec", { sessionId, command });
 }
 
 /** Resize the active PTY terminal using xterm.js cols/rows. */
 export async function terminalResize(
+  sessionId: number,
   cols: number,
   rows: number,
 ): Promise<void> {
-  return invoke("terminal_resize", { cols, rows });
+  return invoke("terminal_resize", { sessionId, cols, rows });
 }
 
-/** Stop the active terminal session and clean up the child process. */
-export async function stopTerminal(): Promise<void> {
-  return invoke("stop_terminal");
+/** Stop one terminal session (or all when no id is passed). */
+export async function stopTerminal(sessionId?: number): Promise<void> {
+  return invoke("stop_terminal", { sessionId });
 }
 
 // ---------------------------------------------------------------------------

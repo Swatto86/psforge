@@ -560,7 +560,7 @@ export function Toolbar({
 
       {/* Keyboard shortcut help button */}
       <ToolbarBtn
-        title="Keyboard Shortcuts (F1)"
+        title="Keyboard Shortcuts (Ctrl+F1)"
         testId="toolbar-shortcuts"
         onClick={() => dispatch({ type: "TOGGLE_SHORTCUT_PANEL" })}
       >
