@@ -1,45 +1,36 @@
 /// PSForge integrated terminal module.
-/// Manages a persistent interactive PowerShell session with piped I/O.
-/// Commands are sent via stdin; a sentinel marker signals completion.
+/// Hosts PowerShell inside a real PTY (ConPTY on Windows) and streams raw bytes
+/// to xterm.js. Frontend no longer emulates prompts or line editing.
 use crate::errors::AppError;
 use crate::powershell::validate_ps_path;
 use crate::utils::write_secure_temp_file;
-use log::{debug, error, info, warn};
-use std::io::{BufRead, BufReader, Write};
+use log::{debug, error, info};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use serde::Serialize;
+use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 // CREATE_NO_WINDOW (0x08000000): prevents a console window from flashing when
-// the PowerShell child process is spawned. PSForge targets Windows only.
+// probing PowerShell candidates during auto-discovery.
 use std::os::windows::process::CommandExt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use tauri::{Emitter, Window};
 
-/// Sentinel sent by the frontend after each command to tell the REPL to execute
-/// the accumulated lines and emit the done marker.
-const EXEC_SENTINEL: &str = "<<PSF_EXEC>>";
-
-/// Sentinel emitted by the REPL script after each command completes.
-const DONE_MARKER: &str = "<<PSF_CMD_DONE>>";
-
-/// Prefix of the line emitted by the REPL script carrying the current working
-/// directory after each command completes (and once on startup).
-const CWD_MARKER_PREFIX: &str = "<<PSF_CWD>>";
-
-/// The REPL PowerShell script written to a temp file at session start.
-/// Using a -File launch instead of -EncodedCommand/-Command - is the only
-/// reliable way to prevent PSReadLine from loading in PowerShell 7.
-/// When PS is launched with -Command - it treats the session as interactive
-/// and auto-loads PSReadLine, which calls $Host.UI.RawUI.CursorPosition before
-/// reading any stdin -- that call throws "The handle is invalid" because there
-/// is no real Win32 console (CREATE_NO_WINDOW), and the process exits.
-/// With -File PS runs a non-interactive script; PSReadLine is never loaded.
-const REPL_SCRIPT: &str = r#"
-if (Get-Module -Name PSReadLine -ErrorAction SilentlyContinue) {
-    Remove-Module -Name PSReadLine -Force -ErrorAction SilentlyContinue
-}
+/// Startup script loaded once per terminal process.
+///
+/// Responsibilities:
+/// 1) Keep the existing Exchange/WAM fallback behavior for non-windowed hosts.
+/// 2) Emit VS Code-style shell integration markers (OSC 633) for prompt/cwd/
+///    exit-status/command metadata without using fake command sentinels.
+const TERMINAL_BOOTSTRAP_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Continue'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 
 # Ensure this process has a real (hidden) Win32 console window handle.
 # Some auth stacks (WAM/MSAL) call GetConsoleWindow() and fail when the
@@ -81,9 +72,7 @@ public static class PSForgeNativeConsole {
 
 # Work around ExchangeOnlineManagement WAM failures when no parent window
 # handle is available (for example if console allocation failed).
-# In that case Connect-ExchangeOnline can throw:
-#   "A window handle must be configured..."
-# Automatically add -DisableWAM unless the user has already supplied it.
+# Automatically add -DisableWAM unless the user already supplied it.
 function global:Connect-ExchangeOnline {
     [CmdletBinding(PositionalBinding = $false)]
     param(
@@ -134,70 +123,103 @@ function global:Connect-ExchangeOnline {
     & $cmdlet @RemainingArgs
 }
 
-# Emit initial working directory so the frontend path bar appears immediately.
-[Console]::Out.WriteLine('<<PSF_CWD>>' + (Get-Location).Path)
-[Console]::Out.Flush()
+# VS Code-style shell integration markers for rich terminal UX.
+# A = prompt start, B = prompt end, D = command finished with exit code,
+# E = command line submitted, P;Cwd=... = current working directory.
+$global:PSForgePromptInitialised = $false
+try {
+    if (Get-Module -ListAvailable -Name PSReadLine) {
+        Import-Module PSReadLine -ErrorAction SilentlyContinue | Out-Null
+        Set-PSReadLineOption -AddToHistoryHandler {
+            param([string]$line)
+            $esc = [char]27
+            $encodedLine = $line -replace ';', '%3B'
+            [Console]::Out.Write("$esc]633;E;$encodedLine`a")
+            return $true
+        }
+    }
+} catch {
+    # Shell integration is best-effort and must never break the terminal.
+}
 
-$buf = [System.Collections.Generic.List[string]]::new()
-while ($true) {
-    $line = [Console]::In.ReadLine()
-    if ($null -eq $line) { break }
-    if ($line -eq '<<PSF_EXEC>>') {
-        $script = $buf -join "`n"
-        $buf.Clear()
-        if ($script.Trim() -ne '') {
-            try {
-                . ([scriptblock]::Create($script))
-            } catch {
-                Write-Error $_
+function global:prompt {
+    $esc = [char]27
+    $cwd = (Get-Location).Path
+    $encodedCwd = $cwd -replace ';', '%3B'
+
+    if ($global:PSForgePromptInitialised) {
+        $exitCode = 0
+        if ($LASTEXITCODE -is [int]) {
+            $exitCode = [int]$LASTEXITCODE
+        }
+        if (-not $?) {
+            if ($exitCode -eq 0) {
+                $exitCode = 1
             }
         }
-        # Emit CWD before DONE so the frontend path ref is current when the
-        # terminal-done handler fires and writes the next prompt.
-        [Console]::Out.WriteLine('<<PSF_CWD>>' + (Get-Location).Path)
-        [Console]::Out.WriteLine('<<PSF_CMD_DONE>>')
-        [Console]::Out.Flush()
+        [Console]::Out.Write("$esc]633;D;$exitCode`a")
     } else {
-        $buf.Add($line)
+        $global:PSForgePromptInitialised = $true
     }
+
+    [Console]::Out.Write("$esc]633;A`a")
+    [Console]::Out.Write("$esc]633;P;Cwd=$encodedCwd`a")
+    [Console]::Out.Write("$esc]633;B`a")
+
+    return "PS $cwd> "
 }
 "#;
 
-/// Maximum number of output lines emitted per terminal session (memory/IPC bound).
-/// The integrated terminal is long-lived, so this prevents unbounded event emission.
-const MAX_TERMINAL_LINES: usize = 100_000;
-
-/// Holds an active terminal session.
-struct Session {
-    /// Child process kept alive so we can call kill() on cleanup.
-    child: Child,
-    /// Stdin handle for writing PS code to the session.
-    stdin: ChildStdin,
-    /// Temp script file path, deleted on session cleanup.
-    temp_script: PathBuf,
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalOutputEvent {
+    session_id: u64,
+    data: String,
 }
 
-// Child and ChildStdin are both Send in std, so Session is Send automatically.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalExitEvent {
+    session_id: u64,
+    exit_code: Option<i32>,
+}
+
+/// Holds an active PTY terminal session.
+struct Session {
+    id: u64,
+    child: Box<dyn portable_pty::Child + Send>,
+    writer: Box<dyn Write + Send>,
+    master: Box<dyn MasterPty + Send>,
+    bootstrap_script: PathBuf,
+}
 
 /// Global terminal session (at most one active at a time).
 static TERMINAL: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
 
-/// Returns the global terminal session mutex, initialising it on first call.
+/// Monotonic id used to correlate async terminal events with the active session.
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Returns the global terminal session mutex, initializing it on first call.
 fn get_terminal() -> &'static Mutex<Option<Session>> {
     TERMINAL.get_or_init(|| Mutex::new(None))
 }
 
-/// Starts a new interactive terminal session, stopping any existing one.
+/// Starts a new PTY terminal session, stopping any existing one.
 ///
-/// Spawns PowerShell with piped stdin/stdout/stderr and starts reader threads.
-/// Output is forwarded to the frontend via three Tauri events:
-/// - `terminal-output` (String) -- a line of stdout
-/// - `terminal-stderr` (String) -- a line of stderr  
-/// - `terminal-done`   (null)   -- command completed (sentinel line seen)
-/// - `terminal-exit`   (null)   -- the session process has ended
+/// Emits Tauri events:
+/// - `terminal-output` with `{ sessionId, data }` UTF-8 chunks
+/// - `terminal-exit` with `{ sessionId, exitCode }` when session ends
 #[tauri::command]
-pub async fn start_terminal(window: Window, shell_path: String) -> Result<(), AppError> {
-    info!("start_terminal: shell_path={:?}", shell_path);
+pub async fn start_terminal(
+    window: Window,
+    shell_path: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<u64, AppError> {
+    info!(
+        "start_terminal: shell_path={:?}, cols={:?}, rows={:?}",
+        shell_path, cols, rows
+    );
 
     // Stop any existing session cleanly before starting a new one.
     kill_session();
@@ -213,157 +235,113 @@ pub async fn start_terminal(window: Window, shell_path: String) -> Result<(), Ap
             })?
     } else {
         validate_ps_path(&shell_path)?;
-        shell_path.clone()
+        shell_path
     };
 
-    // Write the REPL script to a temp file so we can launch it with -File.
-    // This avoids -EncodedCommand (opaque, error-prone base64 encoding) and
-    // -Command - (triggers PSReadLine interactive mode -> "handle is invalid").
-    let temp_script = write_secure_temp_file("psforge_repl", ".ps1", REPL_SCRIPT.as_bytes())
-        .map_err(|e| AppError {
-            code: "TERMINAL_SCRIPT_WRITE_FAILED".to_string(),
-            message: format!("Failed to write REPL script to temp file: {}", e),
-        })?;
-    debug!("REPL script written to: {:?}", temp_script);
-    let temp_script_arg = temp_script.to_string_lossy().into_owned();
+    let pty_system = native_pty_system();
+    let size = PtySize {
+        rows: rows.unwrap_or(30).max(1),
+        cols: cols.unwrap_or(120).max(1),
+        pixel_width: 0,
+        pixel_height: 0,
+    };
 
-    let mut child = Command::new(&program)
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            &temp_script_arg,
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW: suppress console flash
-        .spawn()
-        .map_err(|e| AppError {
-            code: "TERMINAL_SPAWN_FAILED".to_string(),
-            message: format!("Failed to start '{}': {}", program, e),
-        })?;
-
-    let stdin = child.stdin.take().ok_or_else(|| AppError {
-        code: "TERMINAL_STDIN_MISSING".to_string(),
-        message: "Failed to acquire terminal stdin handle".to_string(),
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| AppError {
-        code: "TERMINAL_STDOUT_MISSING".to_string(),
-        message: "Failed to acquire terminal stdout handle".to_string(),
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| AppError {
-        code: "TERMINAL_STDERR_MISSING".to_string(),
-        message: "Failed to acquire terminal stderr handle".to_string(),
+    let pair = pty_system.openpty(size).map_err(|e| AppError {
+        code: "TERMINAL_PTY_OPEN_FAILED".to_string(),
+        message: format!("Failed to open PTY: {}", e),
     })?;
 
-    let pid = child.id();
+    // Keep bootstrap logic in a temp file for reliable quoting and easier
+    // maintenance across pwsh and Windows PowerShell.
+    let bootstrap_script =
+        write_secure_temp_file("psforge_terminal_bootstrap", ".ps1", TERMINAL_BOOTSTRAP_SCRIPT.as_bytes())
+            .map_err(|e| AppError {
+                code: "TERMINAL_SCRIPT_WRITE_FAILED".to_string(),
+                message: format!("Failed to write terminal bootstrap script: {}", e),
+            })?;
+    let bootstrap_path = bootstrap_script.to_string_lossy().into_owned();
 
-    // Stdout reader thread: forward lines to frontend, firing terminal-done on sentinel.
+    let mut cmd = CommandBuilder::new(program.clone());
+    cmd.arg("-NoLogo");
+    cmd.arg("-NoProfile");
+    cmd.arg("-ExecutionPolicy");
+    cmd.arg("Bypass");
+    cmd.arg("-NoExit");
+    cmd.arg("-File");
+    cmd.arg(bootstrap_path);
+    cmd.env("TERM", "xterm-256color");
+
+    let child = pair.slave.spawn_command(cmd).map_err(|e| AppError {
+        code: "TERMINAL_SPAWN_FAILED".to_string(),
+        message: format!("Failed to start '{}': {}", program, e),
+    })?;
+    drop(pair.slave);
+
+    let mut reader = pair.master.try_clone_reader().map_err(|e| AppError {
+        code: "TERMINAL_READER_INIT_FAILED".to_string(),
+        message: format!("Failed to acquire PTY reader: {}", e),
+    })?;
+
+    let writer = pair.master.take_writer().map_err(|e| AppError {
+        code: "TERMINAL_WRITER_INIT_FAILED".to_string(),
+        message: format!("Failed to acquire PTY writer: {}", e),
+    })?;
+
+    let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
+
+    // Reader thread: forward raw PTY UTF-8 chunks directly to xterm.js.
     let win_out = window.clone();
     thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        let mut count = 0usize;
-        for line in reader.lines() {
-            match line {
-                Ok(text) if text == DONE_MARKER => {
-                    if let Err(e) = win_out.emit("terminal-done", ()) {
-                        error!("Failed to emit terminal-done: {}", e);
-                    }
-                }
-                Ok(text) if text.starts_with(CWD_MARKER_PREFIX) => {
-                    let cwd = text[CWD_MARKER_PREFIX.len()..].to_string();
-                    debug!("terminal cwd: {}", cwd);
-                    if let Err(e) = win_out.emit("terminal-cwd", &cwd) {
-                        error!("Failed to emit terminal-cwd: {}", e);
-                    }
-                }
-                Ok(text) => {
-                    count += 1;
-                    if count > MAX_TERMINAL_LINES {
-                        if count == MAX_TERMINAL_LINES + 1 {
-                            warn!(
-                                "Terminal stdout line limit reached ({})",
-                                MAX_TERMINAL_LINES
-                            );
-                        }
-                        continue;
-                    }
-                    if let Err(e) = win_out.emit("terminal-output", &text) {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    if let Err(e) = win_out.emit(
+                        "terminal-output",
+                        TerminalOutputEvent {
+                            session_id,
+                            data: text,
+                        },
+                    ) {
                         error!("Failed to emit terminal-output: {}", e);
                         break;
                     }
                 }
                 Err(e) => {
-                    debug!("Terminal stdout reader I/O error: {}", e);
+                    debug!("Terminal PTY reader I/O error: {}", e);
                     break;
                 }
             }
         }
-        // Notify frontend the session has ended so it can update UI.
-        let _ = win_out.emit("terminal-exit", ());
-        debug!("Terminal stdout reader exited");
+
+        let _ = win_out.emit(
+            "terminal-exit",
+            TerminalExitEvent {
+                session_id,
+                exit_code: None,
+            },
+        );
+        debug!("Terminal PTY reader exited (session_id={})", session_id);
     });
 
-    // Stderr reader thread: forward to a separate frontend channel for color differentiation.
-    // Lines are also logged at error level so they appear in the Rust dev console
-    // immediately -- useful for diagnosing startup crashes before the restart fires.
-    let win_err = window.clone();
-    thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        let mut count = 0usize;
-        for line in reader.lines() {
-            match line {
-                Ok(text) => {
-                    count += 1;
-                    error!("terminal stderr: {}", text);
-                    if count > MAX_TERMINAL_LINES {
-                        if count == MAX_TERMINAL_LINES + 1 {
-                            warn!(
-                                "Terminal stderr line limit reached ({})",
-                                MAX_TERMINAL_LINES
-                            );
-                        }
-                        continue;
-                    }
-                    if let Err(e) = win_err.emit("terminal-stderr", &text) {
-                        error!("Failed to emit terminal-stderr: {}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    debug!("Terminal stderr reader I/O error: {}", e);
-                    break;
-                }
-            }
-        }
-    });
-
-    // Store session for stdin access and later cleanup.
-    // Use into_inner() on poison error rather than panicking, so that a
-    // prior panic inside a terminal operation does not permanently brick
-    // the terminal feature (the old session data is stale but harmless).
     let mut guard = get_terminal().lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(Session {
+        id: session_id,
         child,
-        stdin,
-        temp_script,
+        writer,
+        master: pair.master,
+        bootstrap_script,
     });
-    info!("Terminal session started (pid={})", pid);
-    Ok(())
+
+    info!("Terminal PTY session started (session_id={})", session_id);
+    Ok(session_id)
 }
 
-/// Sends a PS command to the active terminal session.
-///
-/// The command is wrapped with the sentinel marker so the frontend can detect
-/// when all output for this command has been emitted.
-/// Fires `terminal-output` events for each line, then `terminal-done`.
+/// Writes raw input data to the active PTY session.
 #[tauri::command]
-pub async fn terminal_exec(command: String) -> Result<(), AppError> {
-    debug!("terminal_exec: {:?}", command);
-
+pub async fn terminal_write(data: String) -> Result<(), AppError> {
     let mut guard = get_terminal().lock().map_err(|_| AppError {
         code: "TERMINAL_LOCK_POISONED".to_string(),
         message: "Terminal session mutex was poisoned by a previous panic".to_string(),
@@ -374,23 +352,53 @@ pub async fn terminal_exec(command: String) -> Result<(), AppError> {
         message: "No terminal session is active. Open the Terminal tab to start one.".to_string(),
     })?;
 
-    // Append the exec sentinel so the REPL loop knows to execute the
-    // accumulated lines and emit the done marker back to the frontend.
-    // This matches the <<PSF_EXEC>> sentinel in REPL_ENCODED_COMMAND.
-    let payload = format!("{command}\n{EXEC_SENTINEL}\n");
-
     session
-        .stdin
-        .write_all(payload.as_bytes())
+        .writer
+        .write_all(data.as_bytes())
         .map_err(|e| AppError {
             code: "TERMINAL_WRITE_FAILED".to_string(),
-            message: format!("Failed to send command to terminal: {}", e),
+            message: format!("Failed to write to terminal: {}", e),
         })?;
 
-    session.stdin.flush().map_err(|e| AppError {
+    session.writer.flush().map_err(|e| AppError {
         code: "TERMINAL_FLUSH_FAILED".to_string(),
-        message: format!("Failed to flush terminal stdin: {}", e),
+        message: format!("Failed to flush terminal input: {}", e),
     })?;
+
+    Ok(())
+}
+
+/// Compatibility shim: submits a full command followed by Enter.
+#[tauri::command]
+pub async fn terminal_exec(command: String) -> Result<(), AppError> {
+    terminal_write(format!("{}\r", command)).await
+}
+
+/// Resizes the active PTY to match the xterm.js viewport.
+#[tauri::command]
+pub async fn terminal_resize(cols: u16, rows: u16) -> Result<(), AppError> {
+    let mut guard = get_terminal().lock().map_err(|_| AppError {
+        code: "TERMINAL_LOCK_POISONED".to_string(),
+        message: "Terminal session mutex was poisoned by a previous panic".to_string(),
+    })?;
+
+    let session = guard.as_mut().ok_or_else(|| AppError {
+        code: "TERMINAL_NOT_RUNNING".to_string(),
+        message: "No terminal session is active. Open the Terminal tab to start one.".to_string(),
+    })?;
+
+    session
+        .master
+        .resize(PtySize {
+            rows: rows.max(1),
+            cols: cols.max(1),
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| AppError {
+            code: "TERMINAL_RESIZE_FAILED".to_string(),
+            message: format!("Failed to resize terminal PTY: {}", e),
+        })?;
 
     Ok(())
 }
@@ -403,39 +411,40 @@ pub async fn stop_terminal() -> Result<(), AppError> {
     Ok(())
 }
 
-/// Terminates the current session by closing stdin and killing the child process.
+/// Terminates the current session by closing writer and killing the child process.
 /// Safe to call when no session is active (no-op).
 fn kill_session() {
-    // Use into_inner() on poison error so a prior panic does not permanently
-    // prevent session cleanup (would leak the child process).
     let mut guard = match get_terminal().lock() {
         Ok(g) => g,
         Err(e) => e.into_inner(),
     };
-    {
-        if let Some(session) = guard.take() {
-            // Destructure to manage drop order explicitly.
-            let Session {
-                mut child,
-                stdin,
-                temp_script,
-            } = session;
-            // Close stdin: signals EOF to the REPL loop so it exits cleanly.
-            drop(stdin);
-            // Kill the process in case it does not exit on stdin-close alone.
-            let _ = child.kill();
-            // Reap the child and delete the temp script on a background thread.
-            thread::spawn(move || {
-                let _ = child.wait();
-                let _ = std::fs::remove_file(&temp_script);
-                debug!("Terminal child process reaped");
-            });
-        }
+
+    if let Some(session) = guard.take() {
+        let Session {
+            id,
+            mut child,
+            writer,
+            master: _,
+            bootstrap_script,
+        } = session;
+
+        // Drop the PTY writer first so interactive shells see EOF on stdin.
+        drop(writer);
+
+        // Kill in case the process ignores EOF or is busy.
+        let _ = child.kill();
+
+        // Reap child and clean bootstrap temp file in the background.
+        thread::spawn(move || {
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&bootstrap_script);
+            debug!("Terminal child process reaped (session_id={})", id);
+        });
     }
 }
 
 /// Returns the best available PowerShell executable on this machine.
-/// Prefers pwsh (PowerShell 7+) over the legacy Windows PowerShell.
+/// Prefers pwsh (PowerShell 7+) over legacy Windows PowerShell.
 fn find_powershell() -> String {
     for candidate in ["pwsh", "pwsh.exe", "powershell", "powershell.exe"] {
         if Command::new(candidate)
@@ -449,6 +458,7 @@ fn find_powershell() -> String {
             return candidate.to_string();
         }
     }
-    // Fallback: will produce a descriptive error when spawned.
+
+    // Fallback: spawn will return a descriptive error if this binary is absent.
     "powershell.exe".to_string()
 }

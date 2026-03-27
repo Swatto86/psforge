@@ -57,7 +57,9 @@ pub fn run() {
             commands::get_signing_certificates,
             commands::sign_script,
             terminal::start_terminal,
+            terminal::terminal_write,
             terminal::terminal_exec,
+            terminal::terminal_resize,
             terminal::stop_terminal,
         ])
         .setup(|app| {
