@@ -53,6 +53,7 @@ pub async fn execute_script(
     working_dir: String,
     exec_policy: String,
     script_args: Option<Vec<String>>,
+    persist_runspace: Option<bool>,
 ) -> Result<i32, AppError> {
     info!("execute_script called with ps_path={}", ps_path);
     powershell::validate_ps_path(&ps_path)?;
@@ -64,6 +65,7 @@ pub async fn execute_script(
             &script,
             &working_dir,
             &exec_policy,
+            persist_runspace.unwrap_or(true),
             script_args.as_deref().unwrap_or(&[]),
             None,
             move |line: OutputLine| {
@@ -94,9 +96,19 @@ pub async fn execute_selection(
     selection: String,
     working_dir: String,
     exec_policy: String,
+    persist_runspace: Option<bool>,
 ) -> Result<i32, AppError> {
     info!("execute_selection called");
-    execute_script(window, ps_path, selection, working_dir, exec_policy, None).await
+    execute_script(
+        window,
+        ps_path,
+        selection,
+        working_dir,
+        exec_policy,
+        None,
+        persist_runspace,
+    )
+    .await
 }
 
 /// Executes a script in debugger mode with line breakpoints.
@@ -110,6 +122,7 @@ pub async fn execute_script_debug(
     exec_policy: String,
     breakpoints: Vec<powershell::DebugBreakpointSpec>,
     script_args: Option<Vec<String>>,
+    persist_runspace: Option<bool>,
 ) -> Result<i32, AppError> {
     info!(
         "execute_script_debug called with ps_path={} breakpoints={}",
@@ -125,6 +138,7 @@ pub async fn execute_script_debug(
             &script,
             &working_dir,
             &exec_policy,
+            persist_runspace.unwrap_or(true),
             script_args.as_deref().unwrap_or(&[]),
             Some(&breakpoints),
             move |line: OutputLine| {

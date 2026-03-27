@@ -604,6 +604,25 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Runspace Persistence"
+                tooltip="Controls whether script/debug runs reuse one backend runspace or start from a fresh runspace each time."
+              >
+                <div className="flex flex-col gap-1">
+                  <Toggle
+                    checked={state.settings.persistRunspaceBetweenRuns !== false}
+                    onChange={(v) =>
+                      updateSetting("persistRunspaceBetweenRuns", v)
+                    }
+                    label="Persist runspace state between runs"
+                  />
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Off means each run/debug starts from a clean PowerShell
+                    session. On means globals/modules/location can carry over.
+                  </p>
+                </div>
+              </SettingRow>
+
+              <SettingRow
                 label="Working Directory"
                 tooltip="Sets the current directory used for script execution and relative paths."
               >

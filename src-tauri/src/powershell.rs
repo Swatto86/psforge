@@ -540,6 +540,7 @@ impl ProcessManager {
         script: &str,
         working_dir: &str,
         exec_policy: &str,
+        persist_runspace: bool,
         script_args: &[String],
         debug_breakpoints: Option<&[DebugBreakpointSpec]>,
         on_output: F,
@@ -554,6 +555,10 @@ impl ProcessManager {
             ps_path, working_dir
         );
         debug!("Script size: {} bytes", script.len());
+        if !persist_runspace {
+            // Force a fresh process-local runspace for this invocation.
+            self.stop().await?;
+        }
         let session = self.ensure_session(ps_path, exec_policy).await?;
 
         // Write the user script to a uniquely-named temp file.
@@ -803,6 +808,19 @@ impl ProcessManager {
                 *guard = None;
             }
             let _ = std::fs::remove_file(&session.bootstrap_script_path);
+        } else if !persist_runspace {
+            // When persistence is disabled, terminate the host after this run.
+            let session_to_stop = {
+                let mut guard = self.session.lock().await;
+                if guard.as_ref().is_some_and(|s| Arc::ptr_eq(s, &session)) {
+                    guard.take()
+                } else {
+                    None
+                }
+            };
+            if let Some(s) = session_to_stop {
+                Self::shutdown_session(s).await;
+            }
         }
 
         // Remove temp scripts now that execution has finished/interrupted.
