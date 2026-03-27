@@ -200,19 +200,36 @@ export async function saveUserSnippets(snippets: Snippet[]): Promise<void> {
 // Integrated Terminal
 // ---------------------------------------------------------------------------
 
-/** Start an interactive terminal session using the given PS binary path.
+/** Start an interactive PTY terminal session.
  *  Pass an empty string or "auto" to auto-detect the best available shell.
- *  Output is streamed via terminal-output / terminal-stderr / terminal-done / terminal-exit events.
+ *  Returns a session id used to correlate output/exit events.
  */
-export async function startTerminal(shellPath: string): Promise<void> {
-  return invoke("start_terminal", { shellPath });
+export async function startTerminal(
+  shellPath: string,
+  cols: number,
+  rows: number,
+): Promise<number> {
+  return invoke<number>("start_terminal", { shellPath, cols, rows });
+}
+
+/** Writes raw terminal input bytes to the active PTY session. */
+export async function terminalWrite(data: string): Promise<void> {
+  return invoke("terminal_write", { data });
 }
 
 /** Execute a PS command in the active terminal session.
- *  Fires terminal-output events for each output line, then terminal-done when complete.
+ *  Compatibility shim for callers that submit whole commands.
  */
 export async function terminalExec(command: string): Promise<void> {
   return invoke("terminal_exec", { command });
+}
+
+/** Resize the active PTY terminal using xterm.js cols/rows. */
+export async function terminalResize(
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return invoke("terminal_resize", { cols, rows });
 }
 
 /** Stop the active terminal session and clean up the child process. */

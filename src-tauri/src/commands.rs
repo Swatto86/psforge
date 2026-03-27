@@ -1808,11 +1808,6 @@ pub async fn suggest_modules_for_command(
     Ok(suggestions)
 }
 
-/// Monotonically-increasing counter used to generate unique temp-file names.
-/// Replaces subsec_nanos() which can collide when two calls share the same
-/// nanosecond tick (e.g. concurrent PSSA analysis + completion request).
-static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Writes `content` to a uniquely-named temp file and returns its path.
 fn write_temp_ps_file(content: &str) -> std::io::Result<std::path::PathBuf> {
     write_secure_temp_file("psforge_tmp", ".ps1", content.as_bytes())
