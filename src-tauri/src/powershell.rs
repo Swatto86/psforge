@@ -168,10 +168,11 @@ function global:Invoke-PSForgeCommand {
         Write-Error $_
         $exitCode = 1
     } finally {
+        # Emit completion marker only on stdout. If it is emitted on stderr too,
+        # the stderr reader can race ahead of real stdout payload lines and cause
+        # the host loop to complete before user output is drained.
         [Console]::Out.WriteLine("<<PSFORGE_DONE|$CommandId|$exitCode>>")
         [Console]::Out.Flush()
-        [Console]::Error.WriteLine("<<PSFORGE_DONE|$CommandId|$exitCode>>")
-        [Console]::Error.Flush()
     }
 }
 
