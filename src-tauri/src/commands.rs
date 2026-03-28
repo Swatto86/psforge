@@ -525,31 +525,45 @@ pub async fn get_installed_modules(ps_path: String) -> Result<Vec<ModuleInfo>, A
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_str = find_last_json(&stdout).unwrap_or(stdout.trim());
+    let trimmed = json_str.trim();
 
-    if stdout.trim().is_empty() {
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
         return Ok(Vec::new());
     }
 
     // PowerShell returns a single object (not array) when there is exactly one module.
-    let modules: Vec<ModuleInfo> = if stdout.trim().starts_with('[') {
-        serde_json::from_str(&stdout).map_err(|e| AppError {
-            code: "MODULE_PARSE_FAILED".to_string(),
-            message: format!(
-                "Failed to parse module list JSON ({}). First 200 chars: {}",
-                e,
-                &stdout[..stdout.len().min(200)]
-            ),
-        })?
+    // Use the last JSON block to tolerate informational/noise text before JSON.
+    let modules: Vec<ModuleInfo> = if trimmed.starts_with('[') {
+        match serde_json::from_str(trimmed) {
+            Ok(items) => items,
+            Err(e) => {
+                warn!(
+                    "Failed to parse module list JSON ({}). First 200 chars: {}",
+                    e,
+                    &trimmed[..trimmed.len().min(200)]
+                );
+                Vec::new()
+            }
+        }
+    } else if trimmed.starts_with('{') {
+        match serde_json::from_str::<ModuleInfo>(trimmed) {
+            Ok(single) => vec![single],
+            Err(e) => {
+                warn!(
+                    "Failed to parse single-module JSON ({}). First 200 chars: {}",
+                    e,
+                    &trimmed[..trimmed.len().min(200)]
+                );
+                Vec::new()
+            }
+        }
     } else {
-        let single: ModuleInfo = serde_json::from_str(&stdout).map_err(|e| AppError {
-            code: "MODULE_PARSE_FAILED".to_string(),
-            message: format!(
-                "Failed to parse single-module JSON ({}). First 200 chars: {}",
-                e,
-                &stdout[..stdout.len().min(200)]
-            ),
-        })?;
-        vec![single]
+        warn!(
+            "Module enumeration produced non-JSON stdout. First 200 chars: {}",
+            &trimmed[..trimmed.len().min(200)]
+        );
+        Vec::new()
     };
 
     info!("Found {} installed modules", modules.len());

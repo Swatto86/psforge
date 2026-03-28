@@ -347,6 +347,10 @@ export function OutputPane({
         style={{
           borderBottom: "1px solid var(--border-primary)",
           backgroundColor: "var(--bg-secondary)",
+          minHeight: "38px",
+          whiteSpace: "nowrap",
+          overflowX: "auto",
+          overflowY: "hidden",
         }}
       >
         {bottomTabs.map((tab) => (
@@ -369,6 +373,10 @@ export function OutputPane({
               className="transition-colors"
               style={{
                 padding: "8px 28px",
+                display: "inline-flex",
+                alignItems: "center",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
                 backgroundColor: "transparent",
                 color:
                   state.bottomPanelTab === tab.id

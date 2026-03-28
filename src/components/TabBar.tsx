@@ -90,12 +90,25 @@ export function TabBar() {
 
   // BUG-NEW-5 fix: extracted shared close logic so the context menu items
   // run the same isDirty confirmation as the tab × button.
-  const closeTab = (tabId: string) => {
+  const confirmDiscard = async (title: string): Promise<boolean> => {
+    const message = `"${title}" has unsaved changes.\n\nClose without saving?`;
+    try {
+      const { confirm } = await import("@tauri-apps/plugin-dialog");
+      return await confirm(message, {
+        title: "PSForge",
+        kind: "warning",
+        okLabel: "Close",
+        cancelLabel: "Cancel",
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  const closeTab = async (tabId: string) => {
     const tab = state.tabs.find((t) => t.id === tabId);
     if (tab?.isDirty) {
-      const confirmed = window.confirm(
-        `"${tab.title}" has unsaved changes.\n\nClose without saving?`,
-      );
+      const confirmed = await confirmDiscard(tab.title);
       if (!confirmed) return;
     }
     if (state.tabs.length > 1) {
@@ -105,7 +118,7 @@ export function TabBar() {
 
   const handleClose = (e: React.MouseEvent, tabId: string) => {
     e.stopPropagation();
-    closeTab(tabId);
+    void closeTab(tabId);
   };
 
   const handleContextMenu = (e: React.MouseEvent, tabId: string) => {
@@ -113,14 +126,12 @@ export function TabBar() {
     setContextMenu({ x: e.clientX, y: e.clientY, tabId });
   };
 
-  const closeOthers = (tabId: string) => {
+  const closeOthers = async (tabId: string) => {
     // BUG-NEW-5 fix: check isDirty before closing each tab.
     for (const t of state.tabs) {
       if (t.id === tabId) continue;
       if (t.isDirty) {
-        const confirmed = window.confirm(
-          `"${t.title}" has unsaved changes.\n\nClose without saving?`,
-        );
+        const confirmed = await confirmDiscard(t.title);
         if (!confirmed) {
           setContextMenu(null);
           return;
@@ -131,14 +142,24 @@ export function TabBar() {
     setContextMenu(null);
   };
 
-  const closeAll = () => {
+  const closeAll = async () => {
     // BUG-NEW-5 fix: confirm once for all dirty tabs before closing any.
     const dirtyTabs = state.tabs.filter((t) => t.isDirty);
     if (dirtyTabs.length > 0) {
       const names = dirtyTabs.map((t) => `"${t.title}"`).join(", ");
-      const confirmed = window.confirm(
-        `${dirtyTabs.length} file(s) have unsaved changes: ${names}.\n\nClose all without saving?`,
-      );
+      let confirmed = false;
+      const message = `${dirtyTabs.length} file(s) have unsaved changes: ${names}.\n\nClose all without saving?`;
+      try {
+        const { confirm } = await import("@tauri-apps/plugin-dialog");
+        confirmed = await confirm(message, {
+          title: "PSForge",
+          kind: "warning",
+          okLabel: "Close All",
+          cancelLabel: "Cancel",
+        });
+      } catch {
+        confirmed = false;
+      }
       if (!confirmed) {
         setContextMenu(null);
         return;
@@ -277,15 +298,15 @@ export function TabBar() {
             label="Close"
             onClick={() => {
               // BUG-NEW-5 fix: route through closeTab so isDirty is checked.
-              closeTab(contextMenu.tabId);
+              void closeTab(contextMenu.tabId);
               setContextMenu(null);
             }}
           />
           <CtxMenuItem
             label="Close Others"
-            onClick={() => closeOthers(contextMenu.tabId)}
+            onClick={() => void closeOthers(contextMenu.tabId)}
           />
-          <CtxMenuItem label="Close All" onClick={closeAll} />
+          <CtxMenuItem label="Close All" onClick={() => void closeAll()} />
           <div
             className="my-1"
             style={{
@@ -318,12 +339,12 @@ function CtxMenuItem({
   disabled = false,
 }: {
   label: string;
-  onClick: () => void;
+  onClick: () => void | Promise<void>;
   disabled?: boolean;
 }) {
   return (
     <div
-      onClick={disabled ? undefined : onClick}
+      onClick={disabled ? undefined : () => void onClick()}
       className="px-3 py-1 transition-colors"
       style={{
         color: disabled ? "var(--text-muted)" : "var(--text-primary)",

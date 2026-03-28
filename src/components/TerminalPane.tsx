@@ -382,7 +382,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
 
           if (showBanner) {
             term.write("\x1b[1;36mPSForge Terminal\x1b[0m\r\n");
-            term.write("PTY host active (ConPTY on Windows).\r\n\r\n");
+            term.write("\r\n");
           }
 
           if (startupCommandRef.current.trim()) {
@@ -621,6 +621,7 @@ export function TerminalPane() {
   const { state } = useAppState();
   const tabCounterRef = useRef(1);
   const sessionRefs = useRef<Record<string, TerminalSessionHandle | null>>({});
+  const remoteTargetInputRef = useRef<HTMLInputElement>(null);
   const [tabs, setTabs] = useState<ConsoleTabModel[]>(() => [
     {
       id: "console-1",
@@ -630,6 +631,9 @@ export function TerminalPane() {
     },
   ]);
   const [activeTabId, setActiveTabId] = useState("console-1");
+  const [showRemoteDialog, setShowRemoteDialog] = useState(false);
+  const [remoteTarget, setRemoteTarget] = useState("");
+  const [remoteValidationError, setRemoteValidationError] = useState("");
 
   const getActiveHandle = () => sessionRefs.current[activeTabId] ?? null;
 
@@ -646,14 +650,7 @@ export function TerminalPane() {
     setActiveTabId(id);
   };
 
-  const addRemoteTab = () => {
-    const targetRaw = window.prompt(
-      "Remote target for Enter-PSSession -ComputerName:",
-      "",
-    );
-    const target = targetRaw?.trim() ?? "";
-    if (!target) return;
-
+  const createRemoteTab = (target: string) => {
     tabCounterRef.current += 1;
     const id = `console-${tabCounterRef.current}`;
     const tab: ConsoleTabModel = {
@@ -666,6 +663,46 @@ export function TerminalPane() {
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(id);
   };
+
+  const openRemoteDialog = () => {
+    setRemoteTarget("");
+    setRemoteValidationError("");
+    setShowRemoteDialog(true);
+    requestAnimationFrame(() => remoteTargetInputRef.current?.focus());
+  };
+
+  const confirmRemoteDialog = () => {
+    const target = remoteTarget.trim();
+    if (!target) {
+      setRemoteValidationError("Enter a remote computer name.");
+      return;
+    }
+    createRemoteTab(target);
+    setShowRemoteDialog(false);
+    setRemoteTarget("");
+    setRemoteValidationError("");
+  };
+
+  const cancelRemoteDialog = () => {
+    setShowRemoteDialog(false);
+    setRemoteTarget("");
+    setRemoteValidationError("");
+  };
+
+  useEffect(() => {
+    if (!showRemoteDialog) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cancelRemoteDialog();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        confirmRemoteDialog();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [showRemoteDialog, remoteTarget]);
 
   const closeTab = (id: string) => {
     setTabs((prev) => {
@@ -774,7 +811,7 @@ export function TerminalPane() {
           + Local
         </button>
         <button
-          onClick={addRemoteTab}
+          onClick={openRemoteDialog}
           style={{ backgroundColor: "transparent", color: "var(--text-secondary)" }}
           title="New remote console tab (Enter-PSSession)"
         >
@@ -795,6 +832,105 @@ export function TerminalPane() {
           Restart
         </button>
       </div>
+
+      {showRemoteDialog && (
+        <div
+          onClick={cancelRemoteDialog}
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1200,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "460px",
+              maxWidth: "calc(100vw - 32px)",
+              backgroundColor: "var(--bg-panel)",
+              border: "1px solid var(--border-primary)",
+              borderRadius: "6px",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.45)",
+              padding: "14px",
+              fontFamily: "var(--ui-font-family)",
+              fontSize: "var(--ui-font-size)",
+            }}
+            data-testid="terminal-remote-dialog"
+          >
+            <div
+              style={{
+                color: "var(--text-primary)",
+                fontSize: "var(--ui-font-size-lg)",
+                marginBottom: "8px",
+                fontWeight: 600,
+              }}
+            >
+              PSForge
+            </div>
+            <div style={{ color: "var(--text-secondary)", marginBottom: "8px" }}>
+              Remote target for Enter-PSSession -ComputerName:
+            </div>
+            <input
+              ref={remoteTargetInputRef}
+              value={remoteTarget}
+              onChange={(e) => {
+                setRemoteTarget(e.target.value);
+                if (remoteValidationError) setRemoteValidationError("");
+              }}
+              placeholder="server01.contoso.local"
+              style={{ width: "100%" }}
+            />
+            {remoteValidationError && (
+              <div
+                style={{
+                  color: "var(--stream-stderr)",
+                  marginTop: "6px",
+                  fontSize: "var(--ui-font-size-sm)",
+                }}
+              >
+                {remoteValidationError}
+              </div>
+            )}
+            <div
+              style={{
+                marginTop: "12px",
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "8px",
+              }}
+            >
+              <button
+                onClick={cancelRemoteDialog}
+                style={{
+                  backgroundColor: "transparent",
+                  border: "1px solid var(--border-primary)",
+                  color: "var(--text-primary)",
+                  padding: "4px 12px",
+                  borderRadius: "4px",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRemoteDialog}
+                style={{
+                  backgroundColor: "var(--accent)",
+                  border: "1px solid var(--accent)",
+                  color: "#ffffff",
+                  padding: "4px 12px",
+                  borderRadius: "4px",
+                }}
+              >
+                Connect
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0">
         {tabs.map((tab) => (

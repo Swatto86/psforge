@@ -2,6 +2,7 @@
 
 import React, { useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { AppProvider, useAppState, newTabId, untitledCounter } from "./store";
 import { Toolbar } from "./components/Toolbar";
 import { TabBar } from "./components/TabBar";
@@ -24,6 +25,7 @@ import type {
   DebugLocal,
   DebugStackFrame,
   DebugWatch,
+  PsVersion,
 } from "./types";
 
 // Expose the startup reveal function injected by public/preload.js.
@@ -96,6 +98,7 @@ const MIN_BOTTOM_PANE_HEIGHT_PX = 150;
 const HARD_MIN_SPLIT_PERCENT = 8;
 const HARD_MAX_SPLIT_PERCENT = 92;
 const SPLIT_EPSILON = 0.1;
+const PS7_INSTALL_URL = "https://aka.ms/install-powershell";
 
 const DEBUG_STACK_COMMAND =
   "$__psf_stack = Get-PSCallStack | ForEach-Object { " +
@@ -234,6 +237,14 @@ function clampSplitPercentForHeight(percent: number, containerHeight: number): n
   return Math.max(minPercent, Math.min(maxPercent, safePercent));
 }
 
+function isPs7OrNewer(version: PsVersion): boolean {
+  const path = version.path.toLowerCase();
+  if (path.endsWith("\\pwsh.exe") || path.endsWith("/pwsh.exe")) return true;
+  const major = Number.parseInt(version.version, 10);
+  if (Number.isFinite(major) && major >= 7) return true;
+  return version.name.toLowerCase().includes("powershell 7");
+}
+
 /** Inner app that has access to the store. */
 function AppInner() {
   const { state, dispatch, activeTab } = useAppState();
@@ -241,6 +252,11 @@ function AppInner() {
   const [splitPercent, setSplitPercent] = React.useState(
     state.settings.splitPosition,
   );
+  const [showPs7Banner, setShowPs7Banner] = React.useState(false);
+  const [ps7BannerDismissedSession, setPs7BannerDismissedSession] =
+    React.useState(false);
+  const [psVersionRefreshInFlight, setPsVersionRefreshInFlight] =
+    React.useState(false);
   const isDragging = useRef(false);
   /** Tracks the live split position during a drag so onMouseUp reads the
    *  final position, not the stale value captured at drag-start. */
@@ -279,6 +295,90 @@ function AppInner() {
     params: ScriptParameter[];
     resolve: (values: Record<string, string> | null) => void;
   } | null>(null);
+  const hasPs7 = state.psVersions.some(isPs7OrNewer);
+
+  const refreshPsVersions = useCallback(async () => {
+    if (psVersionRefreshInFlight) return;
+    setPsVersionRefreshInFlight(true);
+    try {
+      const versions = await cmd.getPsVersions();
+      dispatch({ type: "SET_PS_VERSIONS", versions });
+
+      let nextPath = "";
+      if (versions.length > 0) {
+        if (
+          state.settings.defaultPsVersion &&
+          state.settings.defaultPsVersion !== "auto"
+        ) {
+          const preferred = versions.find(
+            (v) => v.path === state.settings.defaultPsVersion,
+          );
+          if (preferred) {
+            nextPath = preferred.path;
+          } else if (versions.some((v) => v.path === state.selectedPsPath)) {
+            nextPath = state.selectedPsPath;
+          } else {
+            nextPath = versions[0].path;
+          }
+        } else {
+          // Auto mode: always pick the highest-priority discovered shell.
+          nextPath = versions[0].path;
+        }
+      }
+      dispatch({ type: "SET_SELECTED_PS", path: nextPath });
+    } catch {
+      // Best-effort refresh; keep current shell selection on failure.
+    } finally {
+      setPsVersionRefreshInFlight(false);
+    }
+  }, [
+    psVersionRefreshInFlight,
+    dispatch,
+    state.settings.defaultPsVersion,
+    state.selectedPsPath,
+  ]);
+
+  useEffect(() => {
+    if (!state.settingsLoaded) return;
+    const onlyWindowsPowerShell = state.psVersions.length > 0 && !hasPs7;
+    if (
+      !onlyWindowsPowerShell ||
+      state.settings.showPs7InstallReminder === false
+    ) {
+      setShowPs7Banner(false);
+      setPs7BannerDismissedSession(false);
+      return;
+    }
+    setShowPs7Banner(!ps7BannerDismissedSession);
+  }, [
+    state.settingsLoaded,
+    state.psVersions,
+    state.settings.showPs7InstallReminder,
+    hasPs7,
+    ps7BannerDismissedSession,
+  ]);
+
+  const openPs7InstallPage = useCallback(() => {
+    setPs7BannerDismissedSession(true);
+    setShowPs7Banner(false);
+    openUrl(PS7_INSTALL_URL).catch(() => {});
+  }, []);
+
+  const dismissPs7BannerForSession = useCallback(() => {
+    setPs7BannerDismissedSession(true);
+    setShowPs7Banner(false);
+  }, []);
+
+  const disablePs7Reminder = useCallback(() => {
+    setPs7BannerDismissedSession(true);
+    setShowPs7Banner(false);
+    const updated = {
+      ...state.settings,
+      showPs7InstallReminder: false,
+    };
+    dispatch({ type: "SET_SETTINGS", settings: updated });
+    cmd.saveSettings(updated).catch(() => {});
+  }, [dispatch, state.settings]);
 
   useEffect(() => {
     if (state.debugLine && state.debugColumn) {
@@ -763,12 +863,22 @@ function AppInner() {
   }, [state.tabs, state.settings, saveTab, mergeRecentFiles, dispatch]);
 
   /** Close the active tab, mirroring tab-bar close confirmation semantics. */
-  const closeActiveTab = useCallback(() => {
+  const closeActiveTab = useCallback(async () => {
     if (!activeTab || state.tabs.length <= 1) return;
     if (activeTab.isDirty) {
-      const confirmed = window.confirm(
-        `"${activeTab.title}" has unsaved changes.\n\nClose without saving?`,
-      );
+      const confirmMessage = `"${activeTab.title}" has unsaved changes.\n\nClose without saving?`;
+      let confirmed = false;
+      try {
+        const { confirm } = await import("@tauri-apps/plugin-dialog");
+        confirmed = await confirm(confirmMessage, {
+          title: "PSForge",
+          kind: "warning",
+          okLabel: "Close",
+          cancelLabel: "Cancel",
+        });
+      } catch {
+        confirmed = false;
+      }
       if (!confirmed) return;
     }
     dispatch({ type: "CLOSE_TAB", id: activeTab.id });
@@ -1511,7 +1621,7 @@ function AppInner() {
       // Ctrl+W: close active tab.
       if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        closeActiveTab();
+        void closeActiveTab();
       }
 
       // Ctrl+Tab / Ctrl+Shift+Tab: cycle through open tabs.
@@ -1816,6 +1926,84 @@ function AppInner() {
         onPrint={printScript}
         onSign={() => dispatch({ type: "TOGGLE_SIGNING_DIALOG" })}
       />
+
+      {showPs7Banner && (
+        <div
+          data-testid="ps7-install-banner"
+          className="flex items-center justify-between gap-3 px-3 py-2"
+          style={{
+            backgroundColor: "var(--bg-secondary)",
+            borderTop: "1px solid var(--border-primary)",
+            borderBottom: "1px solid var(--border-primary)",
+            color: "var(--text-primary)",
+            fontFamily: "var(--ui-font-family)",
+            fontSize: "var(--ui-font-size-sm)",
+          }}
+        >
+          <div className="min-w-0">
+            <div style={{ fontWeight: 600 }}>
+              PowerShell 7 not detected. PSForge is using Windows PowerShell 5.1.
+            </div>
+            <div style={{ color: "var(--text-secondary)" }}>
+              Install PS7 for better module compatibility, performance, and modern features.
+            </div>
+          </div>
+          <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+            <button
+              onClick={openPs7InstallPage}
+              style={{
+                backgroundColor: "var(--accent)",
+                color: "#ffffff",
+                border: "1px solid var(--accent)",
+                borderRadius: "4px",
+                padding: "4px 10px",
+              }}
+            >
+              Install
+            </button>
+            <button
+              onClick={() => void refreshPsVersions()}
+              disabled={psVersionRefreshInFlight}
+              style={{
+                backgroundColor: "transparent",
+                color: psVersionRefreshInFlight
+                  ? "var(--text-muted)"
+                  : "var(--text-secondary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                padding: "4px 10px",
+                cursor: psVersionRefreshInFlight ? "default" : "pointer",
+              }}
+            >
+              {psVersionRefreshInFlight ? "Rescanning..." : "Rescan"}
+            </button>
+            <button
+              onClick={dismissPs7BannerForSession}
+              style={{
+                backgroundColor: "transparent",
+                color: "var(--text-secondary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                padding: "4px 10px",
+              }}
+            >
+              Not now
+            </button>
+            <button
+              onClick={disablePs7Reminder}
+              style={{
+                backgroundColor: "transparent",
+                color: "var(--text-secondary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                padding: "4px 10px",
+              }}
+            >
+              Don&apos;t remind again
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main content area */}
       <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">

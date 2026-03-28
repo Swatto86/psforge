@@ -124,11 +124,11 @@ describe('About Dialog', () => {
       expect(text.toLowerCase()).toContain('github');
     });
 
-    it('should display the tech stack info containing "Tauri"', async () => {
+    it('should display the tech stack info containing "PSForge"', async () => {
       const tech = await $('[data-testid="about-dialog-tech"]');
       await expect(tech).toBeDisplayed();
       const text = await tech.getText();
-      expect(text).toContain('Tauri');
+      expect(text).toContain('PSForge');
     });
 
     it('should display the Close button', async () => {

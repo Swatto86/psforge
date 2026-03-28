@@ -111,7 +111,7 @@ export function WelcomePane() {
             className="mb-4"
             style={{ color: "var(--text-secondary)", fontSize: "var(--ui-font-size-lg)" }}
           >
-            A modern PowerShell editor built on Tauri + Monaco
+            A modern PowerShell editor built for productivity
           </p>
           <div className="flex flex-wrap gap-2">
             <ActionButton
