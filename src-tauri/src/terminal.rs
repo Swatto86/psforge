@@ -135,6 +135,16 @@ function global:Connect-ExchangeOnline {
 # A = prompt start, B = prompt end, D = command finished with exit code,
 # E = command line submitted, P;Cwd=... = current working directory.
 $global:PSForgePromptInitialised = $false
+$script:PSForgePriorPrompt = $null
+try {
+    $existingPrompt = Get-Command -Name prompt -CommandType Function -ErrorAction SilentlyContinue
+    if ($existingPrompt -and $existingPrompt.ScriptBlock) {
+        $script:PSForgePriorPrompt = $existingPrompt.ScriptBlock
+    }
+} catch {
+    $script:PSForgePriorPrompt = $null
+}
+
 try {
     if (Get-Module -ListAvailable -Name PSReadLine) {
         Import-Module PSReadLine -ErrorAction SilentlyContinue | Out-Null
@@ -173,6 +183,17 @@ function global:prompt {
     [Console]::Out.Write("$esc]633;A`a")
     [Console]::Out.Write("$esc]633;P;Cwd=$encodedCwd`a")
     [Console]::Out.Write("$esc]633;B`a")
+
+    if ($script:PSForgePriorPrompt) {
+        try {
+            $promptText = & $script:PSForgePriorPrompt
+            if ($null -ne $promptText) {
+                return [string]$promptText
+            }
+        } catch {
+            # Fall back to built-in prompt style if user/custom prompt throws.
+        }
+    }
 
     return "PS $cwd> "
 }

@@ -102,7 +102,11 @@ function highlightPs(text: string): string {
       i = j;
       continue;
     }
-    if (text[i] === "-" && i + 1 < text.length && /[a-zA-Z]/.test(text[i + 1])) {
+    if (
+      text[i] === "-" &&
+      i + 1 < text.length &&
+      /[a-zA-Z]/.test(text[i + 1])
+    ) {
       let j = i + 1;
       while (j < text.length && /[a-zA-Z]/.test(text[j])) j++;
       result += K + text.slice(i, j) + R;
@@ -123,7 +127,9 @@ function highlightPs(text: string): string {
       const word = text.slice(i, j);
       if (KEYWORDS.has(word.toLowerCase())) {
         result += K + word + R;
-      } else if (/^[a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z][a-zA-Z0-9]*)+$/.test(word)) {
+      } else if (
+        /^[a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z][a-zA-Z0-9]*)+$/.test(word)
+      ) {
         result += F + word + R;
       } else {
         result += word;
@@ -142,6 +148,35 @@ function cssVar(name: string, fallback: string): string {
     getComputedStyle(document.documentElement).getPropertyValue(name).trim() ||
     fallback
   );
+}
+
+function terminalThemeFromCss() {
+  return {
+    background: cssVar("--terminal-bg", cssVar("--bg-primary", "#1e1e1e")),
+    foreground: cssVar("--terminal-fg", cssVar("--text-primary", "#cccccc")),
+    cursor: cssVar("--terminal-cursor", "#ffffff"),
+    cursorAccent: cssVar("--terminal-cursor-accent", "#1e1e1e"),
+    selectionBackground: cssVar(
+      "--terminal-selection",
+      "rgba(0, 122, 204, 0.35)",
+    ),
+    black: cssVar("--terminal-ansi-black", "#1e1e1e"),
+    red: cssVar("--terminal-ansi-red", "#f44747"),
+    green: cssVar("--terminal-ansi-green", "#4ec9b0"),
+    yellow: cssVar("--terminal-ansi-yellow", "#dcdcaa"),
+    blue: cssVar("--terminal-ansi-blue", "#569cd6"),
+    magenta: cssVar("--terminal-ansi-magenta", "#c586c0"),
+    cyan: cssVar("--terminal-ansi-cyan", "#4fc1ff"),
+    white: cssVar("--terminal-ansi-white", "#d4d4d4"),
+    brightBlack: cssVar("--terminal-ansi-bright-black", "#808080"),
+    brightRed: cssVar("--terminal-ansi-bright-red", "#f44747"),
+    brightGreen: cssVar("--terminal-ansi-bright-green", "#4ec9b0"),
+    brightYellow: cssVar("--terminal-ansi-bright-yellow", "#dcdcaa"),
+    brightBlue: cssVar("--terminal-ansi-bright-blue", "#569cd6"),
+    brightMagenta: cssVar("--terminal-ansi-bright-magenta", "#c586c0"),
+    brightCyan: cssVar("--terminal-ansi-bright-cyan", "#4fc1ff"),
+    brightWhite: cssVar("--terminal-ansi-bright-white", "#ffffff"),
+  };
 }
 
 type TerminalOutputEvent = {
@@ -184,12 +219,21 @@ interface TerminalSessionProps {
   loadProfile: boolean;
   fontFamily: string;
   fontSize: number;
+  appTheme: string;
   startupCommand?: string;
 }
 
 const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
   function TerminalSession(
-    { active, shellPath, loadProfile, fontFamily, fontSize, startupCommand },
+    {
+      active,
+      shellPath,
+      loadProfile,
+      fontFamily,
+      fontSize,
+      appTheme,
+      startupCommand,
+    },
     ref,
   ) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -232,7 +276,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         clear: () => clearFnRef.current?.(),
         focus: () => focusFnRef.current?.(),
         restart: () => startSessionFnRef.current?.(false),
-        getContent: (lineCount?: number) => contentFnRef.current?.(lineCount) ?? "",
+        getContent: (lineCount?: number) =>
+          contentFnRef.current?.(lineCount) ?? "",
         isReady: () => isReadyRef.current,
         submitCurrentInput: () => queueInputFnRef.current?.("\r", true),
         resetInput: () => queueInputFnRef.current?.("\u0003", true),
@@ -253,29 +298,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         scrollback: 10_000,
         fontFamily,
         fontSize,
-        theme: {
-          background: cssVar("--bg-primary", "#1e1e1e"),
-          foreground: cssVar("--text-primary", "#cccccc"),
-          cursor: "#ffffff",
-          cursorAccent: cssVar("--bg-primary", "#1e1e1e"),
-          selectionBackground: cssVar("--accent", "#007acc"),
-          black: "#1e1e1e",
-          red: "#f44747",
-          green: "#4ec9b0",
-          yellow: "#dcdcaa",
-          blue: "#569cd6",
-          magenta: "#c586c0",
-          cyan: "#4fc1ff",
-          white: "#d4d4d4",
-          brightBlack: "#808080",
-          brightRed: "#f44747",
-          brightGreen: "#4ec9b0",
-          brightYellow: "#dcdcaa",
-          brightBlue: "#569cd6",
-          brightMagenta: "#c586c0",
-          brightCyan: "#4fc1ff",
-          brightWhite: "#ffffff",
-        },
+        theme: terminalThemeFromCss(),
       });
 
       const fitAddon = new FitAddon();
@@ -307,7 +330,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         if (!isReadyRef.current || sessionIdRef.current <= 0) return;
         const cols = Math.max(term.cols || 120, 1);
         const rows = Math.max(term.rows || 30, 1);
-        void cmd.terminalResize(sessionIdRef.current, cols, rows).catch(() => {});
+        void cmd
+          .terminalResize(sessionIdRef.current, cols, rows)
+          .catch(() => {});
       };
 
       const flushWriteQueue = (allowWhenNotReady = false) => {
@@ -426,7 +451,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       const dataDisposable = term.onData((data) => queueInput(data));
       const resizeDisposable = term.onResize(({ cols, rows }) => {
         if (!isReadyRef.current || sessionIdRef.current <= 0) return;
-        void cmd.terminalResize(sessionIdRef.current, cols, rows).catch(() => {});
+        void cmd
+          .terminalResize(sessionIdRef.current, cols, rows)
+          .catch(() => {});
       });
 
       const onWindowResize = () => {
@@ -448,7 +475,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         const psPath = shellPathRef.current;
         if (psPath) {
           const plainChunk = stripAnsi(chunk);
-          outputTailRef.current = (outputTailRef.current + plainChunk).slice(-12000);
+          outputTailRef.current = (outputTailRef.current + plainChunk).slice(
+            -12000,
+          );
           const tail = outputTailRef.current;
           MISSING_COMMAND_RE.lastIndex = 0;
 
@@ -469,7 +498,11 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
             void cmd
               .suggestModulesForCommand(psPath, commandName)
               .then((suggestions) => {
-                if (cancelled || sessionIdRef.current !== sid || !suggestions.length) {
+                if (
+                  cancelled ||
+                  sessionIdRef.current !== sid ||
+                  !suggestions.length
+                ) {
                   return;
                 }
                 term.write(
@@ -578,9 +611,20 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       if (isReadyRef.current && sessionIdRef.current > 0) {
         const cols = Math.max(term.cols || 120, 1);
         const rows = Math.max(term.rows || 30, 1);
-        void cmd.terminalResize(sessionIdRef.current, cols, rows).catch(() => {});
+        void cmd
+          .terminalResize(sessionIdRef.current, cols, rows)
+          .catch(() => {});
       }
     }, [fontFamily, fontSize]);
+
+    useEffect(() => {
+      const term = termRef.current;
+      if (!term) return;
+      term.options.theme = terminalThemeFromCss();
+      if (term.rows > 0) {
+        term.refresh(0, term.rows - 1);
+      }
+    }, [appTheme]);
 
     useEffect(() => {
       if (!active || !termRef.current) return;
@@ -594,7 +638,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         if (isReadyRef.current && sessionIdRef.current > 0 && termRef.current) {
           const cols = Math.max(termRef.current.cols || 120, 1);
           const rows = Math.max(termRef.current.rows || 30, 1);
-          void cmd.terminalResize(sessionIdRef.current, cols, rows).catch(() => {});
+          void cmd
+            .terminalResize(sessionIdRef.current, cols, rows)
+            .catch(() => {});
         }
       });
     }, [active]);
@@ -778,7 +824,9 @@ export function TerminalPane() {
                   onClick={() => setActiveTabId(tab.id)}
                   style={{
                     backgroundColor: "transparent",
-                    color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+                    color: isActive
+                      ? "var(--text-primary)"
+                      : "var(--text-secondary)",
                     padding: "2px 8px",
                     whiteSpace: "nowrap",
                   }}
@@ -805,28 +853,40 @@ export function TerminalPane() {
 
         <button
           onClick={addLocalTab}
-          style={{ backgroundColor: "transparent", color: "var(--text-secondary)" }}
+          style={{
+            backgroundColor: "transparent",
+            color: "var(--text-secondary)",
+          }}
           title="New local console tab"
         >
           + Local
         </button>
         <button
           onClick={openRemoteDialog}
-          style={{ backgroundColor: "transparent", color: "var(--text-secondary)" }}
+          style={{
+            backgroundColor: "transparent",
+            color: "var(--text-secondary)",
+          }}
           title="New remote console tab (Enter-PSSession)"
         >
           + Remote
         </button>
         <button
           onClick={() => getActiveHandle()?.clear()}
-          style={{ backgroundColor: "transparent", color: "var(--text-secondary)" }}
+          style={{
+            backgroundColor: "transparent",
+            color: "var(--text-secondary)",
+          }}
           title="Clear active console"
         >
           Clear
         </button>
         <button
           onClick={() => getActiveHandle()?.restart()}
-          style={{ backgroundColor: "transparent", color: "var(--text-secondary)" }}
+          style={{
+            backgroundColor: "transparent",
+            color: "var(--text-secondary)",
+          }}
           title="Restart active console"
         >
           Restart
@@ -871,7 +931,9 @@ export function TerminalPane() {
             >
               PSForge
             </div>
-            <div style={{ color: "var(--text-secondary)", marginBottom: "8px" }}>
+            <div
+              style={{ color: "var(--text-secondary)", marginBottom: "8px" }}
+            >
               Remote target for Enter-PSSession -ComputerName:
             </div>
             <input
@@ -950,8 +1012,10 @@ export function TerminalPane() {
               shellPath={tab.shellPath}
               loadProfile={tab.loadProfile}
               startupCommand={tab.startupCommand}
+              appTheme={state.settings.theme ?? "dark"}
               fontFamily={
-                state.settings.outputFontFamily ?? "Cascadia Code, Consolas, monospace"
+                state.settings.outputFontFamily ??
+                "Cascadia Code, Consolas, monospace"
               }
               fontSize={state.settings.outputFontSize ?? 13}
             />
