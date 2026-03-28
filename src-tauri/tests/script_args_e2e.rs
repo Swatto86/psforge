@@ -93,7 +93,11 @@ async fn script_args_bind_named_parameters_for_begin_process_end_scripts() {
             None => return,
         };
 
-        assert_eq!(exit_code, 0, "script should exit cleanly. Output:\n{}", output);
+        assert_eq!(
+            exit_code, 0,
+            "script should exit cleanly. Output:\n{}",
+            output
+        );
         assert!(
             output.contains("BPE:ADUpdateTest"),
             "expected begin/process/end output not found. Output:\n{}",
@@ -123,7 +127,11 @@ async fn script_args_bind_multiple_named_parameters_with_type_conversion() {
             None => return,
         };
 
-        assert_eq!(exit_code, 0, "script should exit cleanly. Output:\n{}", output);
+        assert_eq!(
+            exit_code, 0,
+            "script should exit cleanly. Output:\n{}",
+            output
+        );
         assert!(
             output.contains("Alice is 30 years old"),
             "expected multi-param output not found. Output:\n{}",
@@ -147,7 +155,11 @@ async fn script_args_bind_boolean_named_parameter_from_inline_value() {
             None => return,
         };
 
-        assert_eq!(exit_code, 0, "script should exit cleanly. Output:\n{}", output);
+        assert_eq!(
+            exit_code, 0,
+            "script should exit cleanly. Output:\n{}",
+            output
+        );
         assert!(
             output.contains("verbose-on"),
             "boolean parameter did not bind as true. Output:\n{}",
@@ -167,7 +179,11 @@ async fn script_args_preserve_leading_dash_in_parameter_values() {
             None => return,
         };
 
-        assert_eq!(exit_code, 0, "script should exit cleanly. Output:\n{}", output);
+        assert_eq!(
+            exit_code, 0,
+            "script should exit cleanly. Output:\n{}",
+            output
+        );
         assert!(
             output.contains("-LeadingDash"),
             "leading-dash argument value was not preserved. Output:\n{}",
@@ -175,4 +191,3 @@ async fn script_args_preserve_leading_dash_in_parameter_values() {
         );
     });
 }
-

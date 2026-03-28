@@ -55,22 +55,22 @@ msiexec /i PSForge_1.0.6_x64_en-US.msi /quiet
 
 ## Quick Start
 
-| Action          | Keyboard Shortcut |
-| --------------- | ----------------- |
-| New file        | Ctrl+N            |
-| Open file       | Ctrl+O            |
-| Save file       | Ctrl+S            |
-| Save all files  | Ctrl+Shift+S      |
-| Close tab       | Ctrl+W            |
-| Next / Previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
-| Run script      | F5                |
-| Run selection/current line | F8           |
-| Stop execution  | Ctrl+Break        |
-| Command Palette | Ctrl+Shift+P      |
-| Toggle Sidebar  | Ctrl+B            |
-| Find & Replace  | Ctrl+H            |
-| Settings        | Ctrl+,            |
-| Zoom in / out   | Ctrl+= / Ctrl+-   |
+| Action                     | Keyboard Shortcut         |
+| -------------------------- | ------------------------- |
+| New file                   | Ctrl+N                    |
+| Open file                  | Ctrl+O                    |
+| Save file                  | Ctrl+S                    |
+| Save all files             | Ctrl+Shift+S              |
+| Close tab                  | Ctrl+W                    |
+| Next / Previous tab        | Ctrl+Tab / Ctrl+Shift+Tab |
+| Run script                 | F5                        |
+| Run selection/current line | F8                        |
+| Stop execution             | Ctrl+Break                |
+| Command Palette            | Ctrl+Shift+P              |
+| Toggle Sidebar             | Ctrl+B                    |
+| Find & Replace             | Ctrl+H                    |
+| Settings                   | Ctrl+,                    |
+| Zoom in / out              | Ctrl+= / Ctrl+-           |
 
 ---
 

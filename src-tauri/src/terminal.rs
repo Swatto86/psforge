@@ -260,12 +260,15 @@ pub async fn start_terminal(
 
     // Keep bootstrap logic in a temp file for reliable quoting and easier
     // maintenance across pwsh and Windows PowerShell.
-    let bootstrap_script =
-        write_secure_temp_file("psforge_terminal_bootstrap", ".ps1", TERMINAL_BOOTSTRAP_SCRIPT.as_bytes())
-            .map_err(|e| AppError {
-                code: "TERMINAL_SCRIPT_WRITE_FAILED".to_string(),
-                message: format!("Failed to write terminal bootstrap script: {}", e),
-            })?;
+    let bootstrap_script = write_secure_temp_file(
+        "psforge_terminal_bootstrap",
+        ".ps1",
+        TERMINAL_BOOTSTRAP_SCRIPT.as_bytes(),
+    )
+    .map_err(|e| AppError {
+        code: "TERMINAL_SCRIPT_WRITE_FAILED".to_string(),
+        message: format!("Failed to write terminal bootstrap script: {}", e),
+    })?;
     let bootstrap_path = bootstrap_script.to_string_lossy().into_owned();
 
     let escaped_bootstrap = bootstrap_path.replace('\'', "''");
@@ -316,9 +319,7 @@ pub async fn start_terminal(
                         let preview: String = text.chars().take(240).collect();
                         debug!(
                             "Terminal PTY chunk {} ({} bytes): {:?}",
-                            chunk_index,
-                            n,
-                            preview
+                            chunk_index, n, preview
                         );
                     }
                     chunk_index = chunk_index.saturating_add(1);
@@ -356,11 +357,11 @@ pub async fn start_terminal(
     guard.insert(
         session_id,
         Session {
-        id: session_id,
-        child,
-        writer,
-        master: pair.master,
-        bootstrap_script,
+            id: session_id,
+            child,
+            writer,
+            master: pair.master,
+            bootstrap_script,
         },
     );
 
@@ -375,10 +376,7 @@ pub async fn terminal_write(session_id: Option<u64>, data: String) -> Result<(),
 }
 
 /// Writes raw input data to a specific PTY session.
-async fn terminal_write_for_session(
-    session_id: Option<u64>,
-    data: String,
-) -> Result<(), AppError> {
+async fn terminal_write_for_session(session_id: Option<u64>, data: String) -> Result<(), AppError> {
     let preview: String = data.chars().take(120).collect();
     debug!(
         "terminal_write: {} bytes, preview={:?}",
@@ -396,7 +394,8 @@ async fn terminal_write_for_session(
     } else {
         guard.keys().copied().max().ok_or_else(|| AppError {
             code: "TERMINAL_NOT_RUNNING".to_string(),
-            message: "No terminal session is active. Open the Terminal tab to start one.".to_string(),
+            message: "No terminal session is active. Open the Terminal tab to start one."
+                .to_string(),
         })?
     };
 
@@ -429,7 +428,11 @@ pub async fn terminal_exec(session_id: Option<u64>, command: String) -> Result<(
 
 /// Resizes the active PTY to match the xterm.js viewport.
 #[tauri::command]
-pub async fn terminal_resize(session_id: Option<u64>, cols: u16, rows: u16) -> Result<(), AppError> {
+pub async fn terminal_resize(
+    session_id: Option<u64>,
+    cols: u16,
+    rows: u16,
+) -> Result<(), AppError> {
     let mut guard = get_terminals().lock().map_err(|_| AppError {
         code: "TERMINAL_LOCK_POISONED".to_string(),
         message: "Terminal session mutex was poisoned by a previous panic".to_string(),
@@ -440,7 +443,8 @@ pub async fn terminal_resize(session_id: Option<u64>, cols: u16, rows: u16) -> R
     } else {
         guard.keys().copied().max().ok_or_else(|| AppError {
             code: "TERMINAL_NOT_RUNNING".to_string(),
-            message: "No terminal session is active. Open the Terminal tab to start one.".to_string(),
+            message: "No terminal session is active. Open the Terminal tab to start one."
+                .to_string(),
         })?
     };
 
