@@ -273,29 +273,43 @@ describe("Feature: $PROFILE Quick-Edit", () => {
         "No PowerShell version available; skipping profile-open test",
       );
       return;
-      return;
     }
 
-    // Count current tabs.
+    // Count current tabs. The profile file may already be open from prior
+    // state; in that case the toolbar action should activate that tab.
     const tabsBefore = await browser.execute(() => {
-      return document.querySelectorAll('[data-testid^="tab-"]').length;
+      return document.querySelectorAll('[data-testid^="tab-item-"]').length;
     });
 
     const btn = await $('[data-testid="toolbar-open-profile"]');
     await btn.click();
 
-    // Wait for a new tab to appear (profile file opens in a new tab).
+    // Pass when either:
+    // 1) a new tab is opened and a profile tab exists, or
+    // 2) an existing profile tab becomes active.
     await browser.waitUntil(
       async () => {
-        const count = await browser.execute(
-          () => document.querySelectorAll('[data-testid^="tab-"]').length,
-        );
-        return count > tabsBefore;
+        return browser.execute((beforeCount: number) => {
+          const tabs = Array.from(
+            document.querySelectorAll('[data-testid^="tab-item-"]'),
+          ) as HTMLElement[];
+          const count = tabs.length;
+          const labels = tabs.map((t) => (t.textContent || "").toLowerCase());
+          const hasProfileTab = labels.some((text) => text.includes("profile"));
+          const activeTab = tabs.find((t) =>
+            (t.style.backgroundColor || "").includes("var(--bg-tab-active)"),
+          );
+          const activeText = (activeTab?.textContent || "").toLowerCase();
+
+          if (count > beforeCount && hasProfileTab) return true;
+          if (hasProfileTab && activeText.includes("profile")) return true;
+          return false;
+        }, tabsBefore);
       },
       {
         timeout: TAB_TIMEOUT,
         interval: POLL_MS,
-        timeoutMsg: "Profile tab did not open",
+        timeoutMsg: "Profile tab did not open or activate",
       },
     );
   });
@@ -372,7 +386,6 @@ describe("Feature: Script Signing Dialog", () => {
         "__psforge_dispatch not available; skipping dialog close test",
       );
       return;
-      return;
     }
 
     await browser.waitUntil(
@@ -410,7 +423,6 @@ describe("Feature: Script Signing Dialog", () => {
     });
     if (!dispatched) {
       console.warn("__psforge_dispatch not available");
-      return;
       return;
     }
 

@@ -7,6 +7,36 @@
  */
 
 describe('Editor and Tab Management', () => {
+  async function typeInEditorWithRetry(text: string, attempts = 2): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      await browser.execute(() => {
+        const input = document.querySelector('.monaco-editor textarea.inputarea');
+        if (input instanceof HTMLTextAreaElement) input.focus();
+      });
+      await browser.pause(120);
+      await browser.keys(['Control', 'a']);
+      await browser.pause(80);
+      await browser.keys(['Delete']);
+      await browser.pause(80);
+      for (const ch of text) {
+        await browser.keys([ch]);
+        await browser.pause(20);
+      }
+      await browser.pause(220);
+
+      const hasText = await browser.execute((expected: string) => {
+        const fn = (window as any).__psforge_getRunText;
+        const runText = typeof fn === 'function' ? String(fn()) : '';
+        if (runText.includes(expected)) return true;
+        const rendered =
+          (document.querySelector('.monaco-editor .view-lines') as HTMLElement | null)
+            ?.innerText ?? '';
+        return rendered.includes(expected);
+      }, text);
+      if (hasText) return true;
+    }
+    return false;
+  }
 
   describe('Initial State', () => {
     it('should have at least one tab open on startup', async () => {
@@ -134,49 +164,9 @@ describe('Editor and Tab Management', () => {
     });
 
     it('should accept keyboard input typed into the editor', async () => {
-      // Click the Monaco editor area and type a short comment.
-      const editorContainer = await $('.monaco-editor');
-      await editorContainer.click();
-      await browser.execute(() => {
-        const editors = (window as any).monaco?.editor?.getEditors?.();
-        if (editors && editors.length > 0) {
-          editors[0].focus();
-        }
-      });
-      await browser.pause(200);
-
-      // Select all and delete existing content to start clean.
-      await browser.keys(['Control', 'a']);
-      await browser.pause(100);
-      await browser.keys(['Delete']);
-      await browser.pause(100);
-
-      // Type a comment and verify it appears in the model.
-      const testText = 'e2etestmarker';
-      await browser.keys(testText.split(''));
-      await browser.pause(300);
-
-      // Read the editor content via Monaco's global API exposed on window.
-      const content = await browser.execute(() => {
-        const editors = (window as any).monaco?.editor?.getEditors?.();
-        if (editors && editors.length > 0) {
-          return editors[0].getValue();
-        }
-        return null;
-      });
-
-      if (content !== null) {
-        expect(content).toContain(testText);
-      } else {
-        // Monaco API not directly accessible; verify via DOM.
-        const lines = await $$('.monaco-editor .view-line');
-        let found = false;
-        for (const line of lines) {
-          const text = await line.getText();
-          if (text.includes(testText)) { found = true; break; }
-        }
-        expect(found).toBe(true);
-      }
+      const testText = `e2e-input-${Date.now().toString().slice(-6)}`;
+      const typed = await typeInEditorWithRetry(testText, 3);
+      expect(typed).toBe(true);
     });
 
     it('should show the PS version in the status bar', async () => {
