@@ -90,6 +90,12 @@ function buildScriptArgs(
 const DEBUG_LOCALS_PREFIX = "<<PSF_DEBUG_LOCALS_JSON>>";
 const DEBUG_STACK_PREFIX = "<<PSF_DEBUG_STACK_JSON>>";
 const DEBUG_WATCH_PREFIX = "<<PSF_DEBUG_WATCH_JSON>>";
+const SPLIT_RESIZER_HEIGHT_PX = 4;
+const MIN_EDITOR_PANE_HEIGHT_PX = 180;
+const MIN_BOTTOM_PANE_HEIGHT_PX = 150;
+const HARD_MIN_SPLIT_PERCENT = 8;
+const HARD_MAX_SPLIT_PERCENT = 92;
+const SPLIT_EPSILON = 0.1;
 
 const DEBUG_STACK_COMMAND =
   "$__psf_stack = Get-PSCallStack | ForEach-Object { " +
@@ -205,6 +211,29 @@ function normalizeBreakpointForDebug(
   return { line, variable, targetCommand, mode, condition, hitCount, command };
 }
 
+function clampSplitPercentForHeight(percent: number, containerHeight: number): number {
+  const safePercent = Number.isFinite(percent) ? percent : 65;
+  if (!Number.isFinite(containerHeight) || containerHeight <= 0) {
+    return Math.max(
+      HARD_MIN_SPLIT_PERCENT,
+      Math.min(HARD_MAX_SPLIT_PERCENT, safePercent),
+    );
+  }
+  const availableHeight = Math.max(1, containerHeight - SPLIT_RESIZER_HEIGHT_PX);
+  const minPercent = Math.max(
+    HARD_MIN_SPLIT_PERCENT,
+    (MIN_EDITOR_PANE_HEIGHT_PX / availableHeight) * 100,
+  );
+  const maxPercent = Math.min(
+    HARD_MAX_SPLIT_PERCENT,
+    100 - (MIN_BOTTOM_PANE_HEIGHT_PX / availableHeight) * 100,
+  );
+  if (minPercent > maxPercent) {
+    return 50;
+  }
+  return Math.max(minPercent, Math.min(maxPercent, safePercent));
+}
+
 /** Inner app that has access to the store. */
 function AppInner() {
   const { state, dispatch, activeTab } = useAppState();
@@ -231,6 +260,14 @@ function AppInner() {
   const activeTabRef = useRef<EditorTab | undefined>(activeTab);
   const cursorLineRef = useRef(state.cursorLine);
   const bookmarksRef = useRef(state.bookmarks);
+  const clampSplitForCurrentLayout = useCallback((nextPercent: number): number => {
+    const containerHeight =
+      splitRef.current?.getBoundingClientRect().height ?? window.innerHeight;
+    const clamped = clampSplitPercentForHeight(nextPercent, containerHeight);
+    setSplitPercent(clamped);
+    splitPercentRef.current = clamped;
+    return clamped;
+  }, []);
 
   /**
    * Pending parameter-prompt state.  When a script has mandatory parameters
@@ -1601,8 +1638,7 @@ function AppInner() {
   // disk.  Without this, split/sidebar always start at DEFAULT_SETTINGS values.
   useEffect(() => {
     if (!state.settingsLoaded) return;
-    setSplitPercent(state.settings.splitPosition);
-    splitPercentRef.current = state.settings.splitPosition;
+    clampSplitForCurrentLayout(state.settings.splitPosition);
     // Restore sidebar visibility and position from persisted settings.
     if (!state.settings.sidebarVisible && state.sidebarVisible) {
       dispatch({ type: "TOGGLE_SIDEBAR" });
@@ -1620,7 +1656,7 @@ function AppInner() {
     }
     // Only run once when settingsLoaded transitions to true.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.settingsLoaded]);
+  }, [state.settingsLoaded, clampSplitForCurrentLayout]);
 
   // Persist sidebar visibility and position whenever they change.
   // Save is done immediately (bypassing the 1-second debounce) so that the
@@ -1650,6 +1686,38 @@ function AppInner() {
   const currentSettingsRef = useRef(state.settings);
   currentSettingsRef.current = state.settings;
 
+  useEffect(() => {
+    const container = splitRef.current;
+    if (!container) return;
+    if (typeof ResizeObserver === "undefined") return;
+    let rafId: number | null = null;
+    const reconcile = () => {
+      rafId = null;
+      const current = splitPercentRef.current;
+      const clamped = clampSplitPercentForHeight(
+        current,
+        container.getBoundingClientRect().height,
+      );
+      if (Math.abs(clamped - current) > SPLIT_EPSILON) {
+        setSplitPercent(clamped);
+        splitPercentRef.current = clamped;
+      }
+    };
+    const scheduleReconcile = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(reconcile);
+    };
+    scheduleReconcile();
+    const observer = new ResizeObserver(scheduleReconcile);
+    observer.observe(container);
+    window.addEventListener("resize", scheduleReconcile);
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleReconcile);
+    };
+  }, []);
+
   // Vertical split drag handler
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -1660,7 +1728,7 @@ function AppInner() {
         if (!isDragging.current || !splitRef.current) return;
         const rect = splitRef.current.getBoundingClientRect();
         const pct = ((ev.clientY - rect.top) / rect.height) * 100;
-        const clamped = Math.max(20, Math.min(80, pct));
+        const clamped = clampSplitPercentForHeight(pct, rect.height);
         setSplitPercent(clamped);
         // Keep the ref current so onMouseUp reads the final position, not the
         // stale value captured when onMouseDown was invoked.
@@ -1693,7 +1761,7 @@ function AppInner() {
   return (
     <div
       data-testid="app-root"
-      className="flex flex-col h-full w-full no-select"
+      className="flex flex-col h-full w-full min-h-0 min-w-0 no-select"
       onDragOver={(e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1750,13 +1818,16 @@ function AppInner() {
       />
 
       {/* Main content area */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         {state.sidebarVisible && state.sidebarPosition === "left" && (
           <Sidebar />
         )}
 
         {/* Editor + Output */}
-        <div ref={splitRef} className="flex flex-col flex-1 overflow-hidden">
+        <div
+          ref={splitRef}
+          className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden"
+        >
           {/* Tab bar */}
           <TabBar />
 
@@ -1764,7 +1835,7 @@ function AppInner() {
           <div
             data-testid="editor-container"
             style={{ height: `${splitPercent}%` }}
-            className="relative overflow-hidden"
+            className="relative min-h-0 overflow-hidden"
           >
             <EditorPane />
           </div>
@@ -1775,7 +1846,7 @@ function AppInner() {
           {/* Bottom panel */}
           <div
             style={{ height: `${100 - splitPercent}%` }}
-            className="overflow-hidden"
+            className="min-h-0 overflow-hidden"
           >
             <OutputPane
               onDebugStart={startDebugSession}

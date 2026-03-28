@@ -4,12 +4,26 @@ use crate::errors::AppError;
 use crate::utils::with_retry;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Maximum number of recent files to track.
 #[allow(dead_code)]
 const MAX_RECENT_FILES: usize = 20;
+const MIN_FONT_SIZE: u32 = 8;
+const MAX_FONT_SIZE: u32 = 72;
+const MIN_TAB_SIZE: u32 = 1;
+const MAX_TAB_SIZE: u32 = 16;
+const MIN_OUTPUT_FONT_SIZE: u32 = 8;
+const MAX_OUTPUT_FONT_SIZE: u32 = 72;
+const MIN_UI_FONT_SIZE: u32 = 8;
+const MAX_UI_FONT_SIZE: u32 = 72;
+const MIN_SIDEBAR_FONT_SIZE: u32 = 8;
+const MAX_SIDEBAR_FONT_SIZE: u32 = 72;
+const MIN_MAX_RECENT_FILES: usize = 1;
+const MAX_MAX_RECENT_FILES: usize = 100;
+const MIN_SPLIT_POSITION: f64 = 10.0;
+const MAX_SPLIT_POSITION: f64 = 90.0;
 
 /// All user-persisted settings for PSForge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +289,102 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// Normalizes potentially-corrupt or out-of-range values loaded from disk.
+    /// This keeps startup robust even when settings.json is manually edited.
+    pub fn sanitize(&mut self) {
+        if self.default_ps_version.trim().is_empty() {
+            self.default_ps_version = default_ps_version();
+        }
+        if self.theme.trim().is_empty() {
+            self.theme = default_theme();
+        }
+        if self.font_family.trim().is_empty() {
+            self.font_family = default_font_family();
+        }
+        if self.output_font_family.trim().is_empty() {
+            self.output_font_family = default_output_font_family();
+        }
+        if self.ui_font_family.trim().is_empty() {
+            self.ui_font_family = default_ui_font_family();
+        }
+        if self.sidebar_font_family.trim().is_empty() {
+            self.sidebar_font_family = default_sidebar_font_family();
+        }
+        if !matches!(self.line_numbers.as_str(), "on" | "off" | "relative") {
+            self.line_numbers = default_line_numbers();
+        }
+        if !matches!(
+            self.render_whitespace.as_str(),
+            "none" | "selection" | "boundary" | "all"
+        ) {
+            self.render_whitespace = default_render_whitespace();
+        }
+        if !matches!(
+            self.execution_policy.as_str(),
+            "Default"
+                | "Restricted"
+                | "AllSigned"
+                | "RemoteSigned"
+                | "Unrestricted"
+                | "Bypass"
+                | "Undefined"
+        ) {
+            self.execution_policy = default_execution_policy();
+        }
+        if !matches!(self.working_dir_mode.as_str(), "file" | "custom") {
+            self.working_dir_mode = default_working_dir_mode();
+        }
+        if !matches!(self.sidebar_position.as_str(), "left" | "right") {
+            self.sidebar_position = default_sidebar_position();
+        }
+        self.font_size = self.font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+        self.tab_size = self.tab_size.clamp(MIN_TAB_SIZE, MAX_TAB_SIZE);
+        self.output_font_size = self
+            .output_font_size
+            .clamp(MIN_OUTPUT_FONT_SIZE, MAX_OUTPUT_FONT_SIZE);
+        self.ui_font_size = self.ui_font_size.clamp(MIN_UI_FONT_SIZE, MAX_UI_FONT_SIZE);
+        self.sidebar_font_size = self
+            .sidebar_font_size
+            .clamp(MIN_SIDEBAR_FONT_SIZE, MAX_SIDEBAR_FONT_SIZE);
+        self.max_recent_files = self
+            .max_recent_files
+            .clamp(MIN_MAX_RECENT_FILES, MAX_MAX_RECENT_FILES);
+        self.split_position = if self.split_position.is_finite() {
+            self.split_position
+                .clamp(MIN_SPLIT_POSITION, MAX_SPLIT_POSITION)
+        } else {
+            default_split_position()
+        };
+
+        self.file_associations.retain(|ext, _| {
+            let trimmed = ext.trim();
+            trimmed.len() > 1
+                && trimmed.starts_with('.')
+                && trimmed.len() <= 16
+                && trimmed[1..].chars().all(|c| c.is_ascii_alphanumeric())
+        });
+
+        // De-duplicate and drop blank recent entries while preserving order.
+        let mut seen = HashSet::new();
+        self.recent_files = self
+            .recent_files
+            .iter()
+            .filter_map(|path| {
+                let trimmed = path.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let key = trimmed.to_lowercase();
+                if seen.insert(key) {
+                    Some(trimmed.to_string())
+                } else {
+                    None
+                }
+            })
+            .take(self.max_recent_files)
+            .collect();
+    }
+
     /// Adds a file path to the recent files list, deduplicating and enforcing the max size.
     #[allow(dead_code)]
     pub fn add_recent_file(&mut self, path: &str) {
@@ -325,7 +435,7 @@ pub fn load_from(path: &std::path::PathBuf) -> Result<AppSettings, AppError> {
     // Use retry for transient I/O failures (e.g. file lock during concurrent write) (Rule 11).
     let content = with_retry("settings::load_from", || std::fs::read_to_string(path))?;
     // Corrupted JSON is a permanent error; fall back to defaults and log (Rule 11).
-    let settings = match serde_json::from_str::<AppSettings>(&content) {
+    let mut settings = match serde_json::from_str::<AppSettings>(&content) {
         Ok(s) => s,
         Err(e) => {
             warn!(
@@ -335,6 +445,7 @@ pub fn load_from(path: &std::path::PathBuf) -> Result<AppSettings, AppError> {
             AppSettings::default()
         }
     };
+    settings.sanitize();
     Ok(settings)
 }
 
@@ -356,7 +467,9 @@ pub fn save(settings: &AppSettings) -> Result<(), AppError> {
 /// Useful for tests that inject a temp directory instead of the real AppData path.
 /// The parent directory must already exist; `save()` creates it automatically.
 pub fn save_to(path: &std::path::PathBuf, settings: &AppSettings) -> Result<(), AppError> {
-    let json = serde_json::to_string_pretty(settings)?;
+    let mut sanitized = settings.clone();
+    sanitized.sanitize();
+    let json = serde_json::to_string_pretty(&sanitized)?;
     // Write UTF-8 without BOM, retrying on transient I/O failures (Rule 11).
     with_retry("settings::save_to", || {
         std::fs::write(path, json.as_bytes())
@@ -404,5 +517,58 @@ mod tests {
         assert!(s.font_size >= 8);
         assert!(!s.font_family.is_empty());
         assert!(s.split_position > 0.0 && s.split_position < 100.0);
+    }
+
+    #[test]
+    fn sanitize_clamps_and_normalizes_invalid_values() {
+        let mut s = AppSettings {
+            default_ps_version: "   ".to_string(),
+            theme: " ".to_string(),
+            font_size: 1,
+            font_family: "".to_string(),
+            tab_size: 0,
+            line_numbers: "invalid".to_string(),
+            render_whitespace: "invalid".to_string(),
+            execution_policy: "invalid".to_string(),
+            working_dir_mode: "invalid".to_string(),
+            output_font_size: 200,
+            output_font_family: "".to_string(),
+            ui_font_family: "".to_string(),
+            ui_font_size: 2,
+            sidebar_font_family: "".to_string(),
+            sidebar_font_size: 999,
+            max_recent_files: 0,
+            split_position: f64::NAN,
+            recent_files: vec![
+                "".to_string(),
+                "C:\\a.ps1".to_string(),
+                "c:\\A.ps1".to_string(),
+                "C:\\b.ps1".to_string(),
+            ],
+            file_associations: HashMap::from([
+                (".ps1".to_string(), true),
+                ("bad".to_string(), true),
+            ]),
+            sidebar_position: "middle".to_string(),
+            ..AppSettings::default()
+        };
+        s.sanitize();
+        assert_eq!(s.default_ps_version, "auto");
+        assert_eq!(s.theme, "dark");
+        assert_eq!(s.font_size, MIN_FONT_SIZE);
+        assert_eq!(s.tab_size, MIN_TAB_SIZE);
+        assert_eq!(s.line_numbers, "on");
+        assert_eq!(s.render_whitespace, "selection");
+        assert_eq!(s.execution_policy, "Default");
+        assert_eq!(s.working_dir_mode, "file");
+        assert_eq!(s.output_font_size, MAX_OUTPUT_FONT_SIZE);
+        assert_eq!(s.ui_font_size, MIN_UI_FONT_SIZE);
+        assert_eq!(s.sidebar_font_size, MAX_SIDEBAR_FONT_SIZE);
+        assert_eq!(s.max_recent_files, MIN_MAX_RECENT_FILES);
+        assert!(s.split_position.is_finite());
+        assert_eq!(s.sidebar_position, "left");
+        assert_eq!(s.recent_files, vec!["C:\\a.ps1".to_string()]);
+        assert!(s.file_associations.contains_key(".ps1"));
+        assert!(!s.file_associations.contains_key("bad"));
     }
 }
