@@ -69,6 +69,29 @@
   --btn-danger-bg: #c72e2e;
   --btn-danger-fg: #ffffff;
   --btn-danger-hover: #d94444;
+
+  /* Integrated terminal colors */
+  --terminal-bg: #1e1e1e;
+  --terminal-fg: #cccccc;
+  --terminal-cursor: #ffffff;
+  --terminal-cursor-accent: #1e1e1e;
+  --terminal-selection: rgba(0, 122, 204, 0.35);
+  --terminal-ansi-black: #1e1e1e;
+  --terminal-ansi-red: #f44747;
+  --terminal-ansi-green: #4ec9b0;
+  --terminal-ansi-yellow: #dcdcaa;
+  --terminal-ansi-blue: #569cd6;
+  --terminal-ansi-magenta: #c586c0;
+  --terminal-ansi-cyan: #4fc1ff;
+  --terminal-ansi-white: #d4d4d4;
+  --terminal-ansi-bright-black: #808080;
+  --terminal-ansi-bright-red: #f44747;
+  --terminal-ansi-bright-green: #4ec9b0;
+  --terminal-ansi-bright-yellow: #dcdcaa;
+  --terminal-ansi-bright-blue: #569cd6;
+  --terminal-ansi-bright-magenta: #c586c0;
+  --terminal-ansi-bright-cyan: #4fc1ff;
+  --terminal-ansi-bright-white: #ffffff;
 }
 
 /* Light theme */
@@ -101,6 +124,28 @@
 
   --scrollbar-bg: #f3f3f3;
   --scrollbar-thumb: #c1c1c1;
+
+  --terminal-bg: #ffffff;
+  --terminal-fg: #333333;
+  --terminal-cursor: #333333;
+  --terminal-cursor-accent: #ffffff;
+  --terminal-selection: rgba(0, 102, 184, 0.24);
+  --terminal-ansi-black: #000000;
+  --terminal-ansi-red: #cd3131;
+  --terminal-ansi-green: #00a300;
+  --terminal-ansi-yellow: #949800;
+  --terminal-ansi-blue: #0451a5;
+  --terminal-ansi-magenta: #bc05bc;
+  --terminal-ansi-cyan: #0598bc;
+  --terminal-ansi-white: #555555;
+  --terminal-ansi-bright-black: #666666;
+  --terminal-ansi-bright-red: #cd3131;
+  --terminal-ansi-bright-green: #14ce14;
+  --terminal-ansi-bright-yellow: #b5ba00;
+  --terminal-ansi-bright-blue: #0451a5;
+  --terminal-ansi-bright-magenta: #bc05bc;
+  --terminal-ansi-bright-cyan: #0598bc;
+  --terminal-ansi-bright-white: #a5a5a5;
 }
 
 /* PS ISE Classic theme */
@@ -136,6 +181,28 @@
 
   --scrollbar-bg: #012456;
   --scrollbar-thumb: #01356e;
+
+  --terminal-bg: #012456;
+  --terminal-fg: #eeedf0;
+  --terminal-cursor: #ffff00;
+  --terminal-cursor-accent: #012456;
+  --terminal-selection: rgba(255, 255, 0, 0.25);
+  --terminal-ansi-black: #012456;
+  --terminal-ansi-red: #ff6060;
+  --terminal-ansi-green: #7ed07e;
+  --terminal-ansi-yellow: #ffff00;
+  --terminal-ansi-blue: #7db3ff;
+  --terminal-ansi-magenta: #d79cff;
+  --terminal-ansi-cyan: #8fefff;
+  --terminal-ansi-white: #eeedf0;
+  --terminal-ansi-bright-black: #3e5f8f;
+  --terminal-ansi-bright-red: #ff8a8a;
+  --terminal-ansi-bright-green: #a5e5a5;
+  --terminal-ansi-bright-yellow: #ffff8a;
+  --terminal-ansi-bright-blue: #a7ccff;
+  --terminal-ansi-bright-magenta: #eab6ff;
+  --terminal-ansi-bright-cyan: #b8ffff;
+  --terminal-ansi-bright-white: #ffffff;
 }
 
 /* Global reset */
@@ -297,7 +364,8 @@ textarea:focus {
 }
 
 .psforge-breakpoint-line {
-  border-left: 2px solid color-mix(in srgb, var(--stream-stderr) 55%, transparent);
+  border-left: 2px solid
+    color-mix(in srgb, var(--stream-stderr) 55%, transparent);
   margin-left: 2px;
 }
 
