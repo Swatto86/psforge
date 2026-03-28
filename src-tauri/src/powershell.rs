@@ -350,13 +350,11 @@ impl ProcessManager {
                                 text: line,
                                 timestamp: chrono_now(),
                             }));
-                        } else {
-                            if !output_budget_warned.swap(true, Ordering::Relaxed) {
-                                warn!(
-                                    "Output line limit reached ({}); dropping additional lines for current command",
-                                    MAX_OUTPUT_LINES
-                                );
-                            }
+                        } else if !output_budget_warned.swap(true, Ordering::Relaxed) {
+                            warn!(
+                                "Output line limit reached ({}); dropping additional lines for current command",
+                                MAX_OUTPUT_LINES
+                            );
                             // Keep draining to avoid filling the OS pipe and
                             // deadlocking the PowerShell process.
                         }
@@ -588,12 +586,13 @@ impl ProcessManager {
             message: "No running process to send input to".to_string(),
         })?;
 
-        let sanitized = input.replace('\r', " ").replace('\n', " ");
+        let sanitized = input.replace(['\r', '\n'], " ");
         Self::write_session_line(&session, &sanitized).await
     }
 
     /// Executes a PowerShell script and streams output via the provided callback.
     /// The callback receives each OutputLine as it arrives.
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute<F>(
         &self,
         ps_path: &str,

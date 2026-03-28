@@ -49,16 +49,14 @@ fn discover_shells() -> Vec<String> {
 }
 
 macro_rules! require_shells {
-    () => {
-        {
-            let shells = discover_shells();
-            if shells.is_empty() {
-                eprintln!("[SKIP] No PowerShell executable found — skipping smoke test.");
-                return;
-            }
-            shells
+    () => {{
+        let shells = discover_shells();
+        if shells.is_empty() {
+            eprintln!("[SKIP] No PowerShell executable found — skipping smoke test.");
+            return;
         }
-    };
+        shells
+    }};
 }
 
 async fn run_script_collecting_output(
@@ -159,9 +157,10 @@ async fn ise_retirement_smoke_core_workflows_across_detected_shells() {
                     .await
                     .expect("get_module_commands must succeed");
             if module_commands.is_empty() {
-                module_commands = commands::get_module_commands(ps.clone(), modules[0].name.clone())
-                    .await
-                    .expect("get_module_commands fallback must succeed");
+                module_commands =
+                    commands::get_module_commands(ps.clone(), modules[0].name.clone())
+                        .await
+                        .expect("get_module_commands fallback must succeed");
             }
             assert!(
                 !module_commands.is_empty(),
@@ -169,12 +168,10 @@ async fn ise_retirement_smoke_core_workflows_across_detected_shells() {
                 ps
             );
 
-            let command_params = commands::get_command_parameters(
-                ps.clone(),
-                "Get-ChildItem".to_string(),
-            )
-            .await
-            .expect("get_command_parameters must succeed");
+            let command_params =
+                commands::get_command_parameters(ps.clone(), "Get-ChildItem".to_string())
+                    .await
+                    .expect("get_command_parameters must succeed");
             assert!(
                 command_params
                     .iter()
@@ -213,12 +210,10 @@ async fn ise_retirement_smoke_core_workflows_across_detected_shells() {
                 ps
             );
 
-            let _diagnostics = commands::analyze_script(
-                ps.clone(),
-                "Write-Host 'Smoke Test'".to_string(),
-            )
-            .await
-            .expect("analyze_script must succeed");
+            let _diagnostics =
+                commands::analyze_script(ps.clone(), "Write-Host 'Smoke Test'".to_string())
+                    .await
+                    .expect("analyze_script must succeed");
 
             let profile_path = commands::get_ps_profile_path(ps.clone())
                 .await
@@ -360,31 +355,30 @@ async fn ise_retirement_smoke_debug_break_marker_and_completion_across_detected_
                     .await
             });
 
-            let break_line = match timeout(Duration::from_secs(DEBUG_BREAK_WAIT_SECS), break_rx.recv())
-                .await
-            {
-                Ok(Some(line)) => line,
-                _ => {
-                    let snapshot = output_lines
-                        .lock()
-                        .expect("output lock")
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if let Some(found) = snapshot
-                        .lines()
-                        .find(|line| line.contains("<<PSF_DEBUG_BREAK>>"))
-                    {
-                        found.to_string()
-                    } else {
-                        panic!(
-                            "debug breakpoint marker was not received.\nShell: {}\nOutput:\n{}",
-                            ps, snapshot
-                        );
+            let break_line =
+                match timeout(Duration::from_secs(DEBUG_BREAK_WAIT_SECS), break_rx.recv()).await {
+                    Ok(Some(line)) => line,
+                    _ => {
+                        let snapshot = output_lines
+                            .lock()
+                            .expect("output lock")
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if let Some(found) = snapshot
+                            .lines()
+                            .find(|line| line.contains("<<PSF_DEBUG_BREAK>>"))
+                        {
+                            found.to_string()
+                        } else {
+                            panic!(
+                                "debug breakpoint marker was not received.\nShell: {}\nOutput:\n{}",
+                                ps, snapshot
+                            );
+                        }
                     }
-                }
-            };
+                };
             assert!(
                 break_line.contains("<<PSF_DEBUG_BREAK>>"),
                 "unexpected break marker '{}' for shell {}",
@@ -409,14 +403,17 @@ async fn ise_retirement_smoke_debug_break_marker_and_completion_across_detected_
             assert!(
                 output.contains("<<PSF_DEBUG_BREAK>>"),
                 "debug marker not present in final output on {}. Output:\n{}",
-                ps, output
+                ps,
+                output
             );
             assert!(
                 output.contains("debug-finished")
                     || output.to_lowercase().contains("console output buffer")
                     || output.to_lowercase().contains("the handle is invalid"),
                 "debug run completed with unexpected output on {} (exit={}). Output:\n{}",
-                ps, exit_code, output
+                ps,
+                exit_code,
+                output
             );
 
             let _ = pm.stop().await;

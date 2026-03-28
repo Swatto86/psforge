@@ -114,6 +114,7 @@ pub async fn execute_selection(
 /// Executes a script in debugger mode with line breakpoints.
 /// Breakpoints are 1-indexed line numbers relative to the script content.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_script_debug(
     window: Window,
     ps_path: String,
@@ -206,8 +207,7 @@ pub async fn debug_step_out() -> Result<(), AppError> {
 /// Select debugger frame scope for subsequent inspector evaluations.
 #[tauri::command]
 pub async fn debug_set_frame(frame_index: u32) -> Result<(), AppError> {
-    pm()
-        .send_stdin(&format!("$global:__psforge_debug_scope = {}", frame_index))
+    pm().send_stdin(&format!("$global:__psforge_debug_scope = {}", frame_index))
         .await
 }
 
@@ -842,10 +842,7 @@ try {
         Ok(Err(e)) => {
             return Err(AppError {
                 code: "COMMAND_HELP_FAILED".to_string(),
-                message: format!(
-                    "Failed to resolve help for '{}': {}",
-                    trimmed_name, e
-                ),
+                message: format!("Failed to resolve help for '{}': {}", trimmed_name, e),
             });
         }
         Err(_) => {
@@ -999,10 +996,10 @@ fn find_balanced_span(bytes: &[u8], open: u8, close: u8) -> Option<(usize, usize
             // Count consecutive backslashes before this quote to decide
             // whether it is escaped.  Odd count → escaped, even → real.
             let mut bs = 0usize;
-            while i >= 1 + bs && bytes[i - 1 - bs] == b'\\' {
+            while i > bs && bytes[i - 1 - bs] == b'\\' {
                 bs += 1;
             }
-            if bs % 2 == 0 {
+            if bs.is_multiple_of(2) {
                 in_string = !in_string;
             }
             continue;
@@ -1141,7 +1138,7 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String) {
     } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
         // UTF-16 LE
         let payload = &bytes[2..];
-        if payload.len() % 2 != 0 {
+        if !payload.len().is_multiple_of(2) {
             warn!(
                 "UTF-16 LE file has odd byte count ({}); trailing byte dropped",
                 bytes.len()
@@ -1157,7 +1154,7 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String) {
     } else if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         // UTF-16 BE
         let payload = &bytes[2..];
-        if payload.len() % 2 != 0 {
+        if !payload.len().is_multiple_of(2) {
             warn!(
                 "UTF-16 BE file has odd byte count ({}); trailing byte dropped",
                 bytes.len()
@@ -2213,7 +2210,10 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
     {
         Ok(o) => o,
         Err(e) => {
-            debug!("get_execution_policy: query failed (returning Unknown): {}", e);
+            debug!(
+                "get_execution_policy: query failed (returning Unknown): {}",
+                e
+            );
             return Ok("Unknown".to_string());
         }
     };
