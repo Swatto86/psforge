@@ -109,6 +109,10 @@ pub struct AppSettings {
     #[serde(default)]
     pub custom_working_dir: String,
 
+    /// Show PS7 install recommendation banner when only Windows PowerShell 5.1 is detected.
+    #[serde(default = "default_true")]
+    pub show_ps7_install_reminder: bool,
+
     /// Whether the integrated terminal loads user/system PowerShell profiles.
     #[serde(default)]
     pub terminal_load_profile: bool,
@@ -269,6 +273,7 @@ impl Default for AppSettings {
             execution_policy: default_execution_policy(),
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
+            show_ps7_install_reminder: true,
             terminal_load_profile: false,
             show_timestamps: false,
             output_font_size: default_output_font_size(),

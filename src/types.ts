@@ -235,6 +235,8 @@ export interface AppSettings {
   workingDirMode: "file" | "custom";
   /** Custom working directory path when workingDirMode is "custom". */
   customWorkingDir: string;
+  /** Show PS7 install recommendation banner when only Windows PowerShell 5.1 is detected. */
+  showPs7InstallReminder: boolean;
 
   // ---- Output ----
   /** Load PowerShell profiles when starting the integrated terminal. */
@@ -289,6 +291,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   executionPolicy: "Default",
   workingDirMode: "file",
   customWorkingDir: "",
+  showPs7InstallReminder: true,
   terminalLoadProfile: false,
   showTimestamps: false,
   outputFontSize: 13,

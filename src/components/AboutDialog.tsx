@@ -194,7 +194,7 @@ export function AboutDialog() {
             marginBottom: "20px",
           }}
         >
-          Built with Tauri, React &amp; Monaco Editor
+          Built with PSForge runtime, React &amp; Monaco Editor
         </div>
 
         {/* Close button */}

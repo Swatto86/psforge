@@ -582,6 +582,17 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="PowerShell 7 Recommendation"
+                tooltip="When enabled, PSForge shows a non-blocking banner if only Windows PowerShell 5.1 is detected."
+              >
+                <Toggle
+                  checked={state.settings.showPs7InstallReminder !== false}
+                  onChange={(v) => updateSetting("showPs7InstallReminder", v)}
+                  label="Show PS7 install recommendation when PS7 is missing"
+                />
+              </SettingRow>
+
+              <SettingRow
                 label="Auto-Save on Run"
                 tooltip="Automatically saves the active file before F5 execution."
               >
