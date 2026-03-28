@@ -8,7 +8,10 @@ use std::collections::HashMap;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -200,6 +203,8 @@ struct PersistentSession {
     child: Arc<Mutex<Option<Child>>>,
     stdin_writer: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
     event_rx: Arc<Mutex<mpsc::UnboundedReceiver<SessionEvent>>>,
+    output_budget: Arc<AtomicUsize>,
+    output_budget_warned: Arc<AtomicBool>,
     bootstrap_script_path: PathBuf,
 }
 
@@ -308,35 +313,52 @@ impl ProcessManager {
         })
     }
 
+    fn try_consume_output_budget(budget: &AtomicUsize) -> bool {
+        let mut current = budget.load(Ordering::Relaxed);
+        loop {
+            if current == 0 {
+                return false;
+            }
+            match budget.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(next) => current = next,
+            }
+        }
+    }
+
     fn spawn_output_reader(
         stdout_or_stderr: impl tokio::io::AsyncRead + Unpin + Send + 'static,
         stream_name: &'static str,
         tx: mpsc::UnboundedSender<SessionEvent>,
+        output_budget: Arc<AtomicUsize>,
+        output_budget_warned: Arc<AtomicBool>,
     ) {
         tokio::spawn(async move {
             let reader = BufReader::new(stdout_or_stderr);
             let mut lines = reader.lines();
-            let mut count = 0usize;
             loop {
                 match lines.next_line().await {
                     Ok(Some(line)) => {
-                        if count < MAX_OUTPUT_LINES {
+                        if Self::try_consume_output_budget(&output_budget) {
                             let _ = tx.send(SessionEvent::Output(OutputLine {
                                 stream: stream_name.to_string(),
                                 text: line,
                                 timestamp: chrono_now(),
                             }));
-                            count += 1;
                         } else {
-                            if count == MAX_OUTPUT_LINES {
+                            if !output_budget_warned.swap(true, Ordering::Relaxed) {
                                 warn!(
-                                    "{} line limit reached ({}); dropping additional lines",
-                                    stream_name, MAX_OUTPUT_LINES
+                                    "Output line limit reached ({}); dropping additional lines for current command",
+                                    MAX_OUTPUT_LINES
                                 );
                             }
                             // Keep draining to avoid filling the OS pipe and
                             // deadlocking the PowerShell process.
-                            count = count.saturating_add(1);
                         }
                     }
                     Ok(None) => break,
@@ -427,25 +449,60 @@ impl ProcessManager {
                 }
             })?;
 
-        let stdin = child.stdin.take().ok_or_else(|| AppError {
-            code: "PROCESS_STDIN_MISSING".to_string(),
-            message: "PowerShell process started without stdin pipe".to_string(),
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| AppError {
-            code: "PROCESS_STDOUT_MISSING".to_string(),
-            message: "PowerShell process started without stdout pipe".to_string(),
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| AppError {
-            code: "PROCESS_STDERR_MISSING".to_string(),
-            message: "PowerShell process started without stderr pipe".to_string(),
-        })?;
+        let stdin = match child.stdin.take() {
+            Some(v) => v,
+            None => {
+                let _ = child.kill().await;
+                let _ = std::fs::remove_file(&bootstrap_script_path);
+                return Err(AppError {
+                    code: "PROCESS_STDIN_MISSING".to_string(),
+                    message: "PowerShell process started without stdin pipe".to_string(),
+                });
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(v) => v,
+            None => {
+                let _ = child.kill().await;
+                let _ = std::fs::remove_file(&bootstrap_script_path);
+                return Err(AppError {
+                    code: "PROCESS_STDOUT_MISSING".to_string(),
+                    message: "PowerShell process started without stdout pipe".to_string(),
+                });
+            }
+        };
+        let stderr = match child.stderr.take() {
+            Some(v) => v,
+            None => {
+                let _ = child.kill().await;
+                let _ = std::fs::remove_file(&bootstrap_script_path);
+                return Err(AppError {
+                    code: "PROCESS_STDERR_MISSING".to_string(),
+                    message: "PowerShell process started without stderr pipe".to_string(),
+                });
+            }
+        };
 
         let (event_tx, event_rx) = mpsc::unbounded_channel::<SessionEvent>();
         let child = Arc::new(Mutex::new(Some(child)));
         let stdin_writer = Arc::new(Mutex::new(Some(stdin)));
+        let output_budget = Arc::new(AtomicUsize::new(MAX_OUTPUT_LINES));
+        let output_budget_warned = Arc::new(AtomicBool::new(false));
 
-        Self::spawn_output_reader(stdout, "stdout", event_tx.clone());
-        Self::spawn_output_reader(stderr, "stderr", event_tx.clone());
+        Self::spawn_output_reader(
+            stdout,
+            "stdout",
+            event_tx.clone(),
+            output_budget.clone(),
+            output_budget_warned.clone(),
+        );
+        Self::spawn_output_reader(
+            stderr,
+            "stderr",
+            event_tx.clone(),
+            output_budget.clone(),
+            output_budget_warned.clone(),
+        );
         Self::spawn_process_monitor(child.clone(), stdin_writer.clone(), event_tx.clone());
 
         Ok(Arc::new(PersistentSession {
@@ -454,6 +511,8 @@ impl ProcessManager {
             child,
             stdin_writer,
             event_rx: Arc::new(Mutex::new(event_rx)),
+            output_budget,
+            output_budget_warned,
             bootstrap_script_path,
         }))
     }
@@ -529,7 +588,8 @@ impl ProcessManager {
             message: "No running process to send input to".to_string(),
         })?;
 
-        Self::write_session_line(&session, input).await
+        let sanitized = input.replace('\r', " ").replace('\n', " ");
+        Self::write_session_line(&session, &sanitized).await
     }
 
     /// Executes a PowerShell script and streams output via the provided callback.
@@ -555,6 +615,7 @@ impl ProcessManager {
             ps_path, working_dir
         );
         debug!("Script size: {} bytes", script.len());
+        let effective_working_dir = resolve_working_dir(working_dir);
         if !persist_runspace {
             // Force a fresh process-local runspace for this invocation.
             self.stop().await?;
@@ -750,9 +811,12 @@ function __psforge_invoke_user_script {
             }
         }
         wrapper_script.push_str("__psforge_invoke_user_script -InputArgs $args\n");
-        std::fs::write(&wrapper_script_path, wrapper_script.as_bytes()).map_err(|e| AppError {
-            code: "SCRIPT_WRITE_FAILED".to_string(),
-            message: format!("Failed to write wrapper script to temp file: {}", e),
+        std::fs::write(&wrapper_script_path, wrapper_script.as_bytes()).map_err(|e| {
+            let _ = std::fs::remove_file(&user_script_path);
+            AppError {
+                code: "SCRIPT_WRITE_FAILED".to_string(),
+                message: format!("Failed to write wrapper script to temp file: {}", e),
+            }
         })?;
         let wrapper_script_path_str = wrapper_script_path.to_string_lossy().into_owned();
 
@@ -770,7 +834,7 @@ function __psforge_invoke_user_script {
             invoke_script.push_str("'\n");
         }
         invoke_script.push_str("Set-Location -LiteralPath '");
-        invoke_script.push_str(&ps_single_quoted(working_dir));
+        invoke_script.push_str(&ps_single_quoted(&effective_working_dir));
         invoke_script.push_str("'\n");
         invoke_script.push_str("$__psforge_args = @(");
         for (idx, arg) in script_args.iter().enumerate() {
@@ -785,9 +849,13 @@ function __psforge_invoke_user_script {
         invoke_script.push_str("& '");
         invoke_script.push_str(&ps_single_quoted(&wrapper_script_path_str));
         invoke_script.push_str("' @__psforge_args\n");
-        std::fs::write(&invoke_script_path, invoke_script.as_bytes()).map_err(|e| AppError {
-            code: "SCRIPT_WRITE_FAILED".to_string(),
-            message: format!("Failed to write invoke script to temp file: {}", e),
+        std::fs::write(&invoke_script_path, invoke_script.as_bytes()).map_err(|e| {
+            let _ = std::fs::remove_file(&user_script_path);
+            let _ = std::fs::remove_file(&wrapper_script_path);
+            AppError {
+                code: "SCRIPT_WRITE_FAILED".to_string(),
+                message: format!("Failed to write invoke script to temp file: {}", e),
+            }
         })?;
         let invoke_script_path_str = invoke_script_path.to_string_lossy().into_owned();
 
@@ -797,6 +865,10 @@ function __psforge_invoke_user_script {
             RUN_COMMAND_MARKER_PREFIX, command_id, invoke_script_path_str
         );
         let mut session_events = session.event_rx.lock().await;
+        session
+            .output_budget
+            .store(MAX_OUTPUT_LINES, Ordering::Relaxed);
+        session.output_budget_warned.store(false, Ordering::Relaxed);
         while session_events.try_recv().is_ok() {}
         let (kill_tx, mut kill_rx) = oneshot::channel::<()>();
         {
@@ -817,9 +889,6 @@ function __psforge_invoke_user_script {
         }
 
         let mut session_terminated = false;
-        let mut saw_done_stdout = false;
-        let mut saw_done_stderr = false;
-        let mut done_exit_code: Option<i32> = None;
         let exit_code = loop {
             tokio::select! {
                 _ = &mut kill_rx => {
@@ -830,18 +899,7 @@ function __psforge_invoke_user_script {
                         Some(SessionEvent::Output(line)) => {
                             if let Some((done_id, code)) = parse_run_complete_marker(&line.text) {
                                 if done_id == command_id {
-                                    if done_exit_code.is_none() {
-                                        done_exit_code = Some(code);
-                                    }
-                                    if line.stream == "stderr" {
-                                        saw_done_stderr = true;
-                                    } else {
-                                        saw_done_stdout = true;
-                                    }
-                                    if saw_done_stdout && saw_done_stderr {
-                                        break done_exit_code.unwrap_or(0);
-                                    }
-                                    continue;
+                                    break code;
                                 }
                                 // Marker for an unrelated command; do not surface.
                                 continue;
@@ -903,6 +961,24 @@ impl Default for ProcessManager {
     }
 }
 
+fn resolve_working_dir(working_dir: &str) -> String {
+    let trimmed = working_dir.trim();
+    if !trimmed.is_empty() {
+        let candidate = PathBuf::from(trimmed);
+        if candidate.is_dir() {
+            return candidate.to_string_lossy().into_owned();
+        }
+        warn!(
+            "Working directory '{}' is unavailable; falling back to current directory",
+            trimmed
+        );
+    }
+    match std::env::current_dir() {
+        Ok(path) => path.to_string_lossy().into_owned(),
+        Err(_) => std::env::temp_dir().to_string_lossy().into_owned(),
+    }
+}
+
 /// Validates that `ps_path` points to an existing executable file.
 /// Keeps checks lightweight because this is called on hot paths
 /// (e.g. completions/analysis invocations).
@@ -926,8 +1002,7 @@ pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
                 .creation_flags(0x08000000)
                 .output()
                 .map(|o| {
-                    o.status.success()
-                        && !String::from_utf8_lossy(&o.stdout).trim().is_empty()
+                    o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty()
                 })
                 .unwrap_or(false);
             if found_on_path {

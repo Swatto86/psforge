@@ -157,6 +157,32 @@ body,
   color: var(--text-primary);
   font-family: var(--ui-font-family);
   font-size: var(--ui-font-size);
+  line-height: 1.4;
+}
+
+/* Keep Tailwind text utility classes aligned with runtime UI font settings. */
+.text-xs {
+  font-size: var(--ui-font-size-xs) !important;
+}
+
+.text-sm {
+  font-size: var(--ui-font-size-sm) !important;
+}
+
+.text-base {
+  font-size: var(--ui-font-size-base) !important;
+}
+
+.text-lg {
+  font-size: var(--ui-font-size-lg) !important;
+}
+
+.text-xl {
+  font-size: var(--ui-font-size-xl) !important;
+}
+
+.text-\[10px\] {
+  font-size: var(--ui-font-size-2xs) !important;
 }
 
 /* Scrollbar styling */
