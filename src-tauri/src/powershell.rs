@@ -582,6 +582,66 @@ impl ProcessManager {
         wrapper_script.push_str("\n$__psforge_script_path = '");
         wrapper_script.push_str(&user_script_path_ps);
         wrapper_script.push_str("'\n");
+        wrapper_script.push_str(
+            r#"
+function __psforge_coerce_arg_value {
+    param([object]$Raw)
+    if ($null -eq $Raw) { return $null }
+    $text = [string]$Raw
+    if ($text -match '^(?i)\$?true$') { return $true }
+    if ($text -match '^(?i)\$?false$') { return $false }
+    return $Raw
+}
+
+function __psforge_invoke_user_script {
+    param([object[]]$InputArgs)
+
+    $named = @{}
+    $positional = [System.Collections.Generic.List[object]]::new()
+    $i = 0
+    while ($i -lt $InputArgs.Count) {
+        $tokenObj = $InputArgs[$i]
+        $token = if ($null -eq $tokenObj) { '' } else { [string]$tokenObj }
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            $i++
+            continue
+        }
+
+        if ($token.StartsWith('-')) {
+            $body = $token.Substring(1)
+            $colonIdx = $body.IndexOf(':')
+            if ($colonIdx -ge 0) {
+                $name = $body.Substring(0, $colonIdx).Trim()
+                if ($name.Length -gt 0) {
+                    $valueText = $body.Substring($colonIdx + 1)
+                    $named[$name] = __psforge_coerce_arg_value $valueText
+                    $i++
+                    continue
+                }
+            } else {
+                $name = $body.Trim()
+                if ($name.Length -gt 0) {
+                    if (($i + 1) -lt $InputArgs.Count) {
+                        $named[$name] = $InputArgs[$i + 1]
+                        $i += 2
+                        continue
+                    }
+                    # Final bare switch token: treat as $true.
+                    $named[$name] = $true
+                    $i++
+                    continue
+                }
+            }
+        }
+
+        $positional.Add($tokenObj)
+        $i++
+    }
+
+    & $__psforge_script_path @named @positional
+}
+"#,
+        );
         if let Some(specs) = debug_breakpoints {
             // Register debugger breakpoints. Supports line breakpoints plus
             // variable breakpoints, with optional condition/hit-count/action.
@@ -689,7 +749,7 @@ impl ProcessManager {
                 }
             }
         }
-        wrapper_script.push_str("& $__psforge_script_path @args\n");
+        wrapper_script.push_str("__psforge_invoke_user_script -InputArgs $args\n");
         std::fs::write(&wrapper_script_path, wrapper_script.as_bytes()).map_err(|e| AppError {
             code: "SCRIPT_WRITE_FAILED".to_string(),
             message: format!("Failed to write wrapper script to temp file: {}", e),
@@ -847,7 +907,7 @@ impl Default for ProcessManager {
 /// Keeps checks lightweight because this is called on hot paths
 /// (e.g. completions/analysis invocations).
 pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
-    let trimmed = ps_path.trim();
+    let trimmed = ps_path.trim().trim_matches('"');
     if trimmed.is_empty() {
         return Err(AppError {
             code: "INVALID_PS_PATH".to_string(),
@@ -857,6 +917,24 @@ pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
 
     let path = Path::new(trimmed);
     if !path.is_file() {
+        // Accept bare executable names that resolve via PATH (e.g. "pwsh.exe").
+        let is_bare_command =
+            !trimmed.contains('\\') && !trimmed.contains('/') && !trimmed.contains(':');
+        if is_bare_command {
+            let found_on_path = std::process::Command::new("where.exe")
+                .arg(trimmed)
+                .creation_flags(0x08000000)
+                .output()
+                .map(|o| {
+                    o.status.success()
+                        && !String::from_utf8_lossy(&o.stdout).trim().is_empty()
+                })
+                .unwrap_or(false);
+            if found_on_path {
+                return Ok(());
+            }
+        }
+
         return Err(AppError {
             code: "INVALID_PS_PATH".to_string(),
             message: format!("PowerShell executable not found at '{}'", trimmed),

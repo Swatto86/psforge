@@ -1774,10 +1774,14 @@ fn builtin_snippets() -> Vec<Snippet> {
 // ---------------------------------------------------------------------------
 
 /// Maximum seconds to wait for a PSScriptAnalyzer invocation before giving up.
-const ANALYSIS_TIMEOUT_SECS: u64 = 5;
+/// On slower machines or cold PowerShell starts, 5s is too aggressive and can
+/// cause false "no diagnostics" results.
+const ANALYSIS_TIMEOUT_SECS: u64 = 12;
 
 /// Maximum seconds to wait for a TabExpansion2 completion request.
-const COMPLETION_TIMEOUT_SECS: u64 = 3;
+/// Cold starts under test load can exceed 3s; keep this high enough so normal
+/// completions are not dropped as empty results.
+const COMPLETION_TIMEOUT_SECS: u64 = 12;
 /// Maximum seconds to wait when querying online module suggestions for an
 /// unknown command in the integrated terminal.
 const MODULE_SUGGEST_TIMEOUT_SECS: u64 = 8;
@@ -1845,7 +1849,10 @@ pub async fn analyze_script(
     script_content: String,
 ) -> Result<Vec<PssaDiagnostic>, AppError> {
     debug!("analyze_script called ({} chars)", script_content.len());
-    powershell::validate_ps_path(&ps_path)?;
+    let ps_path = ps_path.trim();
+    if ps_path.is_empty() {
+        return Ok(Vec::new());
+    }
 
     // Write content to a temp file so PSSA receives accurate file-path info
     // and we avoid all single-quote escaping issues with -Command.
@@ -1875,7 +1882,7 @@ if (-not $d) {{ '[]'; exit }}\
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(ANALYSIS_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        tokio::process::Command::new(ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -1941,7 +1948,10 @@ pub async fn get_completions(
     cursor_column: usize,
 ) -> Result<Vec<PsCompletion>, AppError> {
     debug!("get_completions called (cursor_column={})", cursor_column);
-    powershell::validate_ps_path(&ps_path)?;
+    let ps_path = ps_path.trim();
+    if ps_path.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let temp_path = write_temp_ps_file(&script_content).map_err(|e| AppError {
         code: "TEMP_WRITE_FAILED".to_string(),
@@ -1965,7 +1975,7 @@ if (-not $r.CompletionMatches) {{ '[]'; exit }}\
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(COMPLETION_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        tokio::process::Command::new(ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -2169,9 +2179,12 @@ const ALLOWED_POLICIES: &[&str] = &[
 #[tauri::command]
 pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
     info!("get_execution_policy called");
-    powershell::validate_ps_path(&ps_path)?;
+    let ps_path = ps_path.trim();
+    if ps_path.is_empty() {
+        return Ok("Unknown".to_string());
+    }
 
-    let output = tokio::process::Command::new(&ps_path)
+    let output = match tokio::process::Command::new(ps_path)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -2183,10 +2196,23 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
         .creation_flags(0x08000000)
         .output()
         .await
-        .map_err(|e| AppError {
-            code: "EXEC_POLICY_QUERY_FAILED".to_string(),
-            message: format!("Failed to query execution policy: {}", e),
-        })?;
+    {
+        Ok(o) => o,
+        Err(e) => {
+            debug!("get_execution_policy: query failed (returning Unknown): {}", e);
+            return Ok("Unknown".to_string());
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        debug!(
+            "get_execution_policy: PowerShell exit={:?}, stderr='{}' (returning Unknown)",
+            output.status.code(),
+            stderr.trim()
+        );
+        return Ok("Unknown".to_string());
+    }
 
     let policy = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -2203,7 +2229,6 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
 #[tauri::command]
 pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(), AppError> {
     info!("set_execution_policy called with policy={}", policy);
-    powershell::validate_ps_path(&ps_path)?;
 
     // Validate against the allow-list before passing to PowerShell.
     if !ALLOWED_POLICIES
@@ -2225,6 +2250,8 @@ pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(),
     if policy.eq_ignore_ascii_case("Default") {
         return Ok(());
     }
+
+    powershell::validate_ps_path(&ps_path)?;
 
     let script = format!(
         "Set-ExecutionPolicy -ExecutionPolicy {} -Scope CurrentUser -Force",
@@ -2490,7 +2517,10 @@ const CERT_ENUM_TIMEOUT_SECS: u64 = 10;
 #[tauri::command]
 pub async fn get_signing_certificates(ps_path: String) -> Result<Vec<CertInfo>, AppError> {
     info!("get_signing_certificates called");
-    powershell::validate_ps_path(&ps_path)?;
+    let ps_path = ps_path.trim();
+    if ps_path.is_empty() {
+        return Ok(Vec::new());
+    }
 
     const CERT_SCRIPT: &str = "\
 $ErrorActionPreference='SilentlyContinue';\
@@ -2506,7 +2536,7 @@ friendlyName=$(if($_.FriendlyName){$_.FriendlyName}else{$_.Subject -replace '^CN
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(CERT_ENUM_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        tokio::process::Command::new(ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",

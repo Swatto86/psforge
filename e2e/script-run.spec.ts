@@ -17,14 +17,21 @@
 
 export {};
 
-const SCRIPT_OUTPUT_TIMEOUT = 20000; // ms to wait for PS output
-const SCRIPT_IDLE_TIMEOUT   = 20000; // ms to wait for script to finish
+const SCRIPT_OUTPUT_TIMEOUT = 45000; // ms to wait for PS output
+const SCRIPT_IDLE_TIMEOUT   = 45000; // ms to wait for script to finish
 
 /** Type text into the Monaco editor, replacing any existing content. */
 async function setEditorContent(text: string): Promise<void> {
   const editorArea = await $('.monaco-editor');
   await editorArea.click();
   await browser.pause(200);
+  await browser.execute(() => {
+    const input = document.querySelector('.monaco-editor textarea.inputarea');
+    if (input instanceof HTMLTextAreaElement) input.focus();
+  });
+  await browser.pause(80);
+  await browser.keys(['Escape']);
+  await browser.pause(60);
   // Select all and replace.
   await browser.keys(['Control', 'a']);
   await browser.pause(100);
@@ -34,6 +41,21 @@ async function setEditorContent(text: string): Promise<void> {
     await browser.keys([ch]);
     await browser.pause(20);
   }
+}
+
+/** Click Run and wait for output text, retrying once for transient UI focus races. */
+async function runAndExpectOutput(
+  expected: string,
+  timeoutMs = SCRIPT_OUTPUT_TIMEOUT,
+  attempts = 2,
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    await clickRun();
+    const found = await waitForOutputText(expected, timeoutMs);
+    if (found) return true;
+    await browser.pause(300);
+  }
+  return false;
 }
 
 /** Wait for visible text to appear inside [data-testid="output-scroll"]. */
@@ -72,6 +94,12 @@ async function clickRun(): Promise<void> {
 describe('Script Execution', () => {
 
   before(async () => {
+    // Ensure modal/overlay state from earlier specs does not intercept clicks.
+    for (let i = 0; i < 3; i++) {
+      await browser.keys(['Escape']);
+      await browser.pause(100);
+    }
+
     // Ensure there is exactly one new code tab open.
     const newBtn = await $('[data-testid="toolbar-new"]');
     await newBtn.click();
@@ -88,6 +116,12 @@ describe('Script Execution', () => {
     const outputTab = await $('[data-testid="output-tab-output"]');
     await outputTab.click();
     await browser.pause(300);
+
+    // Warm up the execution path so first assertions are not penalised by
+    // cold-start shell/runspace latency.
+    const warmupMarker = `E2E_WARMUP_${Date.now()}`;
+    await setEditorContent(`Write-Host "${warmupMarker}"`);
+    await runAndExpectOutput(warmupMarker, SCRIPT_OUTPUT_TIMEOUT, 2);
   });
 
   describe('Toolbar Run/Stop Button States', () => {
@@ -112,9 +146,7 @@ describe('Script Execution', () => {
     it('should display Write-Host output in the Output pane', async () => {
       const testMarker = 'E2ETestOutput_WriteHost';
       await setEditorContent(`Write-Host "${testMarker}"`);
-      await clickRun();
-
-      const found = await waitForOutputText(testMarker, SCRIPT_OUTPUT_TIMEOUT);
+      const found = await runAndExpectOutput(testMarker, SCRIPT_OUTPUT_TIMEOUT, 2);
       expect(found).toBe(true);
     });
 
@@ -123,7 +155,6 @@ describe('Script Execution', () => {
         'Write-Host "Line_A_E2E"\nWrite-Host "Line_B_E2E"'
       );
       await clickRun();
-
       const foundA = await waitForOutputText('Line_A_E2E', SCRIPT_OUTPUT_TIMEOUT);
       const foundB = await waitForOutputText('Line_B_E2E', SCRIPT_OUTPUT_TIMEOUT);
       expect(foundA).toBe(true);

@@ -65,8 +65,9 @@ function buildScriptArgs(
       if (lower === "false" || lower === "0" || lower === "no") {
         args.push(`-${param.name}:$false`);
       } else {
-        // Empty input from the prompt means "present" for switches.
-        args.push(`-${param.name}`);
+        // Emit explicit true to avoid ambiguity when args are rehydrated in
+        // the backend host process.
+        args.push(`-${param.name}:$true`);
       }
       continue;
     }

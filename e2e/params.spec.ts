@@ -31,14 +31,9 @@ const SCRIPT_IDLE_TIMEOUT    = 20_000; // ms to wait for the running indicator t
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Replaces the Monaco editor content with the given text, character by
- * character, and waits for the model to reflect the new value.
- * Mirrors the pattern used in script-run.spec.ts (test isolation rule).
- */
 async function setEditorContent(text: string): Promise<void> {
-  const editor = await $('.monaco-editor');
-  await editor.click();
+  const editorArea = await $('.monaco-editor');
+  await editorArea.click();
   await browser.pause(200);
   await browser.keys(['Control', 'a']);
   await browser.pause(100);
@@ -123,8 +118,16 @@ async function clickRun(): Promise<void> {
   const runBtn = await $('[data-testid="toolbar-run"]');
   await runBtn.click();
   await browser.pause(200);
+
+  // If the mandatory-parameter dialog opened immediately, do not click through
+  // the modal backdrop.
+  const dialog = await $('[data-testid="param-prompt-dialog"]');
+  if ((await dialog.isExisting()) && (await dialog.isDisplayed().catch(() => false))) {
+    return;
+  }
+
   const outputTab = await $('[data-testid="output-tab-output"]');
-  await outputTab.click();
+  await outputTab.click().catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +138,18 @@ before(async () => {
   const newBtn = await $('[data-testid="toolbar-new"]');
   await newBtn.click();
   await browser.pause(600);
+});
+
+afterEach(async () => {
+  // Keep tests isolated even if a previous assertion failed mid-dialog.
+  const dialog = await $('[data-testid="param-prompt-dialog"]');
+  if ((await dialog.isExisting()) && (await dialog.isDisplayed().catch(() => false))) {
+    const cancelBtn = await $('[data-testid="param-prompt-cancel"]');
+    if (await cancelBtn.isExisting()) {
+      await cancelBtn.click().catch(() => {});
+      await waitForDialogGone().catch(() => {});
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

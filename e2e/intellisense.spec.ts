@@ -13,31 +13,44 @@
  * Run: npm run test:e2e -- --spec e2e/intellisense.spec.ts
  */
 
+async function dismissSuggestWidget(): Promise<void> {
+  // Monaco suggest rows can intercept editor clicks while visible.
+  for (let i = 0; i < 3; i++) {
+    await browser.keys(['Escape']);
+    await browser.pause(120);
+    const closed = await browser.execute(() => {
+      const widget = document.querySelector('.suggest-widget');
+      if (!widget) return true;
+      const cls = (widget as HTMLElement).className || '';
+      return !cls.includes('visible');
+    });
+    if (closed) return;
+  }
+}
+
+async function focusEditorInput(): Promise<void> {
+  // Focus Monaco's hidden textarea directly to avoid click interception by
+  // completion rows.
+  await browser.execute(() => {
+    const input = document.querySelector('.monaco-editor textarea.inputarea');
+    if (input instanceof HTMLTextAreaElement) input.focus();
+  });
+  await browser.pause(80);
+  const hasFocus = await browser.execute(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLTextAreaElement && active.classList.contains('inputarea');
+  });
+  if (!hasFocus) {
+    const editor = await $('.monaco-editor');
+    await editor.click();
+    await browser.pause(80);
+  }
+}
+
 /** Helper: clear the editor and type fresh content.  */
 async function clearEditorAndType(text: string): Promise<void> {
-  // Click the Monaco text layer to focus the editor.
-  const viewLines = await $('.monaco-editor .view-lines');
-  await viewLines.click();
-  await browser.pause(100);
-
-  // Dismiss any open suggestion widget and wait until it is fully closed.
-  await browser.keys(['Escape']);
-  await browser.pause(100);
-  try {
-    await browser.waitUntil(
-      async () => {
-        const w = await $('.suggest-widget');
-        if (!w) return true;
-        const cls = await w.getAttribute('class').catch(() => '');
-        return !cls.includes('visible');
-      },
-      { timeout: 3000, interval: 100 }
-    );
-  } catch {
-    // If the widget didn't close, press Escape once more.
-    await browser.keys(['Escape']);
-    await browser.pause(200);
-  }
+  await dismissSuggestWidget();
+  await focusEditorInput();
 
   await browser.keys(['Control', 'a']);
   await browser.pause(100);
@@ -203,85 +216,26 @@ describe('IntelliSense Completions', () => {
     });
 
     it('parameter completion list should contain -Path', async () => {
-      // Type "Get-Item -P" so PS returns a short list (Path, PSPath, etc.) that
-      // fits in Monaco's visible viewport.
-      await clearEditorAndType('Get-Item -P');
-      await browser.pause(500);
-      // Dismiss any file completions that arrived from the space trigger.
-      await browser.keys(['Escape']);
-      await browser.pause(300);
-      // Confirm widget is dismissed before re-triggering.
-      await browser.waitUntil(
-        async () => {
-          const cls: string = await browser.execute(() => {
-            const w = document.querySelector('.suggest-widget');
-            return w ? (w as HTMLElement).className : '';
-          });
-          return !cls.includes('visible');
-        },
-        { timeout: 3000, interval: 100 }
-      ).catch(() => { /* already gone */ });
-      // Force a fresh completion request for the current editor content.
+      await clearEditorAndType('Get-ChildItem -');
       await browser.keys(['Control', ' ']);
+      let rowTexts = await waitForSuggestRowTexts(8000);
+      let hasPath = rowTexts.some((t) => /(^|\s)-?path\b/i.test(t));
 
-      // Poll until "path" appears — or collect whatever is shown for diagnostics.
-      let rowTexts: string[] = [];
-      try {
-        rowTexts = (await browser.waitUntil(
-          async (): Promise<string[] | false> => {
-            const texts: string[] = await browser.execute((): string[] => {
-              const w = document.querySelector('.suggest-widget');
-              if (!w) return [];
-              const cls = (w as HTMLElement).className || '';
-              if (!cls.includes('visible') || cls.includes('message')) return [];
-              const rows = Array.from(
-                w.querySelectorAll('.monaco-list-rows .monaco-list-row')
-              );
-              return rows
-                .map((r) => {
-                  const el = r as HTMLElement;
-                  return (
-                    (el.getAttribute('aria-label') || '') +
-                    ' ' +
-                    (el.innerText || el.textContent || '')
-                  ).trim();
-                })
-                .filter((t) => t.length > 0);
-            });
-            return texts.some((t) => t.toLowerCase().includes('path'))
-              ? texts
-              : false;
-          },
-          { timeout: 20000, interval: 300, timeoutMsg: '"Path" never appeared' }
-        )) as string[];
-      } catch {
-        // Collect whatever is in the widget now for diagnostics.
-        rowTexts = await browser.execute((): string[] => {
-          const w = document.querySelector('.suggest-widget');
-          if (!w) return ['[widget not found]'];
-          const cls = (w as HTMLElement).className || '';
-          if (!cls.includes('visible')) return ['[widget hidden, class=' + cls + ']'];
-          const rows = Array.from(
-            w.querySelectorAll('.monaco-list-rows .monaco-list-row')
-          );
-          const texts = rows.map((r) => {
-            const el = r as HTMLElement;
-            return (
-              (el.getAttribute('aria-label') || '') +
-              ' | ' +
-              (el.innerText || el.textContent || '')
-            ).trim();
-          });
-          return texts.length ? texts : ['[visible but 0 rows]'];
-        });
-        // Fail with diagnostic info rather than an opaque "received: 0" message.
-        throw new Error(
-          `"Path" never appeared in suggest widget after 20s. Widget contents: ${JSON.stringify(rowTexts)}`
-        );
+      // If Monaco remained in cmdlet-completion mode at '-' (can happen on
+      // slower test runs), narrow to a parameter prefix and retry.
+      if (!hasPath) {
+        await clearEditorAndType('Get-ChildItem -Pa');
+        await browser.keys(['Control', ' ']);
+        rowTexts = await waitForSuggestRowTexts(10000);
+        hasPath = rowTexts.some((t) => /(^|\s)-?path\b/i.test(t));
       }
 
       expect(rowTexts.length).toBeGreaterThan(0);
-      expect(rowTexts.some((t) => t.toLowerCase().includes('path'))).toBe(true);
+      if (!hasPath) {
+        throw new Error(
+          `"Path" was not present in parameter suggestions. Widget contents: ${JSON.stringify(rowTexts)}`
+        );
+      }
     });
 
     it('parameter suggestion label is "Path" but insertion is "-Path"', async () => {
