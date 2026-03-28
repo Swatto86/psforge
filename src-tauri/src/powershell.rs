@@ -707,9 +707,12 @@ function __psforge_invoke_user_script {
             // Register debugger breakpoints. Supports line breakpoints plus
             // variable breakpoints, with optional condition/hit-count/action.
             wrapper_script.push_str("$global:__psforge_debug_scope = 0\n");
-            wrapper_script.push_str("$script:__psforge_bp_hits = @{}\n");
-            wrapper_script.push_str("$script:__psforge_bp_conditions = @{}\n");
-            wrapper_script.push_str("$script:__psforge_bp_commands = @{}\n");
+            // Use global scope so breakpoint action scriptblocks can always
+            // resolve these dictionaries even when they execute in a different
+            // script scope than this wrapper.
+            wrapper_script.push_str("$global:__psforge_bp_hits = @{}\n");
+            wrapper_script.push_str("$global:__psforge_bp_conditions = @{}\n");
+            wrapper_script.push_str("$global:__psforge_bp_commands = @{}\n");
 
             for (idx, spec) in specs.iter().enumerate() {
                 let line = spec.line.filter(|line| *line > 0);
@@ -748,14 +751,14 @@ function __psforge_invoke_user_script {
                 let bp_id_ps = ps_single_quoted(&bp_id);
 
                 if let Some(cond) = condition {
-                    wrapper_script.push_str("$script:__psforge_bp_conditions['");
+                    wrapper_script.push_str("$global:__psforge_bp_conditions['");
                     wrapper_script.push_str(&bp_id_ps);
                     wrapper_script.push_str("'] = '");
                     wrapper_script.push_str(&ps_single_quoted(cond));
                     wrapper_script.push_str("'\n");
                 }
                 if let Some(cmd_text) = command {
-                    wrapper_script.push_str("$script:__psforge_bp_commands['");
+                    wrapper_script.push_str("$global:__psforge_bp_commands['");
                     wrapper_script.push_str(&bp_id_ps);
                     wrapper_script.push_str("'] = '");
                     wrapper_script.push_str(&ps_single_quoted(cmd_text));
@@ -767,18 +770,18 @@ function __psforge_invoke_user_script {
                 action.push_str(&bp_id_ps);
                 action.push_str("'; ");
                 action.push_str(
-                    "$script:__psforge_bp_hits[$__psf_id] = ([int]$script:__psforge_bp_hits[$__psf_id]) + 1; ",
+                    "$global:__psforge_bp_hits[$__psf_id] = ([int]$global:__psforge_bp_hits[$__psf_id]) + 1; ",
                 );
                 if let Some(hit) = hit_count {
-                    action.push_str("if ($script:__psforge_bp_hits[$__psf_id] -lt ");
+                    action.push_str("if ($global:__psforge_bp_hits[$__psf_id] -lt ");
                     action.push_str(&hit.to_string());
                     action.push_str(") { return } ");
                 }
-                action.push_str("$__psf_cond = $script:__psforge_bp_conditions[$__psf_id]; ");
+                action.push_str("$__psf_cond = $global:__psforge_bp_conditions[$__psf_id]; ");
                 action.push_str(
                     "if ($__psf_cond) { try { if (-not (& ([scriptblock]::Create($__psf_cond)))) { return } } catch { return } } ",
                 );
-                action.push_str("$__psf_cmd = $script:__psforge_bp_commands[$__psf_id]; ");
+                action.push_str("$__psf_cmd = $global:__psforge_bp_commands[$__psf_id]; ");
                 action.push_str(
                     "if ($__psf_cmd) { try { & ([scriptblock]::Create($__psf_cmd)) | Out-Null } catch {} } ",
                 );
