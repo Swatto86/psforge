@@ -1,7 +1,7 @@
-/// E2E regression tests for script-argument binding in the persistent host.
-///
-/// These tests exercise `ProcessManager::execute` directly so they validate the
-/// same wrapper/invoke-script path used by the frontend run/debug commands.
+// E2E regression tests for script-argument binding in the persistent host.
+//
+// These tests exercise `ProcessManager::execute` directly so they validate the
+// same wrapper/invoke-script path used by the frontend run/debug commands.
 
 const TEST_TIMEOUT_SECS: u64 = 90;
 

@@ -22,22 +22,22 @@ export {};
 // Timeout constants (Rule 3 — named constants, conservative for CI runners)
 // ---------------------------------------------------------------------------
 
-const DIALOG_APPEAR_TIMEOUT  = 10_000; // ms to wait for the param dialog to open
-const DIALOG_DISMISS_TIMEOUT =  5_000; // ms to wait for dialog to close after action
-const SCRIPT_OUTPUT_TIMEOUT  = 20_000; // ms to wait for PS output after run
-const SCRIPT_IDLE_TIMEOUT    = 20_000; // ms to wait for the running indicator to clear
+const DIALOG_APPEAR_TIMEOUT = 10_000; // ms to wait for the param dialog to open
+const DIALOG_DISMISS_TIMEOUT = 5_000; // ms to wait for dialog to close after action
+const SCRIPT_OUTPUT_TIMEOUT = 20_000; // ms to wait for PS output after run
+const SCRIPT_IDLE_TIMEOUT = 20_000; // ms to wait for the running indicator to clear
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 async function setEditorContent(text: string): Promise<void> {
-  const editorArea = await $('.monaco-editor');
+  const editorArea = await $(".monaco-editor");
   await editorArea.click();
   await browser.pause(200);
-  await browser.keys(['Control', 'a']);
+  await browser.keys(["Control", "a"]);
   await browser.pause(100);
-  await browser.keys(['Delete']);
+  await browser.keys(["Delete"]);
   await browser.pause(100);
   // Type the new content slowly to avoid Monaco missing characters.
   for (const ch of text) {
@@ -48,14 +48,20 @@ async function setEditorContent(text: string): Promise<void> {
 }
 
 /** Wait for the param-prompt dialog to appear. */
-async function waitForDialog(timeoutMs = DIALOG_APPEAR_TIMEOUT): Promise<boolean> {
+async function waitForDialog(
+  timeoutMs = DIALOG_APPEAR_TIMEOUT,
+): Promise<boolean> {
   try {
     await browser.waitUntil(
       async () => {
         const el = await $('[data-testid="param-prompt-dialog"]');
         return el.isDisplayed();
       },
-      { timeout: timeoutMs, interval: 200, timeoutMsg: 'param-prompt-dialog did not appear' },
+      {
+        timeout: timeoutMs,
+        interval: 200,
+        timeoutMsg: "param-prompt-dialog did not appear",
+      },
     );
     return true;
   } catch {
@@ -64,14 +70,21 @@ async function waitForDialog(timeoutMs = DIALOG_APPEAR_TIMEOUT): Promise<boolean
 }
 
 /** Returns true once the param-prompt dialog is no longer in the DOM / hidden. */
-async function waitForDialogGone(timeoutMs = DIALOG_DISMISS_TIMEOUT): Promise<boolean> {
+async function waitForDialogGone(
+  timeoutMs = DIALOG_DISMISS_TIMEOUT,
+): Promise<boolean> {
   try {
     await browser.waitUntil(
       async () => {
         const el = await $('[data-testid="param-prompt-dialog"]');
-        return !(await el.isDisplayed());
+        if (!(await el.isExisting())) return true;
+        return !(await el.isDisplayed().catch(() => false));
       },
-      { timeout: timeoutMs, interval: 200, timeoutMsg: 'param-prompt-dialog did not dismiss' },
+      {
+        timeout: timeoutMs,
+        interval: 200,
+        timeoutMsg: "param-prompt-dialog did not dismiss",
+      },
     );
     return true;
   } catch {
@@ -80,7 +93,15 @@ async function waitForDialogGone(timeoutMs = DIALOG_DISMISS_TIMEOUT): Promise<bo
 }
 
 /** Return visible text from the output scroll pane. */
+async function showOutputTab(): Promise<void> {
+  const outputTab = await $('[data-testid="output-tab-output"]');
+  await outputTab.click().catch(() => {});
+  await browser.pause(150);
+}
+
+/** Return visible text from the output scroll pane. */
 async function getOutputText(): Promise<string> {
+  await showOutputTab();
   const scroll = await $('[data-testid="output-scroll"]');
   return scroll.getText();
 }
@@ -93,7 +114,11 @@ async function waitForOutput(
   try {
     await browser.waitUntil(
       async () => (await getOutputText()).includes(substring),
-      { timeout: timeoutMs, interval: 300, timeoutMsg: `output did not contain: ${substring}` },
+      {
+        timeout: timeoutMs,
+        interval: 300,
+        timeoutMsg: `output did not contain: ${substring}`,
+      },
     );
     return true;
   } catch {
@@ -109,7 +134,11 @@ async function waitForIdle(timeoutMs = SCRIPT_IDLE_TIMEOUT): Promise<void> {
       // The Run button is re-enabled when execution finishes.
       return btn.isEnabled();
     },
-    { timeout: timeoutMs, interval: 300, timeoutMsg: 'script did not finish running' },
+    {
+      timeout: timeoutMs,
+      interval: 300,
+      timeoutMsg: "script did not finish running",
+    },
   );
 }
 
@@ -122,7 +151,10 @@ async function clickRun(): Promise<void> {
   // If the mandatory-parameter dialog opened immediately, do not click through
   // the modal backdrop.
   const dialog = await $('[data-testid="param-prompt-dialog"]');
-  if ((await dialog.isExisting()) && (await dialog.isDisplayed().catch(() => false))) {
+  if (
+    (await dialog.isExisting()) &&
+    (await dialog.isDisplayed().catch(() => false))
+  ) {
     return;
   }
 
@@ -143,7 +175,10 @@ before(async () => {
 afterEach(async () => {
   // Keep tests isolated even if a previous assertion failed mid-dialog.
   const dialog = await $('[data-testid="param-prompt-dialog"]');
-  if ((await dialog.isExisting()) && (await dialog.isDisplayed().catch(() => false))) {
+  if (
+    (await dialog.isExisting()) &&
+    (await dialog.isDisplayed().catch(() => false))
+  ) {
     const cancelBtn = await $('[data-testid="param-prompt-cancel"]');
     if (await cancelBtn.isExisting()) {
       await cancelBtn.click().catch(() => {});
@@ -156,9 +191,8 @@ afterEach(async () => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('Mandatory Parameter Prompt', () => {
-
-  it('shows the dialog for a script with a single mandatory string param', async () => {
+describe("Mandatory Parameter Prompt", () => {
+  it("shows the dialog for a script with a single mandatory string param", async () => {
     // Script has one mandatory param $Name with no default.
     await setEditorContent(
       'param([Parameter(Mandatory)][string]$Name)\nWrite-Host "Hello $Name"',
@@ -179,9 +213,9 @@ describe('Mandatory Parameter Prompt', () => {
     await waitForDialogGone();
   });
 
-  it('accepts a value and runs the script, producing correct output', async () => {
+  it("accepts a value and runs the script, producing correct output", async () => {
     await setEditorContent(
-      'param([Parameter(Mandatory)][string]$Greeting)\nWrite-Host $Greeting',
+      "param([Parameter(Mandatory)][string]$Greeting)\nWrite-Host $Greeting",
     );
 
     await clickRun();
@@ -192,7 +226,7 @@ describe('Mandatory Parameter Prompt', () => {
     // Type a value into the input.
     const field = await $('[data-testid="param-input-Greeting"]');
     await field.click();
-    await field.setValue('PSForge');
+    await field.setValue("PSForge");
 
     // Click Run inside the dialog.
     const runBtn = await $('[data-testid="param-prompt-run"]');
@@ -203,21 +237,23 @@ describe('Mandatory Parameter Prompt', () => {
     expect(dismissed).toBe(true);
 
     // Wait for output.
-    const hasOutput = await waitForOutput('PSForge');
+    const hasOutput = await waitForOutput("PSForge");
     expect(hasOutput).toBe(true);
 
     await waitForIdle();
   });
 
-  it('executes a script with begin/process/end blocks after mandatory param prompt', async () => {
+  it("executes a script with begin/process/end blocks after mandatory param prompt", async () => {
     // Regression guard: this script shape failed when runs were wrapped in a
     // dynamically-created ScriptBlock and invoked with named args.
-    await setEditorContent([
-      'param([Parameter(Mandatory)][string]$Identity)',
-      'begin { $items = [System.Collections.Generic.List[string]]::new() }',
-      'process { $items.Add($Identity) }',
-      'end { Write-Host ("BPE:" + $items[0]) }',
-    ].join('\n'));
+    await setEditorContent(
+      [
+        "param([Parameter(Mandatory)][string]$Identity)",
+        "begin { $items = [System.Collections.Generic.List[string]]::new() }",
+        "process { $items.Add($Identity) }",
+        'end { Write-Host ("BPE:" + $items[0]) }',
+      ].join("\n"),
+    );
 
     await clickRun();
 
@@ -226,7 +262,7 @@ describe('Mandatory Parameter Prompt', () => {
 
     const field = await $('[data-testid="param-input-Identity"]');
     await field.click();
-    await field.setValue('ADUpdateTest');
+    await field.setValue("ADUpdateTest");
 
     const runBtn = await $('[data-testid="param-prompt-run"]');
     await runBtn.click();
@@ -234,7 +270,7 @@ describe('Mandatory Parameter Prompt', () => {
     const dismissed = await waitForDialogGone();
     expect(dismissed).toBe(true);
 
-    const hasOutput = await waitForOutput('BPE:ADUpdateTest');
+    const hasOutput = await waitForOutput("BPE:ADUpdateTest");
     expect(hasOutput).toBe(true);
 
     // If execution regresses to wrapper-based invocation, PowerShell emits
@@ -245,7 +281,7 @@ describe('Mandatory Parameter Prompt', () => {
     await waitForIdle();
   });
 
-  it('cancel button aborts the run (script does NOT execute)', async () => {
+  it("cancel button aborts the run (script does NOT execute)", async () => {
     // Unique sentinel so we can confirm it does NOT appear if cancelled.
     const sentinel = `SHOULD_NOT_APPEAR_${Date.now()}`;
     await setEditorContent(
@@ -270,7 +306,7 @@ describe('Mandatory Parameter Prompt', () => {
     expect(output.includes(sentinel)).toBe(false);
   });
 
-  it('handles multiple mandatory params of different types', async () => {
+  it("handles multiple mandatory params of different types", async () => {
     // Keep the param() declaration on one line to reduce Monaco typing-flake
     // risk in E2E (multi-line balanced-paren edits are occasionally lossy).
     await setEditorContent(
@@ -284,27 +320,27 @@ describe('Mandatory Parameter Prompt', () => {
 
     // Both fields should be present.
     const firstNameField = await $('[data-testid="param-input-FirstName"]');
-    const ageField        = await $('[data-testid="param-input-Age"]');
+    const ageField = await $('[data-testid="param-input-Age"]');
     expect(await firstNameField.isDisplayed()).toBe(true);
     expect(await ageField.isDisplayed()).toBe(true);
 
     // Fill in the values.
     await firstNameField.click();
-    await firstNameField.setValue('Alice');
+    await firstNameField.setValue("Alice");
     await ageField.click();
-    await ageField.setValue('30');
+    await ageField.setValue("30");
 
     // Run.
     const runBtn = await $('[data-testid="param-prompt-run"]');
     await runBtn.click();
 
     await waitForDialogGone();
-    const hasOutput = await waitForOutput('Alice is 30 years old');
+    const hasOutput = await waitForOutput("Alice is 30 years old");
     expect(hasOutput).toBe(true);
     await waitForIdle();
   });
 
-  it('does NOT show the dialog for a script with no mandatory params', async () => {
+  it("does NOT show the dialog for a script with no mandatory params", async () => {
     await setEditorContent('Write-Host "no params here"');
 
     await clickRun();
@@ -314,12 +350,12 @@ describe('Mandatory Parameter Prompt', () => {
     expect(dialogShown).toBe(false);
 
     // The script should run and produce output normally.
-    const hasOutput = await waitForOutput('no params here');
+    const hasOutput = await waitForOutput("no params here");
     expect(hasOutput).toBe(true);
     await waitForIdle();
   });
 
-  it('does NOT show the dialog when the mandatory param already has a default', async () => {
+  it("does NOT show the dialog when the mandatory param already has a default", async () => {
     // Param is mandatory in name only (has default), so PSForge should NOT prompt.
     await setEditorContent(
       'param([Parameter(Mandatory=$false)][string]$Val = "defaultVal")\nWrite-Host $Val',
@@ -330,18 +366,20 @@ describe('Mandatory Parameter Prompt', () => {
     const dialogShown = await waitForDialog(2000);
     expect(dialogShown).toBe(false);
 
-    const hasOutput = await waitForOutput('defaultVal');
+    const hasOutput = await waitForOutput("defaultVal");
     expect(hasOutput).toBe(true);
     await waitForIdle();
   });
 
-  it('shows a checkbox for a boolean mandatory param and injects $true correctly', async () => {
-    await setEditorContent([
-      // Avoid $Verbose name collision with PowerShell's built-in common
-      // parameter metadata; we want a user script bool parameter here.
-      'param([Parameter(Mandatory)][bool]$IsVerbose)',
-      'if ($IsVerbose) { Write-Host "verbose-on" } else { Write-Host "verbose-off" }',
-    ].join('\n'));
+  it("shows a checkbox for a boolean mandatory param and injects $true correctly", async () => {
+    await setEditorContent(
+      [
+        // Avoid $Verbose name collision with PowerShell's built-in common
+        // parameter metadata; we want a user script bool parameter here.
+        "param([Parameter(Mandatory)][bool]$IsVerbose)",
+        'if ($IsVerbose) { Write-Host "verbose-on" } else { Write-Host "verbose-off" }',
+      ].join("\n"),
+    );
 
     await clickRun();
 
@@ -350,7 +388,7 @@ describe('Mandatory Parameter Prompt', () => {
 
     // Should be a checkbox, defaulting to unchecked ($false).
     const checkbox = await $('[data-testid="param-input-IsVerbose"]');
-    expect(await checkbox.getAttribute('type')).toBe('checkbox');
+    expect(await checkbox.getAttribute("type")).toBe("checkbox");
     // Check the box to choose $true.
     await checkbox.click();
 
@@ -358,14 +396,14 @@ describe('Mandatory Parameter Prompt', () => {
     await runBtn.click();
 
     await waitForDialogGone();
-    const hasOutput = await waitForOutput('verbose-on');
+    const hasOutput = await waitForOutput("verbose-on");
     expect(hasOutput).toBe(true);
     await waitForIdle();
   });
 
-  it('Run button is disabled when a required text field is empty', async () => {
+  it("Run button is disabled when a required text field is empty", async () => {
     await setEditorContent(
-      'param([Parameter(Mandatory)][string]$Path)\nWrite-Host $Path',
+      "param([Parameter(Mandatory)][string]$Path)\nWrite-Host $Path",
     );
 
     await clickRun();
@@ -379,7 +417,7 @@ describe('Mandatory Parameter Prompt', () => {
 
     // Fill in a value -> button should become enabled.
     const field = await $('[data-testid="param-input-Path"]');
-    await field.setValue('C:\\Temp');
+    await field.setValue("C:\\Temp");
     expect(await runBtn.isEnabled()).toBe(true);
 
     // Cancel to clean up.

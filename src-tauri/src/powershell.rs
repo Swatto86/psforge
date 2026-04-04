@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex as StdMutex,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -26,6 +26,7 @@ const PROCESS_MONITOR_POLL_MS: u64 = 120;
 const RUN_COMMAND_MARKER_PREFIX: &str = "<<PSFORGE_RUN|";
 const RUN_COMPLETE_MARKER_PREFIX: &str = "<<PSFORGE_DONE|";
 const HOST_EXIT_MARKER: &str = "<<PSFORGE_EXIT>>";
+pub const VARIABLES_MARKER_PREFIX: &str = "<<PSFORGE_VARIABLES_JSON>>";
 
 /// PowerShell bootstrap that ensures a real (hidden) Win32 console window
 /// handle exists for the child process.
@@ -220,6 +221,8 @@ pub struct ProcessManager {
     execution_lock: Arc<Mutex<()>>,
     /// Kill-signal channel for the currently active execute() call.
     kill_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    /// Cached variable snapshot from the last completed run/debug/selection.
+    last_variables_json: Arc<StdMutex<Option<String>>>,
 }
 
 impl ProcessManager {
@@ -230,6 +233,7 @@ impl ProcessManager {
             active_command: Arc::new(Mutex::new(None)),
             execution_lock: Arc::new(Mutex::new(())),
             kill_sender: Arc::new(Mutex::new(None)),
+            last_variables_json: Arc::new(StdMutex::new(None)),
         }
     }
 
@@ -249,6 +253,30 @@ impl ProcessManager {
             let mut active = self.active_command.lock().await;
             *active = None;
         }
+    }
+
+    pub fn clear_last_variables_json(&self) {
+        let mut guard = self
+            .last_variables_json
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = None;
+    }
+
+    pub fn cache_last_variables_json(&self, json: String) {
+        let mut guard = self
+            .last_variables_json
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = Some(json);
+    }
+
+    pub fn last_variables_json(&self) -> Option<String> {
+        let guard = self
+            .last_variables_json
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.clone()
     }
 
     async fn shutdown_session(session: Arc<PersistentSession>) {
@@ -610,12 +638,13 @@ impl ProcessManager {
     {
         validate_ps_path(ps_path)?;
         let _exec_guard = self.execution_lock.lock().await;
+        self.clear_last_variables_json();
         info!(
             "Executing script with persistent session {} in {}",
             ps_path, working_dir
         );
         debug!("Script size: {} bytes", script.len());
-        let effective_working_dir = resolve_working_dir(working_dir);
+        let effective_working_dir = resolve_working_dir(working_dir)?;
         if !persist_runspace {
             // Force a fresh process-local runspace for this invocation.
             self.stop().await?;
@@ -625,19 +654,16 @@ impl ProcessManager {
         // Write the user script to a uniquely-named temp file.
         // Using -File instead of -Command removes the "inline PowerShell command"
         // pattern that security tools (e.g. MDE) flag as a reverse-shell indicator.
-        let user_script_path =
-            std::env::temp_dir().join(format!("psforge_script_{}.ps1", Uuid::new_v4()));
-        std::fs::write(&user_script_path, script.as_bytes()).map_err(|e| AppError {
-            code: "SCRIPT_WRITE_FAILED".to_string(),
-            message: format!("Failed to write script to temp file: {}", e),
-        })?;
+        let user_script_path = write_secure_temp_file("psforge_script", ".ps1", script.as_bytes())
+            .map_err(|e| AppError {
+                code: "SCRIPT_WRITE_FAILED".to_string(),
+                message: format!("Failed to write script to temp file: {}", e),
+            })?;
         let user_script_path_ps = user_script_path.to_string_lossy().replace('\'', "''");
 
         // Wrapper script that first ensures a valid hidden Win32 console handle
         // for auth libraries, then executes the real script path with original args.
         // In debug mode, line breakpoints are registered against the temp script path.
-        let wrapper_script_path =
-            std::env::temp_dir().join(format!("psforge_wrapper_{}.ps1", Uuid::new_v4()));
         let mut wrapper_script = String::new();
         wrapper_script.push_str(AUTH_WINDOW_HANDLE_BOOTSTRAP_PS);
         wrapper_script.push_str("\n$__psforge_script_path = '");
@@ -648,58 +674,91 @@ impl ProcessManager {
 function __psforge_coerce_arg_value {
     param([object]$Raw)
     if ($null -eq $Raw) { return $null }
-    $text = [string]$Raw
-    if ($text -match '^(?i)\$?true$') { return $true }
-    if ($text -match '^(?i)\$?false$') { return $false }
+    $__psforge_text = [string]$Raw
+    if ($__psforge_text -match '^(?i)\$?true$') { return $true }
+    if ($__psforge_text -match '^(?i)\$?false$') { return $false }
     return $Raw
 }
 
-function __psforge_invoke_user_script {
-    param([object[]]$InputArgs)
+function __psforge_emit_variables {
+    try {
+        $__psforge_vars = @(
+            Get-Variable |
+            Where-Object {
+                $_.Name -notmatch '^(\\?|args|input|MyInvocation|PSBoundParameters|PSCommandPath|PSScriptRoot|utf8NoBom|psfHwnd)$' -and
+                $_.Name -notlike '__psforge*'
+            } |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    Name = $_.Name
+                    Value = if ($_.Value -ne $null) { $_.Value.ToString() } else { '<null>' }
+                    TypeName = if ($_.Value -ne $null) { $_.Value.GetType().Name } else { 'Null' }
+                }
+            }
+        )
+        $__psforge_json = if ($__psforge_vars.Count -eq 0) {
+            '[]'
+        } else {
+            ConvertTo-Json -Compress -InputObject $__psforge_vars
+        }
+        [Console]::Out.WriteLine('<<PSFORGE_VARIABLES_JSON>>' + $__psforge_json)
+    } catch {
+        [Console]::Out.WriteLine('<<PSFORGE_VARIABLES_JSON>>[]')
+    } finally {
+        [Console]::Out.Flush()
+    }
+}
 
-    $named = @{}
-    $positional = [System.Collections.Generic.List[object]]::new()
-    $i = 0
-    while ($i -lt $InputArgs.Count) {
-        $tokenObj = $InputArgs[$i]
-        $token = if ($null -eq $tokenObj) { '' } else { [string]$tokenObj }
-        if ([string]::IsNullOrWhiteSpace($token)) {
-            $i++
+function __psforge_invoke_user_script {
+    param([object[]]$__psforge_input_args)
+
+    $__psforge_named = @{}
+    $__psforge_positional = [System.Collections.Generic.List[object]]::new()
+    $__psforge_i = 0
+    while ($__psforge_i -lt $__psforge_input_args.Count) {
+        $__psforge_token_obj = $__psforge_input_args[$__psforge_i]
+        $__psforge_token = if ($null -eq $__psforge_token_obj) { '' } else { [string]$__psforge_token_obj }
+        if ([string]::IsNullOrWhiteSpace($__psforge_token)) {
+            $__psforge_i++
             continue
         }
 
-        if ($token.StartsWith('-')) {
-            $body = $token.Substring(1)
-            $colonIdx = $body.IndexOf(':')
-            if ($colonIdx -ge 0) {
-                $name = $body.Substring(0, $colonIdx).Trim()
-                if ($name.Length -gt 0) {
-                    $valueText = $body.Substring($colonIdx + 1)
-                    $named[$name] = __psforge_coerce_arg_value $valueText
-                    $i++
+        if ($__psforge_token.StartsWith('-')) {
+            $__psforge_body = $__psforge_token.Substring(1)
+            $__psforge_colon_idx = $__psforge_body.IndexOf(':')
+            if ($__psforge_colon_idx -ge 0) {
+                $__psforge_name = $__psforge_body.Substring(0, $__psforge_colon_idx).Trim()
+                if ($__psforge_name.Length -gt 0) {
+                    $__psforge_value_text = $__psforge_body.Substring($__psforge_colon_idx + 1)
+                    $__psforge_named[$__psforge_name] = __psforge_coerce_arg_value $__psforge_value_text
+                    $__psforge_i++
                     continue
                 }
             } else {
-                $name = $body.Trim()
-                if ($name.Length -gt 0) {
-                    if (($i + 1) -lt $InputArgs.Count) {
-                        $named[$name] = $InputArgs[$i + 1]
-                        $i += 2
+                $__psforge_name = $__psforge_body.Trim()
+                if ($__psforge_name.Length -gt 0) {
+                    if (($__psforge_i + 1) -lt $__psforge_input_args.Count) {
+                        $__psforge_named[$__psforge_name] = $__psforge_input_args[$__psforge_i + 1]
+                        $__psforge_i += 2
                         continue
                     }
                     # Final bare switch token: treat as $true.
-                    $named[$name] = $true
-                    $i++
+                    $__psforge_named[$__psforge_name] = $true
+                    $__psforge_i++
                     continue
                 }
             }
         }
 
-        $positional.Add($tokenObj)
-        $i++
+        $__psforge_positional.Add($__psforge_token_obj)
+        $__psforge_i++
     }
 
-    & $__psforge_script_path @named @positional
+    try {
+        . $__psforge_script_path @__psforge_named @__psforge_positional
+    } finally {
+        __psforge_emit_variables
+    }
 }
 "#,
         );
@@ -813,19 +872,20 @@ function __psforge_invoke_user_script {
                 }
             }
         }
-        wrapper_script.push_str("__psforge_invoke_user_script -InputArgs $args\n");
-        std::fs::write(&wrapper_script_path, wrapper_script.as_bytes()).map_err(|e| {
-            let _ = std::fs::remove_file(&user_script_path);
-            AppError {
-                code: "SCRIPT_WRITE_FAILED".to_string(),
-                message: format!("Failed to write wrapper script to temp file: {}", e),
-            }
-        })?;
+        wrapper_script.push_str("__psforge_invoke_user_script $args\n");
+        let wrapper_script_path =
+            write_secure_temp_file("psforge_wrapper", ".ps1", wrapper_script.as_bytes()).map_err(
+                |e| {
+                    let _ = std::fs::remove_file(&user_script_path);
+                    AppError {
+                        code: "SCRIPT_WRITE_FAILED".to_string(),
+                        message: format!("Failed to write wrapper script to temp file: {}", e),
+                    }
+                },
+            )?;
         let wrapper_script_path_str = wrapper_script_path.to_string_lossy().into_owned();
 
         // Per-run invocation script, executed by the persistent host process.
-        let invoke_script_path =
-            std::env::temp_dir().join(format!("psforge_invoke_{}.ps1", Uuid::new_v4()));
         let mut invoke_script = String::new();
         if exec_policy == "Default" {
             invoke_script.push_str(
@@ -852,14 +912,17 @@ function __psforge_invoke_user_script {
         invoke_script.push_str("& '");
         invoke_script.push_str(&ps_single_quoted(&wrapper_script_path_str));
         invoke_script.push_str("' @__psforge_args\n");
-        std::fs::write(&invoke_script_path, invoke_script.as_bytes()).map_err(|e| {
-            let _ = std::fs::remove_file(&user_script_path);
-            let _ = std::fs::remove_file(&wrapper_script_path);
-            AppError {
-                code: "SCRIPT_WRITE_FAILED".to_string(),
-                message: format!("Failed to write invoke script to temp file: {}", e),
-            }
-        })?;
+        let invoke_script_path =
+            write_secure_temp_file("psforge_invoke", ".ps1", invoke_script.as_bytes()).map_err(
+                |e| {
+                    let _ = std::fs::remove_file(&user_script_path);
+                    let _ = std::fs::remove_file(&wrapper_script_path);
+                    AppError {
+                        code: "SCRIPT_WRITE_FAILED".to_string(),
+                        message: format!("Failed to write invoke script to temp file: {}", e),
+                    }
+                },
+            )?;
         let invoke_script_path_str = invoke_script_path.to_string_lossy().into_owned();
 
         let command_id = Uuid::new_v4().to_string();
@@ -964,21 +1027,24 @@ impl Default for ProcessManager {
     }
 }
 
-fn resolve_working_dir(working_dir: &str) -> String {
+fn resolve_working_dir(working_dir: &str) -> Result<String, AppError> {
     let trimmed = working_dir.trim();
     if !trimmed.is_empty() {
         let candidate = PathBuf::from(trimmed);
         if candidate.is_dir() {
-            return candidate.to_string_lossy().into_owned();
+            return Ok(candidate.to_string_lossy().into_owned());
         }
-        warn!(
-            "Working directory '{}' is unavailable; falling back to current directory",
-            trimmed
-        );
+        return Err(AppError {
+            code: "INVALID_WORKING_DIR".to_string(),
+            message: format!(
+                "Working directory '{}' does not exist or is not a directory",
+                trimmed
+            ),
+        });
     }
     match std::env::current_dir() {
-        Ok(path) => path.to_string_lossy().into_owned(),
-        Err(_) => std::env::temp_dir().to_string_lossy().into_owned(),
+        Ok(path) => Ok(path.to_string_lossy().into_owned()),
+        Err(_) => Ok(std::env::temp_dir().to_string_lossy().into_owned()),
     }
 }
 
@@ -1113,4 +1179,27 @@ fn chrono_now() -> String {
         .unwrap_or_default();
     let secs = now.as_secs();
     format!("{}", secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_working_dir_uses_current_dir_when_empty() {
+        let expected = std::env::current_dir()
+            .expect("current dir must exist")
+            .to_string_lossy()
+            .into_owned();
+        let resolved = resolve_working_dir("").expect("empty working dir must resolve");
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn resolve_working_dir_rejects_invalid_non_empty_path() {
+        let missing = std::env::temp_dir().join(format!("psforge_missing_{}", Uuid::new_v4()));
+        let err = resolve_working_dir(&missing.to_string_lossy())
+            .expect_err("invalid working dir must return error");
+        assert_eq!(err.code, "INVALID_WORKING_DIR");
+    }
 }

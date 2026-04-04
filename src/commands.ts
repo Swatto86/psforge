@@ -180,7 +180,7 @@ export async function getCommandHelp(
   });
 }
 
-/** Get variables after running a script. */
+/** Get the cached variable snapshot from the most recent completed run. */
 export async function getVariablesAfterRun(
   psPath: string,
   script: string,
@@ -285,7 +285,12 @@ export async function startTerminal(
   rows: number,
   loadProfile: boolean,
 ): Promise<number> {
-  return invoke<number>("start_terminal", { shellPath, cols, rows, loadProfile });
+  return invoke<number>("start_terminal", {
+    shellPath,
+    cols,
+    rows,
+    loadProfile,
+  });
 }
 
 /** Writes raw terminal input bytes to a PTY session. */

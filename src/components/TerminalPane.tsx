@@ -189,6 +189,8 @@ type TerminalExitEvent = {
   exitCode: number | null;
 };
 
+const REMOTE_TARGET_MAX_LENGTH = 255;
+
 const MISSING_COMMAND_RE =
   /The term ['"`]([^'"`\r\n]+)['"`] is not recognized as (?:the )?name of a cmdlet, function, script file, or (?:executable|operable) program\./gi;
 
@@ -199,8 +201,30 @@ function stripAnsi(text: string): string {
 }
 
 function quotePs(value: string): string {
-  if (!/[\s'"`]/.test(value)) return value;
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+function validateRemoteTarget(raw: string): string | null {
+  const target = raw.trim();
+  if (!target) {
+    return "Enter a remote computer name.";
+  }
+  if (target.length > REMOTE_TARGET_MAX_LENGTH) {
+    return `Remote computer name must be ${REMOTE_TARGET_MAX_LENGTH} characters or fewer.`;
+  }
+  if (target.startsWith("-")) {
+    return "Remote computer name cannot start with '-'.";
+  }
+  const invalidNonWhitespaceChars = target
+    .replace(/[A-Za-z0-9._:-]/g, "")
+    .replace(/\s/g, "");
+  if (invalidNonWhitespaceChars.length > 0) {
+    return "Remote computer name may only contain letters, numbers, dots, hyphens, underscores, and colons.";
+  }
+  if (/\s/.test(target)) {
+    return "Remote computer name must not contain spaces.";
+  }
+  return null;
 }
 
 interface TerminalSessionHandle {
@@ -719,8 +743,9 @@ export function TerminalPane() {
 
   const confirmRemoteDialog = () => {
     const target = remoteTarget.trim();
-    if (!target) {
-      setRemoteValidationError("Enter a remote computer name.");
+    const validationError = validateRemoteTarget(target);
+    if (validationError) {
+      setRemoteValidationError(validationError);
       return;
     }
     createRemoteTab(target);
@@ -852,6 +877,7 @@ export function TerminalPane() {
         </div>
 
         <button
+          data-testid="terminal-new-local"
           onClick={addLocalTab}
           style={{
             backgroundColor: "transparent",
@@ -862,6 +888,7 @@ export function TerminalPane() {
           + Local
         </button>
         <button
+          data-testid="terminal-new-remote"
           onClick={openRemoteDialog}
           style={{
             backgroundColor: "transparent",
@@ -872,6 +899,7 @@ export function TerminalPane() {
           + Remote
         </button>
         <button
+          data-testid="terminal-clear-active"
           onClick={() => getActiveHandle()?.clear()}
           style={{
             backgroundColor: "transparent",
@@ -882,6 +910,7 @@ export function TerminalPane() {
           Clear
         </button>
         <button
+          data-testid="terminal-restart-active"
           onClick={() => getActiveHandle()?.restart()}
           style={{
             backgroundColor: "transparent",
@@ -937,10 +966,13 @@ export function TerminalPane() {
               Remote target for Enter-PSSession -ComputerName:
             </div>
             <input
+              data-testid="terminal-remote-input"
               ref={remoteTargetInputRef}
               value={remoteTarget}
               onChange={(e) => {
-                setRemoteTarget(e.target.value);
+                setRemoteTarget(
+                  e.target.value.slice(0, REMOTE_TARGET_MAX_LENGTH),
+                );
                 if (remoteValidationError) setRemoteValidationError("");
               }}
               placeholder="server01.contoso.local"
@@ -948,6 +980,7 @@ export function TerminalPane() {
             />
             {remoteValidationError && (
               <div
+                data-testid="terminal-remote-error"
                 style={{
                   color: "var(--stream-stderr)",
                   marginTop: "6px",
@@ -966,6 +999,7 @@ export function TerminalPane() {
               }}
             >
               <button
+                data-testid="terminal-remote-cancel"
                 onClick={cancelRemoteDialog}
                 style={{
                   backgroundColor: "transparent",
@@ -978,6 +1012,7 @@ export function TerminalPane() {
                 Cancel
               </button>
               <button
+                data-testid="terminal-remote-connect"
                 onClick={confirmRemoteDialog}
                 style={{
                   backgroundColor: "var(--accent)",

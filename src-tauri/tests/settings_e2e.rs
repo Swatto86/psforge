@@ -1,15 +1,15 @@
-/// E2E integration tests for settings load/save (Rule 3).
-///
-/// Tests use OS-managed temporary directories so they never touch the real
-/// user AppData/PSForge directory. All assertions exercise the real
-/// `settings::load_from` / `settings::save_to` I/O paths.
-///
-/// Why separate test file: keeps production I/O tests isolated from unit logic
-/// tested inline in settings.rs; allows running with `cargo test --test settings_e2e`.
+// E2E integration tests for settings load/save (Rule 3).
+//
+// Tests use OS-managed temporary directories so they never touch the real
+// user AppData/PSForge directory. All assertions exercise the real
+// `settings::load_from` / `settings::save_to` I/O paths.
+//
+// Why separate test file: keeps production I/O tests isolated from unit logic
+// tested inline in settings.rs; allows running with `cargo test --test settings_e2e`.
 
-/// Guard timeout for any operation that could hang (e.g. retry loops hitting a locked
-/// temp dir). Conservatively sized at 30 s for a cold CI runner with shared CPU.
-/// Actual operations should complete in well under 1 s.
+// Guard timeout for any operation that could hang (e.g. retry loops hitting a locked
+// temp dir). Conservatively sized at 30 s for a cold CI runner with shared CPU.
+// Actual operations should complete in well under 1 s.
 const TEST_TIMEOUT_SECS: u64 = 30;
 
 use psforge_lib::settings;
@@ -54,14 +54,16 @@ fn settings_roundtrip_preserves_all_fields() {
 
         // Build a non-default settings value so we can verify each field survives
         // the serialize -> write -> read -> deserialize round trip.
-        let mut original = AppSettings::default();
-        original.font_size = 18;
-        original.font_family = "Fira Code, monospace".to_string();
-        original.theme = "light".to_string();
-        original.word_wrap = true;
-        original.show_timestamps = true;
-        original.split_position = 40.0;
-        original.recent_files = vec!["C:\\foo.ps1".to_string(), "C:\\bar.ps1".to_string()];
+        let original = AppSettings {
+            font_size: 18,
+            font_family: "Fira Code, monospace".to_string(),
+            theme: "light".to_string(),
+            word_wrap: true,
+            show_timestamps: true,
+            split_position: 40.0,
+            recent_files: vec!["C:\\foo.ps1".to_string(), "C:\\bar.ps1".to_string()],
+            ..AppSettings::default()
+        };
 
         settings::save_to(&path, &original).expect("save_to must succeed");
         assert!(path.exists(), "settings file must exist after save");
@@ -118,12 +120,16 @@ fn settings_save_overwrites_previous_file() {
         let dir = temp_dir();
         let path = dir.path().join("settings.json");
 
-        let mut first = AppSettings::default();
-        first.font_size = 12;
+        let first = AppSettings {
+            font_size: 12,
+            ..AppSettings::default()
+        };
         settings::save_to(&path, &first).expect("first save must succeed");
 
-        let mut second = first.clone();
-        second.font_size = 24;
+        let second = AppSettings {
+            font_size: 24,
+            ..first.clone()
+        };
         // Second save overwrites the first; no error on existing file.
         settings::save_to(&path, &second).expect("second save must succeed");
 

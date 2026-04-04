@@ -1,13 +1,13 @@
-/// E2E tests for encoding edge cases and file content handling (Rule 3).
-///
-/// Supplements file_ops_e2e.rs with additional boundary and regression scenarios:
-///   - Encoding detection for ambiguous BOM-less files.
-///   - Round-trip preservation of CR/LF/CRLF line endings.
-///   - UTF-16 LE encoding with multi-byte characters.
-///   - Zero-byte file handling.
-///   - Save with unknown encoding defaults to UTF-8.
+// E2E tests for encoding edge cases and file content handling (Rule 3).
+//
+// Supplements file_ops_e2e.rs with additional boundary and regression scenarios:
+// - Encoding detection for ambiguous BOM-less files.
+// - Round-trip preservation of CR/LF/CRLF line endings.
+// - UTF-16 LE encoding with multi-byte characters.
+// - Zero-byte file handling.
+// - Save with unknown encoding defaults to UTF-8.
 
-/// Conservative async timeout for CI runners (Rule 3).
+// Conservative async timeout for CI runners (Rule 3).
 const TEST_TIMEOUT_SECS: u64 = 30;
 
 use psforge_lib::commands;

@@ -85,7 +85,9 @@ function createUntitledTab(id = "tab-1", title = "Untitled-1"): EditorTab {
   };
 }
 
-function normalizeBreakpointMode(value: unknown): "Read" | "Write" | "ReadWrite" {
+function normalizeBreakpointMode(
+  value: unknown,
+): "Read" | "Write" | "ReadWrite" {
   if (value === "Read") return "Read";
   if (value === "Write") return "Write";
   return "ReadWrite";
@@ -120,7 +122,11 @@ function normalizeBreakpoint(value: unknown): DebugBreakpoint | null {
     typeof rec.targetCommand === "string" ? rec.targetCommand.trim() : "";
   const targetCommand =
     targetCommandRaw.length > 0 ? targetCommandRaw : undefined;
-  if (line === undefined && variable === undefined && targetCommand === undefined) {
+  if (
+    line === undefined &&
+    variable === undefined &&
+    targetCommand === undefined
+  ) {
     return null;
   }
 
@@ -334,32 +340,27 @@ export interface AppState {
 
 /** Detects first launch by checking localStorage and creates the appropriate initial tab. */
 function createInitialTab(): EditorTab {
-  const welcomed = localStorage.getItem("psforge.welcomed");
-  if (!welcomed) {
-    localStorage.setItem("psforge.welcomed", "1");
-    return {
-      id: "tab-welcome",
-      title: "Welcome",
-      filePath: "",
-      content: "",
-      savedContent: "",
-      encoding: "utf8",
-      language: "markdown",
-      isDirty: false,
-      tabType: "welcome",
-    };
+  try {
+    const welcomed = localStorage.getItem("psforge.welcomed");
+    if (!welcomed) {
+      localStorage.setItem("psforge.welcomed", "1");
+      return {
+        id: "tab-welcome",
+        title: "Welcome",
+        filePath: "",
+        content: "",
+        savedContent: "",
+        encoding: "utf8",
+        language: "markdown",
+        isDirty: false,
+        tabType: "welcome",
+      };
+    }
+  } catch {
+    // Storage may be unavailable in hardened browser contexts. Fall back to a
+    // normal untitled editor tab rather than crashing before first render.
   }
-  return {
-    id: "tab-1",
-    title: "Untitled-1",
-    filePath: "",
-    content: "",
-    savedContent: "",
-    encoding: "utf8",
-    language: "powershell",
-    isDirty: false,
-    tabType: "code",
-  };
+  return createUntitledTab("tab-1", "Untitled-1");
 }
 
 const initialTab = createInitialTab();
@@ -599,7 +600,8 @@ function reducer(state: AppState, action: Action): AppState {
         newActive = next?.id ?? "";
       }
       const { [action.id]: _removed, ...restBreakpoints } = state.breakpoints;
-      const { [action.id]: _removedBookmarks, ...restBookmarks } = state.bookmarks;
+      const { [action.id]: _removedBookmarks, ...restBookmarks } =
+        state.bookmarks;
       return {
         ...state,
         tabs: remaining,
@@ -879,7 +881,10 @@ function reducer(state: AppState, action: Action): AppState {
         (w) => w.expression === action.watch.expression,
       );
       if (idx === -1) {
-        return { ...state, debugWatches: [...state.debugWatches, action.watch] };
+        return {
+          ...state,
+          debugWatches: [...state.debugWatches, action.watch],
+        };
       }
       const next = [...state.debugWatches];
       next[idx] = action.watch;
@@ -996,11 +1001,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
           restoredTabs.push(tab);
           continue;
         }
+
         try {
-          await cmd.readFileContent(tab.filePath);
-          restoredTabs.push(tab);
+          const fileData = await cmd.readFileContent(tab.filePath);
+          if (cancelled) return;
+
+          if (tab.isDirty) {
+            // Recover unsaved edits from the persisted snapshot, but refresh the
+            // saved baseline from disk so dirty tracking remains accurate.
+            restoredTabs.push({
+              ...tab,
+              savedContent: fileData.content,
+              encoding: fileData.encoding,
+              isDirty: true,
+            });
+          } else {
+            restoredTabs.push({
+              ...tab,
+              content: fileData.content,
+              savedContent: fileData.content,
+              encoding: fileData.encoding,
+              isDirty: false,
+            });
+          }
         } catch {
-          // File no longer exists (or is unreadable) -- skip this tab.
+          if (cancelled) return;
+          if (tab.isDirty) {
+            // Recover unsaved content even if the backing file vanished.
+            restoredTabs.push(tab);
+          }
+          // Clean tabs with missing/unreadable files are skipped.
         }
       }
 
@@ -1019,7 +1049,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
       dispatch({ type: "SET_BOTTOM_TAB", tab: persisted.bottomPanelTab });
       dispatch({ type: "SET_WORKING_DIR", dir: persisted.workingDir });
-      for (const [tabId, breakpoints] of Object.entries(persisted.breakpoints)) {
+      for (const [tabId, breakpoints] of Object.entries(
+        persisted.breakpoints,
+      )) {
         dispatch({ type: "SET_BREAKPOINTS", tabId, breakpoints });
       }
       for (const [tabId, lines] of Object.entries(persisted.bookmarks)) {

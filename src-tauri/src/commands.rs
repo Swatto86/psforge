@@ -40,6 +40,12 @@ fn parse_debug_break_marker(text: &str) -> Option<u32> {
         .ok()
 }
 
+fn variables_marker_payload(text: &str) -> Option<&str> {
+    text.trim()
+        .strip_prefix(powershell::VARIABLES_MARKER_PREFIX)
+        .map(str::trim)
+}
+
 // ---------------------------------------------------------------------------
 // Script Execution
 // ---------------------------------------------------------------------------
@@ -69,6 +75,14 @@ pub async fn execute_script(
             script_args.as_deref().unwrap_or(&[]),
             None,
             move |line: OutputLine| {
+                if let Some(json) = variables_marker_payload(&line.text) {
+                    pm().cache_last_variables_json(json.to_string());
+                    let variables = parse_variable_info_json(json);
+                    if let Err(e) = win.emit("ps-variables", &variables) {
+                        error!("Failed to emit ps-variables event: {}", e);
+                    }
+                    return;
+                }
                 if let Err(e) = win.emit("ps-output", &line) {
                     error!("Failed to emit ps-output event: {}", e);
                 }
@@ -143,6 +157,14 @@ pub async fn execute_script_debug(
             script_args.as_deref().unwrap_or(&[]),
             Some(&breakpoints),
             move |line: OutputLine| {
+                if let Some(json) = variables_marker_payload(&line.text) {
+                    pm().cache_last_variables_json(json.to_string());
+                    let variables = parse_variable_info_json(json);
+                    if let Err(e) = win.emit("ps-variables", &variables) {
+                        error!("Failed to emit ps-variables event: {}", e);
+                    }
+                    return;
+                }
                 if let Some(line_number) = parse_debug_break_marker(&line.text) {
                     if let Err(e) = win.emit("ps-debug-break", line_number) {
                         error!("Failed to emit ps-debug-break event: {}", e);
@@ -888,77 +910,37 @@ pub struct VariableInfo {
     pub type_name: String,
 }
 
-/// Runs Get-Variable in a new PS process to capture variable state.
-/// In practice, this is run after script completion and returns built-in + user variables.
-#[tauri::command]
-pub async fn get_variables_after_run(
-    ps_path: String,
-    script: String,
-    working_dir: String,
-) -> Result<Vec<VariableInfo>, AppError> {
-    info!("get_variables_after_run called");
-    powershell::validate_ps_path(&ps_path)?;
-
-    let combined_script = format!(
-        "{}\nGet-Variable | Where-Object {{ $_.Name -notmatch '^(\\?|args|input|MyInvocation|PSBoundParameters|PSCommandPath|PSScriptRoot)$' }} | Select-Object Name, @{{N='Value';E={{if ($_.Value -ne $null) {{ $_.Value.ToString() }} else {{ '<null>' }}}}}}, @{{N='TypeName';E={{if ($_.Value -ne $null) {{ $_.Value.GetType().Name }} else {{ 'Null' }}}}}} | ConvertTo-Json -Compress",
-        script
-    );
-
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(MODULE_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "RemoteSigned",
-                "-Command",
-                &combined_script,
-            ])
-            .current_dir(&working_dir)
-            .creation_flags(0x08000000)
-            .output(),
-    )
-    .await;
-
-    let output = match result {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => {
-            return Err(AppError {
-                code: "VARIABLE_ENUM_FAILED".to_string(),
-                message: format!("Failed to retrieve variables: {}", e),
-            });
-        }
-        Err(_) => {
-            return Err(AppError {
-                code: "VARIABLE_ENUM_TIMEOUT".to_string(),
-                message: format!(
-                    "Variable retrieval timed out after {}s",
-                    MODULE_TIMEOUT_SECS
-                ),
-            });
-        }
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    if stdout.trim().is_empty() {
-        return Ok(Vec::new());
+fn parse_variable_info_json(json_str: &str) -> Vec<VariableInfo> {
+    let trimmed = json_str.trim();
+    if trimmed.is_empty() || trimmed == "[]" {
+        return Vec::new();
     }
 
-    // Find the last JSON array or object in stdout (script output may precede it)
-    let json_str = find_last_json(&stdout).unwrap_or(&stdout);
-
-    let variables: Vec<VariableInfo> = if json_str.trim().starts_with('[') {
-        serde_json::from_str(json_str).unwrap_or_default()
+    if trimmed.starts_with('[') {
+        serde_json::from_str(trimmed).unwrap_or_default()
     } else {
-        match serde_json::from_str::<VariableInfo>(json_str) {
+        match serde_json::from_str::<VariableInfo>(trimmed) {
             Ok(single) => vec![single],
             Err(_) => Vec::new(),
         }
-    };
+    }
+}
 
-    Ok(variables)
+/// Returns the last variable snapshot captured from the live run/debug session.
+///
+/// This command no longer re-executes the user script. It simply returns the
+/// most recent snapshot emitted by the PowerShell host after a successful run.
+#[tauri::command]
+pub async fn get_variables_after_run(
+    _ps_path: String,
+    _script: String,
+    _working_dir: String,
+) -> Result<Vec<VariableInfo>, AppError> {
+    info!("get_variables_after_run called");
+    Ok(pm()
+        .last_variables_json()
+        .map(|json| parse_variable_info_json(&json))
+        .unwrap_or_default())
 }
 
 /// Finds the last top-level JSON array or object in a string.
@@ -1864,6 +1846,10 @@ pub async fn analyze_script(
     if ps_path.is_empty() {
         return Ok(Vec::new());
     }
+    if let Err(err) = powershell::validate_ps_path(ps_path) {
+        debug!("analyze_script: invalid PowerShell path: {}", err);
+        return Ok(Vec::new());
+    }
 
     // Write content to a temp file so PSSA receives accurate file-path info
     // and we avoid all single-quote escaping issues with -Command.
@@ -1961,6 +1947,10 @@ pub async fn get_completions(
     debug!("get_completions called (cursor_column={})", cursor_column);
     let ps_path = ps_path.trim();
     if ps_path.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Err(err) = powershell::validate_ps_path(ps_path) {
+        debug!("get_completions: invalid PowerShell path: {}", err);
         return Ok(Vec::new());
     }
 
@@ -2192,6 +2182,10 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
     info!("get_execution_policy called");
     let ps_path = ps_path.trim();
     if ps_path.is_empty() {
+        return Ok("Unknown".to_string());
+    }
+    if let Err(err) = powershell::validate_ps_path(ps_path) {
+        debug!("get_execution_policy: invalid PowerShell path: {}", err);
         return Ok("Unknown".to_string());
     }
 
@@ -2535,6 +2529,10 @@ pub async fn get_signing_certificates(ps_path: String) -> Result<Vec<CertInfo>, 
     if ps_path.is_empty() {
         return Ok(Vec::new());
     }
+    if let Err(err) = powershell::validate_ps_path(ps_path) {
+        debug!("get_signing_certificates: invalid PowerShell path: {}", err);
+        return Ok(Vec::new());
+    }
 
     const CERT_SCRIPT: &str = "\
 $ErrorActionPreference='SilentlyContinue';\
@@ -2713,6 +2711,9 @@ $sig.Status.ToString()",
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static CACHED_VARIABLES_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     // ----- detect_and_decode tests -----
 
@@ -2763,6 +2764,46 @@ mod tests {
         let (content, enc) = detect_and_decode(b"");
         assert_eq!(enc, "utf8");
         assert!(content.is_empty());
+    }
+
+    #[test]
+    fn parse_variable_info_json_handles_arrays() {
+        let vars = parse_variable_info_json(
+            r#"[{"Name":"HOME","Value":"C:\\Users\\Test","TypeName":"String"}]"#,
+        );
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].name, "HOME");
+    }
+
+    #[test]
+    fn parse_variable_info_json_handles_single_object() {
+        let vars = parse_variable_info_json(r#"{"Name":"Count","Value":"1","TypeName":"Int32"}"#);
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].type_name, "Int32");
+    }
+
+    #[tokio::test]
+    async fn get_variables_after_run_returns_cached_snapshot_without_using_script_input() {
+        let _guard = CACHED_VARIABLES_TEST_LOCK
+            .lock()
+            .expect("cached variables test lock must not be poisoned");
+
+        pm().cache_last_variables_json(
+            r#"[{"Name":"E2ENoRerunVar","Value":"snapshot","TypeName":"String"}]"#.to_string(),
+        );
+
+        let vars = get_variables_after_run(
+            "not-a-real-ps-path.exe".to_string(),
+            "Write-Error 'this script must not run'".to_string(),
+            r#"C:\definitely-not-used"#.to_string(),
+        )
+        .await
+        .expect("cached variable lookup must succeed");
+
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].name, "E2ENoRerunVar");
+        assert_eq!(vars[0].value, "snapshot");
+        assert_eq!(vars[0].type_name, "String");
     }
 
     // ----- find_last_json tests -----
@@ -2838,6 +2879,7 @@ mod tests {
     #[test]
     fn path_length_constant_covers_windows_max_path() {
         // Windows MAX_PATH is 260; our constant must be at least that.
-        assert!(MAX_PATH_LENGTH >= 260);
+        let configured_limit = std::hint::black_box(MAX_PATH_LENGTH);
+        assert!(configured_limit >= 260);
     }
 }

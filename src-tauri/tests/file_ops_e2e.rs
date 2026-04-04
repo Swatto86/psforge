@@ -1,16 +1,16 @@
-/// E2E integration tests for file read/save operations (Rule 3).
-///
-/// All tests write to OS-managed temporary directories so real user files are
-/// never touched. Each test exercises the full code path from the Tauri command
-/// layer down to the OS filesystem — including encoding detection, size guards,
-/// and path length validation (Rule 11).
-///
-/// Why `#[tokio::test]`: `read_file_content` and `save_file_content` are
-/// declared `pub async fn` in commands.rs; tokio is already in `[dependencies]`
-/// with `features = ["full"]` so no additional dev dependency is required.
+// E2E integration tests for file read/save operations (Rule 3).
+//
+// All tests write to OS-managed temporary directories so real user files are
+// never touched. Each test exercises the full code path from the Tauri command
+// layer down to the OS filesystem, including encoding detection, size guards,
+// and path length validation (Rule 11).
+//
+// Why `#[tokio::test]`: `read_file_content` and `save_file_content` are
+// declared `pub async fn` in commands.rs; tokio is already in `[dependencies]`
+// with `features = ["full"]` so no additional dev dependency is required.
 
-/// Conservative async-test deadline (Rule 3): at least 5x the worst-case local
-/// completion time. File I/O on a temp dir should take < 100 ms locally.
+// Conservative async-test deadline (Rule 3): at least 5x the worst-case local
+// completion time. File I/O on a temp dir should take < 100 ms locally.
 const TEST_IO_TIMEOUT_SECS: u64 = 30;
 
 use psforge_lib::commands;
