@@ -600,6 +600,26 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Application Updates"
+                tooltip="Checks the public GitHub Releases feed for signed PSForge updates when the app starts."
+              >
+                <div className="flex flex-col gap-1">
+                  <Toggle
+                    checked={state.settings.checkForUpdatesOnStartup !== false}
+                    onChange={(v) =>
+                      updateSetting("checkForUpdatesOnStartup", v)
+                    }
+                    label="Check for application updates on startup"
+                  />
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Automatic checks are silent unless an update is found. You
+                    can still trigger a manual check from the status bar at any
+                    time.
+                  </p>
+                </div>
+              </SettingRow>
+
+              <SettingRow
                 label="Auto-Save on Run"
                 tooltip="Automatically saves the active file before F5 execution."
               >

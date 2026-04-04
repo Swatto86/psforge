@@ -98,6 +98,136 @@ function Get-RemoteHttpsUrl {
     }
 }
 
+function Invoke-Gh {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $rawOutput = & gh @args 2>&1
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $output = @($rawOutput | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) {
+            $_.ToString()
+        }
+        else {
+            "$_"
+        }
+    })
+    if ($LASTEXITCODE -ne 0) {
+        throw "gh $($args -join ' ') failed (exit $LASTEXITCODE): $(($output | Out-String).Trim())"
+    }
+    return $output
+}
+
+function Get-GitHubRepoSlug {
+    $remoteUrl = Get-RemoteHttpsUrl
+    if ($remoteUrl -match '^https://github\.com/([^/]+/[^/]+)$') {
+        return $Matches[1]
+    }
+    throw "Origin remote must point at a GitHub HTTPS repository. Found: $remoteUrl"
+}
+
+function Test-GitHubReleaseExists {
+    param(
+        [string]$RepoSlug,
+        [string]$TagName
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $null = & gh release view $TagName --repo $RepoSlug 2>&1
+        return ($LASTEXITCODE -eq 0)
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
+function Set-UpdaterSigningEnvironment {
+    $defaultKeyPath = Join-Path $env:USERPROFILE '.tauri\psforge-updater.key'
+    if (-not (Test-Path $defaultKeyPath)) {
+        throw "Updater signing key not found. Expected: $defaultKeyPath"
+    }
+    if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PATH)) {
+        $env:TAURI_SIGNING_PRIVATE_KEY_PATH = $defaultKeyPath
+    }
+    if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+        $env:TAURI_SIGNING_PRIVATE_KEY = [System.IO.File]::ReadAllText($defaultKeyPath).TrimEnd("`r", "`n")
+    }
+    Write-Info "Using updater signing key: $defaultKeyPath"
+    if (
+        $null -ne $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -and
+        [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
+    ) {
+        Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-LatestBundleAsset {
+    param(
+        [string]$SearchRoot,
+        [string]$FilterPattern
+    )
+
+    if (-not (Test-Path $SearchRoot)) {
+        throw "Bundle folder not found: $SearchRoot"
+    }
+
+    $asset = Get-ChildItem -Path $SearchRoot -Recurse -File |
+        Where-Object { $_.Name -like $FilterPattern } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+
+    if (-not $asset) {
+        throw "Could not find bundle asset matching '$FilterPattern' under $SearchRoot"
+    }
+
+    return $asset
+}
+
+function Get-AssetSignatureText {
+    param([string]$AssetPath)
+
+    $signaturePath = "$AssetPath.sig"
+    if (-not (Test-Path $signaturePath)) {
+        throw "Signature file not found: $signaturePath"
+    }
+    return [System.IO.File]::ReadAllText($signaturePath).Trim()
+}
+
+function New-StaticUpdaterManifest {
+    param(
+        [string]$FilePath,
+        [string]$Version,
+        [string]$Notes,
+        [string]$PubDate,
+        [string]$PlatformKey,
+        [string]$AssetUrl,
+        [string]$SignatureText
+    )
+
+    $payload = [ordered]@{
+        version = $Version
+        notes = $Notes
+        pub_date = $PubDate
+        platforms = [ordered]@{}
+    }
+    $payload.platforms[$PlatformKey] = [ordered]@{
+        signature = $SignatureText
+        url = $AssetUrl
+    }
+
+    $json = ($payload | ConvertTo-Json -Depth 5)
+    [System.IO.File]::WriteAllText(
+        $FilePath,
+        ($json.TrimEnd("`r", "`n") + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+}
+
 # ---------------------------------------------------------------------------
 # Path resolution
 # ---------------------------------------------------------------------------
@@ -187,6 +317,7 @@ $componentsDir = Join-Path $srcDir 'components'
 $cargoTomlPath = Join-Path $srcTauriDir 'Cargo.toml'
 $cargoLockPath = Join-Path $srcTauriDir 'Cargo.lock'
 $tauriConfPath = Join-Path $srcTauriDir 'tauri.conf.json'
+$bundleDir = Join-Path $srcTauriDir 'target\release\bundle'
 $pkgLockPath   = Join-Path $root 'package-lock.json'
 $aboutDialogPath = Join-Path $componentsDir 'AboutDialog.tsx'
 $readmePath = Join-Path $root 'README.md'
@@ -200,6 +331,12 @@ $origPkgLock   = $null
 $origAboutDialog = $null
 $origReadme = $null
 $currentVersion = $null
+$repoUrl = $null
+$repoSlug = $null
+$releaseExists = $false
+$releaseNotesFile = $null
+$generatedLatestJsonPath = $null
+$releaseAssetPaths = @()
 
 try {
     # -----------------------------------------------------------------------
@@ -270,6 +407,24 @@ try {
         Write-WarnLine "Working tree has uncommitted changes."
     }
 
+    $repoUrl = Get-RemoteHttpsUrl
+    if (-not $DryRun) {
+        if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+            throw "GitHub CLI (gh) is required to publish the release."
+        }
+        $repoSlug = Get-GitHubRepoSlug
+        try {
+            Invoke-Gh auth status | Out-Null
+        }
+        catch {
+            throw "GitHub CLI is not authenticated. Run 'gh auth login' first."
+        }
+        $releaseExists = Test-GitHubReleaseExists -RepoSlug $repoSlug -TagName $tagName
+        if ($releaseExists -and -not $Force) {
+            throw "GitHub release $tagName already exists. Use -Force to overwrite."
+        }
+    }
+
     # -----------------------------------------------------------------------
     # 4. Snapshot originals for rollback
     # -----------------------------------------------------------------------
@@ -310,11 +465,14 @@ try {
         Write-Host "  11. cargo fmt -- --check"
         Write-Host "  12. cargo clippy -- -D warnings"
         Write-Host "  13. cargo test"
-        Write-Host "  14. npx tauri build"
-        Write-Host "  15. git commit -m `"chore: bump version to $Version`""
-        Write-Host "  16. git tag -a $tagName"
-        Write-Host "  17. git push + git push --tags"
-        Write-Host "  18. Prune older v*.*.* tags and their GitHub Releases"
+        Write-Host "  14. Set TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+        Write-Host "  15. npm run tauri build  (signed NSIS/MSI bundles + updater signatures)"
+        Write-Host "  16. Generate latest.json for windows-x86_64"
+        Write-Host "  17. git commit -m `"chore: bump version to $Version`""
+        Write-Host "  18. git tag -a $tagName"
+        Write-Host "  19. git push + git push --tags"
+        Write-Host "  20. gh release create $tagName <bundles + signatures + latest.json>"
+        Write-Host "  21. Prune older v*.*.* tags and their GitHub Releases"
         Write-Host ""
         exit 0
     }
@@ -322,7 +480,7 @@ try {
     # -----------------------------------------------------------------------
     # Step 1 -- Update version strings
     # -----------------------------------------------------------------------
-    Write-Info "Step 1/7 -- Updating version strings to $Version ..."
+    Write-Info "Step 1/8 -- Updating version strings to $Version ..."
 
     # package.json: "version": "x.y.z"
     $pkgJsonUpdated = Update-ManifestVersion -FilePath $pkgJsonPath -NewVersion $Version `
@@ -406,7 +564,13 @@ try {
     & git diff -- package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json src/components/AboutDialog.tsx README.md package-lock.json
     Write-Host ""
 
-    $answer = (Read-Host "Proceed with release? (y/N)").Trim()
+    if ($env:PSFORGE_RELEASE_ASSUME_YES -eq '1') {
+        $answer = 'y'
+        Write-Info "PSFORGE_RELEASE_ASSUME_YES=1 detected; proceeding without interactive confirmation."
+    }
+    else {
+        $answer = (Read-Host "Proceed with release? (y/N)").Trim()
+    }
     if ($answer -notin @('y', 'Y', 'yes', 'YES')) {
         Write-WarnLine "Release cancelled."
         exit 0
@@ -415,7 +579,7 @@ try {
     # -----------------------------------------------------------------------
     # Step 2 -- Pre-release build
     # -----------------------------------------------------------------------
-    Write-Info "Step 2/7 -- Pre-release build (npm run build) ..."
+    Write-Info "Step 2/8 -- Pre-release build (npm run build) ..."
     & npm run build
     if ($LASTEXITCODE -ne 0) { throw "npm run build failed." }
     Write-Success "Frontend build passed"
@@ -423,7 +587,7 @@ try {
     # -----------------------------------------------------------------------
     # Step 3 -- Quality gates
     # -----------------------------------------------------------------------
-    Write-Info "Step 3/7 -- Quality gates ..."
+    Write-Info "Step 3/8 -- Quality gates ..."
 
     Write-Info "  [1/5] Prettier format check (release-managed files) ..."
     $prettierTargets = @(
@@ -463,23 +627,60 @@ try {
     Write-Success "All quality gates passed"
 
     # -----------------------------------------------------------------------
-    # Step 4 -- Handle existing tag
+    # Step 4 -- Build signed updater artifacts
+    # -----------------------------------------------------------------------
+    Write-Info "Step 4/8 -- Building signed installer bundles and updater artifacts ..."
+    Set-UpdaterSigningEnvironment
+    & npm run tauri build
+    if ($LASTEXITCODE -ne 0) { throw "npm run tauri build failed." }
+
+    $nsisAsset = Get-LatestBundleAsset -SearchRoot (Join-Path $bundleDir 'nsis') -FilterPattern '*setup.exe'
+    $msiAsset = Get-LatestBundleAsset -SearchRoot (Join-Path $bundleDir 'msi') -FilterPattern '*.msi'
+    $nsisSignatureText = Get-AssetSignatureText -AssetPath $nsisAsset.FullName
+    $null = Get-AssetSignatureText -AssetPath $msiAsset.FullName
+
+    $generatedLatestJsonPath = Join-Path $bundleDir 'latest.json'
+    New-StaticUpdaterManifest `
+        -FilePath $generatedLatestJsonPath `
+        -Version $Version `
+        -Notes $Notes `
+        -PubDate ([DateTimeOffset]::UtcNow.ToString('o')) `
+        -PlatformKey 'windows-x86_64' `
+        -AssetUrl "https://github.com/$repoSlug/releases/download/$tagName/$($nsisAsset.Name)" `
+        -SignatureText $nsisSignatureText
+
+    $releaseAssetPaths = @(
+        $nsisAsset.FullName,
+        "$($nsisAsset.FullName).sig",
+        $msiAsset.FullName,
+        "$($msiAsset.FullName).sig",
+        $generatedLatestJsonPath
+    )
+    Write-Success "Built signed bundles and generated latest.json"
+
+    # -----------------------------------------------------------------------
+    # Step 5 -- Handle existing tag and release
     # -----------------------------------------------------------------------
     if ($Force -and $tagExists) {
-        Write-Info "Step 4/7 -- Removing existing tag $tagName ..."
+        Write-Info "Step 5/8 -- Removing existing tag $tagName ..."
         Invoke-Git tag -d $tagName
         try { Invoke-Git push origin --delete $tagName }
         catch { Write-WarnLine "Remote tag delete failed (may not exist remotely): $_" }
         Write-Success "Removed old tag $tagName"
     }
     else {
-        Write-Info "Step 4/7 -- No existing tag to remove"
+        Write-Info "Step 5/8 -- No existing tag to remove"
+    }
+    if ($Force -and $releaseExists) {
+        Write-Info "Removing existing GitHub release $tagName ..."
+        Invoke-Gh release delete $tagName --repo $repoSlug --yes | Out-Null
+        Write-Success "Removed old GitHub release $tagName"
     }
 
     # -----------------------------------------------------------------------
-    # Step 5 -- Commit version bump
+    # Step 6 -- Commit version bump
     # -----------------------------------------------------------------------
-    Write-Info "Step 5/7 -- Committing version bump ..."
+    Write-Info "Step 6/8 -- Committing version bump ..."
     Invoke-Git add package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json src/components/AboutDialog.tsx README.md package-lock.json
     $staged = (& git diff --cached --name-only 2>&1) | Where-Object { $_ -and -not $_.StartsWith("warning:") }
     if ($staged) {
@@ -491,19 +692,31 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # Step 6 -- Tag and push
+    # Step 7 -- Tag, push, and publish GitHub release
     # -----------------------------------------------------------------------
-    Write-Info "Step 6/7 -- Tagging v$Version and pushing ..."
+    Write-Info "Step 7/8 -- Tagging, pushing, and publishing GitHub release ..."
     Invoke-Git tag -a $tagName -m $Notes
     Invoke-Git push origin HEAD
     Invoke-Git push origin $tagName
-    $repoUrl = Get-RemoteHttpsUrl
+
+    $releaseNotesFile = Join-Path ([System.IO.Path]::GetTempPath()) "psforge-release-notes-$Version.txt"
+    [System.IO.File]::WriteAllText(
+        $releaseNotesFile,
+        ($Notes.TrimEnd("`r", "`n") + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Invoke-Gh release create $tagName @releaseAssetPaths --repo $repoSlug --title "PSForge $Version" --notes-file $releaseNotesFile | Out-Null
+    if (Test-Path $releaseNotesFile) {
+        Remove-Item $releaseNotesFile -Force
+        $releaseNotesFile = $null
+    }
     Write-Success "Pushed $tagName to $repoUrl"
+    Write-Success "Published GitHub release $tagName"
 
     # -----------------------------------------------------------------------
-    # Step 7 -- Prune older release tags
+    # Step 8 -- Prune older release tags
     # -----------------------------------------------------------------------
-    Write-Info "Step 7/7 -- Pruning older release tags ..."
+    Write-Info "Step 8/8 -- Pruning older release tags ..."
     $allTags = @(& git tag -l 'v*.*.*' 2>&1)
     $oldTags = $allTags | Where-Object { $_ -and ($_ -ne $tagName) }
     if ($oldTags.Count -gt 0) {
@@ -546,6 +759,9 @@ catch {
     if ($null -ne $origAboutDialog) { try { [System.IO.File]::WriteAllText($aboutDialogPath, $origAboutDialog, $utf8NoBom) } catch {} }
     if ($null -ne $origReadme) { try { [System.IO.File]::WriteAllText($readmePath, $origReadme, $utf8NoBom) } catch {} }
     if ($null -ne $origPkgLock)   { try { [System.IO.File]::WriteAllText($pkgLockPath,   $origPkgLock,   $utf8NoBom) } catch {} }
+    if ($null -ne $releaseNotesFile -and (Test-Path $releaseNotesFile)) {
+        try { Remove-Item $releaseNotesFile -Force } catch {}
+    }
 
     if ($null -ne $currentVersion) {
         Write-WarnLine "Version files restored to $currentVersion"

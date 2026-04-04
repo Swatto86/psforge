@@ -2711,9 +2711,10 @@ $sig.Status.ToString()",
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::LazyLock;
 
-    static CACHED_VARIABLES_TEST_LOCK: Mutex<()> = Mutex::new(());
+    static CACHED_VARIABLES_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
 
     // ----- detect_and_decode tests -----
 
@@ -2784,9 +2785,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_variables_after_run_returns_cached_snapshot_without_using_script_input() {
-        let _guard = CACHED_VARIABLES_TEST_LOCK
-            .lock()
-            .expect("cached variables test lock must not be poisoned");
+        let _guard = CACHED_VARIABLES_TEST_LOCK.lock().await;
 
         pm().cache_last_variables_json(
             r#"[{"Name":"E2ENoRerunVar","Value":"snapshot","TypeName":"String"}]"#.to_string(),

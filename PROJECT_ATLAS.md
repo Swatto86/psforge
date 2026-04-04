@@ -16,6 +16,7 @@ PSForge is a modern, fast PowerShell ISE replacement for Windows, built with Tau
 | **File Association**   | Per-user HKCU registry mapping of PS extensions to PSForge (no admin required)                                                             |
 | **Theme**              | CSS variable-driven visual theme (dark, light, ise-classic) synced with Monaco                                                             |
 | **Param Prompt**       | Pre-run modal that collects values for mandatory `param()` parameters before execution                                                     |
+| **Updater Feed**       | Signed static `latest.json` manifest published on GitHub Releases and consumed by the Tauri updater plugin                                 |
 
 ## Architecture
 
@@ -75,8 +76,8 @@ PSForge/
       OutputPane.tsx      # Bottom pane tabs; virtualised output list, pane-local clear actions, and toggleable text mode for the Output and Problems tabs
       TerminalPane.tsx    # xterm.js integrated terminal (PS session via piped I/O)
       Sidebar.tsx         # Left/right sidebar with Modules browser and script Outline navigator
-      StatusBar.tsx       # Bottom bar: encoding, path, running state, version
-      SettingsPanel.tsx   # Modal settings dialog (6 sections: Editor, IntelliSense, Execution, Output, Appearance, File Associations)
+      StatusBar.tsx       # Bottom bar: encoding, path, running state, version, and GitHub-release updater state/actions
+      SettingsPanel.tsx   # Modal settings dialog (6 sections: Editor, IntelliSense, Execution, Output, Appearance, File Associations) including startup update-check toggle
       CommandPalette.tsx  # Ctrl+Shift+P command palette with snippets
       KeyboardShortcutPanel.tsx  # F1 shortcut reference; searchable, grouped, kbd-tagged
       AboutDialog.tsx     # About modal: app name, version, description, author, GitHub link, tech stack
@@ -84,18 +85,18 @@ PSForge/
       ScriptSigningDialog.tsx  # Modal for signing the active script with an Authenticode certificate from CurrentUser\My; lists certs; Sign disabled when file unsaved or no cert
 
   src-tauri/              # Rust backend
-    Cargo.toml            # Rust dependencies
-    tauri.conf.json       # Tauri v2 app config (window, bundle, CSP)
+    Cargo.toml            # Rust dependencies including desktop updater plugin
+    tauri.conf.json       # Tauri v2 app config (window, bundle, CSP, updater endpoint/public key)
     build.rs              # Tauri build script
     capabilities/
-      default.json        # Tauri v2 permissions (core, dialog, fs, events)
+      default.json        # Tauri v2 permissions (core, dialog, fs, events, updater)
 
     src/
       main.rs             # Rust entry point (calls lib::run)
-      lib.rs              # Tauri app builder: plugins, commands, logger init
+      lib.rs              # Tauri app builder: plugins, commands, logger init, updater plugin registration
       errors.rs           # AppError type + BatchResult<T> / BatchError for batch ops (Rule 11)
       powershell.rs       # ProcessManager: execute, stop, stdin, discover versions
-      settings.rs         # AppSettings: load/save %APPDATA%/PSForge/settings.json; load_from/save_to for test injection
+      settings.rs         # AppSettings: load/save %APPDATA%/PSForge/settings.json; load_from/save_to for test injection, including startup updater preference
       commands.rs         # 33 Tauri command handlers (all #[tauri::command])
       terminal.rs         # Integrated terminal: start_terminal, terminal_exec, stop_terminal
       utils.rs            # with_retry: transient-error retry helper (Rule 11)
@@ -211,6 +212,14 @@ cargo fmt              # Format
 cargo clippy -- -D warnings  # Lint (zero warnings)
 cargo test             # 86 tests (23 unit + 63 integration)
 ```
+
+### Release Publishing
+
+- `update-application.ps1` is the authoritative release entrypoint.
+- It updates versioned manifests, refreshes `package-lock.json`, runs frontend and Rust quality gates, then runs `npm run tauri build` with `bundle.createUpdaterArtifacts = true`.
+- The script uploads the NSIS installer, MSI installer, both `.sig` files, and a generated `latest.json` manifest to the GitHub Release for `vX.Y.Z`.
+- The in-app updater is configured against `https://github.com/Swatto86/psforge/releases/latest/download/latest.json` and currently consumes the signed NSIS installer for `windows-x86_64` updates.
+- The updater signing key must remain stable across releases. The script defaults to `~/.tauri/psforge-updater.key` when the signing env vars are unset, loads that key for Tauri bundling, and uses `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` when the key is password-protected.
 
 ### Integration Tests
 

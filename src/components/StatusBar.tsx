@@ -7,8 +7,34 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
+import type { UpdateStatus } from "../types";
 
-export function StatusBar() {
+interface StatusBarProps {
+  updateStatus: UpdateStatus;
+  onCheckForUpdates: () => void;
+  onInstallUpdate: () => void;
+}
+
+function formatUpdateProgress(
+  downloadedBytes: number,
+  totalBytes: number,
+): string {
+  if (totalBytes > 0) {
+    const percent = Math.max(
+      0,
+      Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)),
+    );
+    return `${percent}%`;
+  }
+  if (downloadedBytes <= 0) return "starting";
+  return `${(downloadedBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function StatusBar({
+  updateStatus,
+  onCheckForUpdates,
+  onInstallUpdate,
+}: StatusBarProps) {
   const { state, activeTab, dispatch } = useAppState();
   const [showEncodingPicker, setShowEncodingPicker] = useState(false);
   const encodingRef = useRef<HTMLDivElement>(null);
@@ -51,6 +77,89 @@ export function StatusBar() {
   const psVersion = state.psVersions.find(
     (v) => v.path === state.selectedPsPath,
   );
+
+  const renderUpdateControl = () => {
+    switch (updateStatus.phase) {
+      case "checking":
+        return (
+          <span data-testid="status-update-checking">Checking updates...</span>
+        );
+      case "available":
+        return (
+          <button
+            data-testid="status-update-install"
+            onClick={onInstallUpdate}
+            title={
+              updateStatus.notes
+                ? `Install PSForge ${updateStatus.version}\n\n${updateStatus.notes}`
+                : `Install PSForge ${updateStatus.version}`
+            }
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--accent)",
+              cursor: "pointer",
+              textDecoration: "underline",
+              fontSize: "inherit",
+            }}
+          >
+            Update {updateStatus.version} available
+          </button>
+        );
+      case "downloading":
+        return (
+          <span data-testid="status-update-progress">
+            Updating{" "}
+            {formatUpdateProgress(
+              updateStatus.downloadedBytes,
+              updateStatus.totalBytes,
+            )}
+          </span>
+        );
+      case "installing":
+        return (
+          <span data-testid="status-update-installing">
+            Installing {updateStatus.version}...
+          </span>
+        );
+      case "upToDate":
+        return <span data-testid="status-update-uptodate">Up to date</span>;
+      case "error":
+        return (
+          <button
+            data-testid="status-update-error"
+            onClick={onCheckForUpdates}
+            title={updateStatus.message}
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--stream-stderr)",
+              cursor: "pointer",
+              textDecoration: "underline",
+              fontSize: "inherit",
+            }}
+          >
+            Update check failed
+          </button>
+        );
+      case "idle":
+      default:
+        return (
+          <button
+            data-testid="status-update-check"
+            onClick={onCheckForUpdates}
+            style={{
+              backgroundColor: "transparent",
+              color: "var(--text-inverse)",
+              cursor: "pointer",
+              opacity: 0.9,
+              fontSize: "inherit",
+            }}
+            title="Check GitHub Releases for a newer PSForge version"
+          >
+            Check for Updates
+          </button>
+        );
+    }
+  };
 
   return (
     <div
@@ -195,7 +304,9 @@ export function StatusBar() {
           <span className="flex items-center gap-1">
             <span
               className={`inline-block w-2 h-2 rounded-full ${
-                state.debugPaused ? "bg-yellow-300" : "bg-green-400 animate-pulse"
+                state.debugPaused
+                  ? "bg-yellow-300"
+                  : "bg-green-400 animate-pulse"
               }`}
             />
             {state.debugPaused ? "Debug Paused" : "Debugging"}
@@ -209,6 +320,7 @@ export function StatusBar() {
             </span>
           )
         )}
+        {renderUpdateControl()}
         {psVersion && <span>{psVersion.name}</span>}
         {activeTab && activeTab.tabType !== "welcome" && (
           <span

@@ -113,6 +113,10 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub show_ps7_install_reminder: bool,
 
+    /// Check the public GitHub release feed for updates when the app starts.
+    #[serde(default = "default_true")]
+    pub check_for_updates_on_startup: bool,
+
     /// Whether the integrated terminal loads user/system PowerShell profiles.
     #[serde(default)]
     pub terminal_load_profile: bool,
@@ -274,6 +278,7 @@ impl Default for AppSettings {
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
             show_ps7_install_reminder: true,
+            check_for_updates_on_startup: true,
             terminal_load_profile: false,
             show_timestamps: false,
             output_font_size: default_output_font_size(),
