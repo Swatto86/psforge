@@ -6,16 +6,16 @@ PSForge is a modern, fast PowerShell ISE replacement for Windows, built with Tau
 
 ## Domain Concepts
 
-| Concept                | Description                                                                            |
-| ---------------------- | -------------------------------------------------------------------------------------- |
-| **Editor Tab**         | An open file or untitled script buffer with dirty-tracking                             |
-| **PowerShell Process** | A managed child process for script execution with stdin/stdout/stderr streaming        |
-| **Output Pane**        | Tabbed area showing execution output, variables, and problems                          |
-| **Module Browser**     | Sidebar listing installed PowerShell modules and their exported commands               |
-| **Snippet**            | Reusable code template (built-in or user-defined) insertable via Command Palette       |
-| **File Association**   | Per-user HKCU registry mapping of PS extensions to PSForge (no admin required)         |
-| **Theme**              | CSS variable-driven visual theme (dark, light, ise-classic) synced with Monaco         |
-| **Param Prompt**       | Pre-run modal that collects values for mandatory `param()` parameters before execution |
+| Concept                | Description                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Editor Tab**         | An open file or untitled script buffer with dirty-tracking                                                                                 |
+| **PowerShell Process** | A managed child process for script execution with stdin/stdout/stderr streaming                                                            |
+| **Output Pane**        | Tabbed area showing execution output, variables, problems, debugger tools, with editable text mode limited to the Output and Problems tabs |
+| **Module Browser**     | Sidebar listing installed PowerShell modules and their exported commands                                                                   |
+| **Snippet**            | Reusable code template (built-in or user-defined) insertable via Command Palette                                                           |
+| **File Association**   | Per-user HKCU registry mapping of PS extensions to PSForge (no admin required)                                                             |
+| **Theme**              | CSS variable-driven visual theme (dark, light, ise-classic) synced with Monaco                                                             |
+| **Param Prompt**       | Pre-run modal that collects values for mandatory `param()` parameters before execution                                                     |
 
 ## Architecture
 
@@ -72,7 +72,7 @@ PSForge/
       Toolbar.tsx         # Top bar: file ops, run/stop, PS version, theme
       TabBar.tsx          # Editor tabs with dirty indicators, context menu
       EditorPane.tsx      # Monaco Editor wrapper with settings sync
-      OutputPane.tsx      # Output/Variables/Problems/Terminal tabs; virtualised list (react-virtual) for high-volume output
+      OutputPane.tsx      # Bottom pane tabs; virtualised output list, pane-local clear actions, and toggleable text mode for the Output and Problems tabs
       TerminalPane.tsx    # xterm.js integrated terminal (PS session via piped I/O)
       Sidebar.tsx         # Left/right sidebar with Modules browser and script Outline navigator
       StatusBar.tsx       # Bottom bar: encoding, path, running state, version
@@ -244,20 +244,20 @@ npm run test:e2e:features            # New ISE-parity features: format, find/rep
 npm run test:e2e:session-restore     # Session restore: disk reload + dirty-buffer recovery
 ```
 
-| Spec                              | Tests | Coverage                                                                                                                                                |
-| --------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `e2e/app.spec.ts`                 | 22    | Layout, sidebar, settings panel, theme switch, keyboard shortcuts                                                                                       |
-| `e2e/about.spec.ts`               | 16    | About dialog open/close/content/Escape/backdrop                                                                                                         |
-| `e2e/editor.spec.ts`              | 9     | Monaco editor: open file, edit, save, tab management                                                                                                    |
-| `e2e/script-run.spec.ts`          | 9     | F5/F8 run (including current-line F8), stdin, stop, error output                                                                                        |
-| `e2e/intellisense.spec.ts`        | 14    | PS completion triggers, parameter/cmdlet/variable/multiline completions                                                                                 |
-| `e2e/settings.spec.ts`            | 32    | Settings modal sections, select widths, toggles, theme switch                                                                                           |
-| `e2e/syntax-highlighting.spec.ts` | 33    | Monaco + terminal ANSI highlighting for keywords/cmdlets/params/types                                                                                   |
-| `e2e/terminal.spec.ts`            | 19    | Tab nav, session startup, keyboard input, commands, history, CWD bar                                                                                    |
-| `e2e/variables.spec.ts`           | 23    | Variable population, filter, type/value/name columns, built-ins                                                                                         |
-| `e2e/session-restore.spec.ts`     | 2     | Clean file-backed tab restore from disk and dirty-buffer recovery when the backing file is gone                                                         |
-| `e2e/params.spec.ts`              | 7     | Mandatory param dialog appear/cancel/run, multi-param, types, default bypass, disabled Run btn                                                          |
-| `e2e/features.spec.ts`            | ~20   | Format toolbar button states, Find/Replace shortcut, drag-drop event handlers, profile button, signing dialog open/close/cert-list, print button states |
+| Spec                              | Tests | Coverage                                                                                                                                                                                                       |
+| --------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e2e/app.spec.ts`                 | 22    | Layout, sidebar, settings panel, theme switch, keyboard shortcuts                                                                                                                                              |
+| `e2e/about.spec.ts`               | 16    | About dialog open/close/content/Escape/backdrop                                                                                                                                                                |
+| `e2e/editor.spec.ts`              | 9     | Monaco editor: open file, edit, save, tab management                                                                                                                                                           |
+| `e2e/script-run.spec.ts`          | 9     | F5/F8 run (including current-line F8), stdin, stop, error output                                                                                                                                               |
+| `e2e/intellisense.spec.ts`        | 14    | PS completion triggers, parameter/cmdlet/variable/multiline completions                                                                                                                                        |
+| `e2e/settings.spec.ts`            | 32    | Settings modal sections, select widths, toggles, theme switch                                                                                                                                                  |
+| `e2e/syntax-highlighting.spec.ts` | 33    | Monaco + terminal ANSI highlighting for keywords/cmdlets/params/types                                                                                                                                          |
+| `e2e/terminal.spec.ts`            | 19    | Tab nav, session startup, keyboard input, commands, history, CWD bar                                                                                                                                           |
+| `e2e/variables.spec.ts`           | 23    | Variable population, filter, type/value/name columns, built-ins                                                                                                                                                |
+| `e2e/session-restore.spec.ts`     | 2     | Clean file-backed tab restore from disk and dirty-buffer recovery when the backing file is gone                                                                                                                |
+| `e2e/params.spec.ts`              | 7     | Mandatory param dialog appear/cancel/run, multi-param, types, default bypass, disabled Run btn                                                                                                                 |
+| `e2e/features.spec.ts`            | ~23   | Format toolbar button states, Find/Replace shortcut, drag-drop event handlers, profile button, signing dialog open/close/cert-list, print button states, bottom-pane text-mode undo, pane-local clear behavior |
 
 **Test infrastructure:** `wdio.conf.cjs` — starts Vite dev server → launches debug binary with `--enable-remote-debugging=9222` → starts msedgedriver matching WebView2 runtime version → connects WebdriverIO. Teardown kills all three in reverse order.
 
