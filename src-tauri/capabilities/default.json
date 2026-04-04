@@ -8,6 +8,7 @@
     "opener:default",
     "dialog:default",
     "fs:default",
-    "core:event:default"
+    "core:event:default",
+    "updater:default"
   ]
 }

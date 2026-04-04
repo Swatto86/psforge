@@ -237,6 +237,8 @@ export interface AppSettings {
   customWorkingDir: string;
   /** Show PS7 install recommendation banner when only Windows PowerShell 5.1 is detected. */
   showPs7InstallReminder: boolean;
+  /** Check the public GitHub release feed for application updates on startup. */
+  checkForUpdatesOnStartup: boolean;
 
   // ---- Output ----
   /** Load PowerShell profiles when starting the integrated terminal. */
@@ -292,6 +294,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   workingDirMode: "file",
   customWorkingDir: "",
   showPs7InstallReminder: true,
+  checkForUpdatesOnStartup: true,
   terminalLoadProfile: false,
   showTimestamps: false,
   outputFontSize: 13,
@@ -311,6 +314,21 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 /** Theme names. */
 export type ThemeName = "dark" | "light" | "ise-classic";
+
+/** UI state for the in-app update workflow. */
+export type UpdateStatus =
+  | { phase: "idle" }
+  | { phase: "checking" }
+  | { phase: "available"; version: string; notes: string; date?: string }
+  | {
+      phase: "downloading";
+      version: string;
+      downloadedBytes: number;
+      totalBytes: number;
+    }
+  | { phase: "installing"; version: string }
+  | { phase: "upToDate" }
+  | { phase: "error"; message: string };
 
 /** A per-item error within a batch operation. */
 export interface BatchError {

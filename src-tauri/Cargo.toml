@@ -1,6 +1,6 @@
 [package]
 name = "psforge"
-version = "1.0.6"
+version = "1.1.0"
 description = "PSForge - Modern PowerShell Editor"
 authors = ["PSForge Contributors"]
 edition = "2021"
@@ -27,6 +27,9 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 encoding_rs = "0.8"
 portable-pty = "0.9"
+
+[target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
+tauri-plugin-updater = "2"
 
 [dev-dependencies]
 # tempfile provides OS-managed temporary directories for integration tests.

@@ -3,6 +3,7 @@
 import React, { useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 import { AppProvider, useAppState, newTabId, untitledCounter } from "./store";
 import { Toolbar } from "./components/Toolbar";
 import { TabBar } from "./components/TabBar";
@@ -26,6 +27,7 @@ import type {
   DebugStackFrame,
   DebugWatch,
   PsVersion,
+  UpdateStatus,
   VariableInfo,
 } from "./types";
 
@@ -100,6 +102,8 @@ const HARD_MIN_SPLIT_PERCENT = 8;
 const HARD_MAX_SPLIT_PERCENT = 92;
 const SPLIT_EPSILON = 0.1;
 const PS7_INSTALL_URL = "https://aka.ms/install-powershell";
+const UPDATE_CHECK_TIMEOUT_MS = 30_000;
+const UPDATE_STATUS_RESET_MS = 8_000;
 
 const DEBUG_STACK_COMMAND =
   "$__psf_stack = Get-PSCallStack | ForEach-Object { " +
@@ -327,6 +331,9 @@ function AppInner() {
     React.useState(false);
   const [psVersionRefreshInFlight, setPsVersionRefreshInFlight] =
     React.useState(false);
+  const [updateStatus, setUpdateStatus] = React.useState<UpdateStatus>({
+    phase: "idle",
+  });
   const isDragging = useRef(false);
   /** Tracks the live split position during a drag so onMouseUp reads the
    *  final position, not the stale value captured at drag-start. */
@@ -346,6 +353,10 @@ function AppInner() {
   const activeTabRef = useRef<EditorTab | undefined>(activeTab);
   const cursorLineRef = useRef(state.cursorLine);
   const bookmarksRef = useRef(state.bookmarks);
+  const availableUpdateRef =
+    useRef<Awaited<ReturnType<typeof checkForAppUpdate>>>(null);
+  const updateStatusResetTimerRef = useRef<number | null>(null);
+  const autoUpdateCheckStartedRef = useRef(false);
   const clampSplitForCurrentLayout = useCallback(
     (nextPercent: number): number => {
       const containerHeight =
@@ -452,6 +463,208 @@ function AppInner() {
     dispatch({ type: "SET_SETTINGS", settings: updated });
     cmd.saveSettings(updated).catch(() => {});
   }, [dispatch, state.settings]);
+
+  const clearPendingUpdate = useCallback(() => {
+    const pending = availableUpdateRef.current;
+    availableUpdateRef.current = null;
+    if (pending) {
+      void pending.close().catch(() => {});
+    }
+  }, []);
+
+  const clearUpdateStatusResetTimer = useCallback(() => {
+    if (updateStatusResetTimerRef.current !== null) {
+      window.clearTimeout(updateStatusResetTimerRef.current);
+      updateStatusResetTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleUpdateStatusReset = useCallback(() => {
+    clearUpdateStatusResetTimer();
+    updateStatusResetTimerRef.current = window.setTimeout(() => {
+      setUpdateStatus((prev) =>
+        prev.phase === "upToDate" || prev.phase === "error"
+          ? { phase: "idle" }
+          : prev,
+      );
+      updateStatusResetTimerRef.current = null;
+    }, UPDATE_STATUS_RESET_MS);
+  }, [clearUpdateStatusResetTimer]);
+
+  useEffect(() => {
+    return () => {
+      clearUpdateStatusResetTimer();
+      clearPendingUpdate();
+    };
+  }, [clearPendingUpdate, clearUpdateStatusResetTimer]);
+
+  const checkForUpdates = useCallback(
+    async (initiatedByUser: boolean) => {
+      if (
+        updateStatus.phase === "checking" ||
+        updateStatus.phase === "downloading" ||
+        updateStatus.phase === "installing"
+      ) {
+        return;
+      }
+
+      clearUpdateStatusResetTimer();
+      setUpdateStatus({ phase: "checking" });
+
+      try {
+        const update = await checkForAppUpdate({
+          timeout: UPDATE_CHECK_TIMEOUT_MS,
+        });
+        clearPendingUpdate();
+        availableUpdateRef.current = update;
+
+        if (!update) {
+          if (initiatedByUser) {
+            setUpdateStatus({ phase: "upToDate" });
+            scheduleUpdateStatusReset();
+          } else {
+            setUpdateStatus({ phase: "idle" });
+          }
+          return;
+        }
+
+        setUpdateStatus({
+          phase: "available",
+          version: update.version,
+          notes: update.body ?? "",
+          date: update.date,
+        });
+      } catch (err) {
+        clearPendingUpdate();
+        const message = extractInvokeErrorMessage(err);
+        if (initiatedByUser) {
+          setUpdateStatus({ phase: "error", message });
+          scheduleUpdateStatusReset();
+        } else {
+          console.warn("Automatic update check failed:", err);
+          setUpdateStatus({ phase: "idle" });
+        }
+      }
+    },
+    [
+      clearPendingUpdate,
+      clearUpdateStatusResetTimer,
+      scheduleUpdateStatusReset,
+      updateStatus.phase,
+    ],
+  );
+
+  const installAvailableUpdate = useCallback(async () => {
+    const update = availableUpdateRef.current;
+    if (!update) return;
+
+    const releaseNotes = update.body?.trim();
+    const confirmLines = [
+      `PSForge ${update.version} is available.`,
+      "",
+      "Install it now?",
+      "",
+      "PSForge will download the signed installer from GitHub Releases.",
+      "On Windows the app will close automatically while the update is applied.",
+    ];
+    if (releaseNotes) {
+      confirmLines.push("", "Release notes:", releaseNotes);
+    }
+
+    let confirmed = false;
+    try {
+      const { confirm } = await import("@tauri-apps/plugin-dialog");
+      confirmed = await confirm(confirmLines.join("\n"), {
+        title: "PSForge Update",
+        kind: "info",
+        okLabel: "Install",
+        cancelLabel: "Later",
+      });
+    } catch {
+      confirmed = false;
+    }
+    if (!confirmed) return;
+
+    clearUpdateStatusResetTimer();
+    let downloadedBytes = 0;
+    let totalBytes = 0;
+    setUpdateStatus({
+      phase: "downloading",
+      version: update.version,
+      downloadedBytes,
+      totalBytes,
+    });
+
+    try {
+      await update.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            downloadedBytes = 0;
+            totalBytes = event.data.contentLength ?? 0;
+            setUpdateStatus({
+              phase: "downloading",
+              version: update.version,
+              downloadedBytes,
+              totalBytes,
+            });
+            break;
+          case "Progress":
+            downloadedBytes += event.data.chunkLength;
+            setUpdateStatus({
+              phase: "downloading",
+              version: update.version,
+              downloadedBytes,
+              totalBytes,
+            });
+            break;
+          case "Finished":
+            setUpdateStatus({ phase: "installing", version: update.version });
+            break;
+        }
+      });
+
+      clearPendingUpdate();
+      setUpdateStatus({ phase: "installing", version: update.version });
+
+      try {
+        const { message } = await import("@tauri-apps/plugin-dialog");
+        await message(
+          "The update package has been installed. If PSForge does not restart automatically, launch it again to finish applying the update.",
+          {
+            title: "PSForge Update",
+            kind: "info",
+          },
+        );
+      } catch {
+        // Best effort only; Windows usually exits before this path executes.
+      }
+    } catch (err) {
+      clearPendingUpdate();
+      setUpdateStatus({
+        phase: "error",
+        message: extractInvokeErrorMessage(err),
+      });
+      scheduleUpdateStatusReset();
+    }
+  }, [
+    clearPendingUpdate,
+    clearUpdateStatusResetTimer,
+    scheduleUpdateStatusReset,
+  ]);
+
+  useEffect(() => {
+    if (autoUpdateCheckStartedRef.current) return;
+    if (!state.settingsLoaded) return;
+    if (import.meta.env.DEV) return;
+    if (state.settings.checkForUpdatesOnStartup === false) return;
+
+    autoUpdateCheckStartedRef.current = true;
+    void checkForUpdates(false);
+  }, [
+    checkForUpdates,
+    state.settings.checkForUpdatesOnStartup,
+    state.settingsLoaded,
+  ]);
 
   useEffect(() => {
     if (state.debugLine && state.debugColumn) {
@@ -2236,7 +2449,11 @@ function AppInner() {
       </div>
 
       {/* Status bar */}
-      <StatusBar />
+      <StatusBar
+        updateStatus={updateStatus}
+        onCheckForUpdates={() => void checkForUpdates(true)}
+        onInstallUpdate={() => void installAvailableUpdate()}
+      />
 
       {/* Modals */}
       {state.settingsOpen && <SettingsPanel />}
