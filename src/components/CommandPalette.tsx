@@ -117,10 +117,11 @@ export function CommandPalette() {
         action: () => {
           close();
           dispatch({ type: "SET_BOTTOM_TAB", tab: "help" });
-          const query = (
-            (window as unknown as Record<string, unknown>)
-              .__psforge_getHelpQuery as (() => string) | undefined
-          )?.() ?? "";
+          const query =
+            (
+              (window as unknown as Record<string, unknown>)
+                .__psforge_getHelpQuery as (() => string) | undefined
+            )?.() ?? "";
           window.dispatchEvent(
             new CustomEvent("psforge-help-request", { detail: { query } }),
           );
@@ -176,7 +177,7 @@ export function CommandPalette() {
         id: "cmd-clear-output",
         label: "Clear Output",
         category: "Command",
-        description: "Clear the output pane",
+        description: "Clear only the output pane",
         action: () => {
           dispatch({ type: "CLEAR_OUTPUT" });
           close();

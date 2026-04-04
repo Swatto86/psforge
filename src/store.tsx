@@ -415,6 +415,7 @@ type Action =
   | { type: "REORDER_TABS"; fromId: string; toId: string }
   | { type: "ADD_OUTPUT"; line: OutputLine }
   | { type: "CLEAR_OUTPUT" }
+  | { type: "CLEAR_PROBLEMS" }
   | { type: "SET_RUNNING"; running: boolean }
   | { type: "SET_PS_VERSIONS"; versions: PsVersion[] }
   | { type: "SET_SELECTED_PS"; path: string }
@@ -641,7 +642,10 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case "CLEAR_OUTPUT":
-      return { ...state, outputLines: [], problems: [] };
+      return { ...state, outputLines: [] };
+
+    case "CLEAR_PROBLEMS":
+      return { ...state, problems: [] };
 
     case "SET_RUNNING":
       if (!action.running) {

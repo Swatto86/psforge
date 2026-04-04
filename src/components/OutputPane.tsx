@@ -101,6 +101,33 @@ function summarizeBreakpointOptions(bp: DebugBreakpoint): string {
   return parts.join(" | ");
 }
 
+type EditableBottomTab = "output" | "problems";
+
+type PaneTextEditorState = {
+  tab: EditableBottomTab;
+  text: string;
+  undoStack: string[];
+  redoStack: string[];
+};
+
+const MAX_TEXT_EDITOR_HISTORY = 200;
+
+function isEditableBottomTab(tab: string): tab is EditableBottomTab {
+  return tab === "output" || tab === "problems";
+}
+
+function outputLinesToText(
+  lines: Array<{ text: string; timestamp: string }>,
+  includeTimestamps: boolean,
+): string {
+  return lines
+    .map((line) => {
+      if (!includeTimestamps) return line.text;
+      return `[${formatTimestamp(line.timestamp)}] ${line.text}`;
+    })
+    .join("\n");
+}
+
 interface OutputPaneProps {
   onDebugStart: () => void;
   onDebugContinue: () => void;
@@ -169,7 +196,9 @@ export function OutputPane({
   }, [state.outputLines.length, state.bottomPanelTab]);
 
   const isDebuggerInputTab = state.bottomPanelTab === "debugger";
-  const isStdinEnabled = isDebuggerInputTab ? state.isDebugging : state.isRunning;
+  const isStdinEnabled = isDebuggerInputTab
+    ? state.isDebugging
+    : state.isRunning;
   const inputPrompt = isDebuggerInputTab ? "DBG>" : ">";
   const inputEchoPrefix = isDebuggerInputTab ? "DBG> " : "> ";
 
@@ -198,7 +227,9 @@ export function OutputPane({
   };
 
   const copyProblems = useCallback(() => {
-    navigator.clipboard.writeText(problemsToText(state.problems)).catch(() => {});
+    navigator.clipboard
+      .writeText(problemsToText(state.problems))
+      .catch(() => {});
   }, [state.problems]);
 
   const [isSavingOutput, setIsSavingOutput] = useState(false);
@@ -257,6 +288,125 @@ export function OutputPane({
       v.name.toLowerCase().includes(varFilter.toLowerCase()) ||
       v.value.toLowerCase().includes(varFilter.toLowerCase()),
   );
+  const [textEditorState, setTextEditorState] =
+    useState<PaneTextEditorState | null>(null);
+
+  const activeEditableTab = isEditableBottomTab(state.bottomPanelTab)
+    ? state.bottomPanelTab
+    : null;
+  const isTextEditorActive =
+    activeEditableTab !== null && textEditorState?.tab === activeEditableTab;
+
+  const capturePaneText = useCallback(
+    (tab: EditableBottomTab): string => {
+      if (tab === "output") {
+        return outputLinesToText(
+          state.outputLines,
+          state.settings.showTimestamps === true,
+        );
+      }
+      return problemsToText(state.problems);
+    },
+    [state.outputLines, state.problems, state.settings.showTimestamps],
+  );
+
+  const pushTextEditorChange = useCallback((nextText: string) => {
+    setTextEditorState((prev) => {
+      if (!prev || prev.text === nextText) return prev;
+      const undoStack = [...prev.undoStack, prev.text].slice(
+        -MAX_TEXT_EDITOR_HISTORY,
+      );
+      return {
+        ...prev,
+        text: nextText,
+        undoStack,
+        redoStack: [],
+      };
+    });
+  }, []);
+
+  const toggleTextEditor = useCallback(() => {
+    if (!activeEditableTab) return;
+    if (textEditorState?.tab === activeEditableTab) {
+      setTextEditorState(null);
+      return;
+    }
+    const snapshot = capturePaneText(activeEditableTab);
+    setTextEditorState({
+      tab: activeEditableTab,
+      text: snapshot,
+      undoStack: [],
+      redoStack: [],
+    });
+  }, [activeEditableTab, capturePaneText, textEditorState]);
+
+  const undoTextEditor = useCallback(() => {
+    setTextEditorState((prev) => {
+      if (!prev || prev.undoStack.length === 0) return prev;
+      const previousText = prev.undoStack[prev.undoStack.length - 1];
+      return {
+        ...prev,
+        text: previousText,
+        undoStack: prev.undoStack.slice(0, -1),
+        redoStack: [prev.text, ...prev.redoStack].slice(
+          0,
+          MAX_TEXT_EDITOR_HISTORY,
+        ),
+      };
+    });
+  }, []);
+
+  const redoTextEditor = useCallback(() => {
+    setTextEditorState((prev) => {
+      if (!prev || prev.redoStack.length === 0) return prev;
+      const [nextText, ...remainingRedo] = prev.redoStack;
+      return {
+        ...prev,
+        text: nextText,
+        undoStack: [...prev.undoStack, prev.text].slice(
+          -MAX_TEXT_EDITOR_HISTORY,
+        ),
+        redoStack: remainingRedo,
+      };
+    });
+  }, []);
+
+  const resetTextEditor = useCallback(() => {
+    if (!activeEditableTab || !isTextEditorActive) return;
+    pushTextEditorChange(capturePaneText(activeEditableTab));
+  }, [
+    activeEditableTab,
+    capturePaneText,
+    isTextEditorActive,
+    pushTextEditorChange,
+  ]);
+
+  const clearTextEditor = useCallback(() => {
+    if (!isTextEditorActive) return;
+    pushTextEditorChange("");
+  }, [isTextEditorActive, pushTextEditorChange]);
+
+  const copyTextEditor = useCallback(() => {
+    if (!isTextEditorActive || !textEditorState) return;
+    navigator.clipboard.writeText(textEditorState.text).catch(() => {});
+  }, [isTextEditorActive, textEditorState]);
+
+  const handleTextEditorKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (!e.shiftKey && key === "z") {
+        e.preventDefault();
+        undoTextEditor();
+        return;
+      }
+      if (key === "y" || (e.shiftKey && key === "z")) {
+        e.preventDefault();
+        redoTextEditor();
+      }
+    },
+    [redoTextEditor, undoTextEditor],
+  );
 
   const handleAddDebugWatch = useCallback(
     (expression: string) => {
@@ -285,7 +435,7 @@ export function OutputPane({
 
   const activeTabBreakpoints =
     activeTab && activeTab.tabType !== "welcome"
-      ? state.breakpoints[activeTab.id] ?? []
+      ? (state.breakpoints[activeTab.id] ?? [])
       : [];
 
   const upsertActiveTabBreakpoint = useCallback(
@@ -354,77 +504,224 @@ export function OutputPane({
         }}
       >
         {bottomTabs.map((tab) => (
-            <button
-              key={tab.id}
-              data-testid={`output-tab-${tab.id}`}
-              onClick={() => {
-                dispatch({ type: "SET_BOTTOM_TAB", tab: tab.id });
-                // When switching to the terminal, focus it immediately while
-                // we are still inside the user-gesture call stack so WebView2
-                // allows the focus() call to succeed.
-                if (tab.id === "terminal") {
-                  requestAnimationFrame(() => {
-                    (
-                      window as unknown as Record<string, () => void>
-                    ).__psforge_terminal_focus?.();
-                  });
-                }
-              }}
-              className="transition-colors"
-              style={{
-                padding: "8px 28px",
-                display: "inline-flex",
-                alignItems: "center",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-                backgroundColor: "transparent",
-                color:
-                  state.bottomPanelTab === tab.id
-                    ? "var(--text-primary)"
-                    : "var(--text-secondary)",
-                borderBottom:
-                  state.bottomPanelTab === tab.id
-                    ? "2px solid var(--accent)"
-                    : "2px solid transparent",
-              }}
-            >
-              {tab.label}
-              {tab.id === "output" && state.outputLines.length > 0 && (
-                <span className="opacity-60">
-                  {" "}
-                  ({state.outputLines.length})
-                </span>
-              )}
-              {tab.id === "problems" && state.problems.length > 0 && (
-                <span
-                  style={{
-                    color: "var(--stream-stderr)",
-                    fontWeight: 600,
-                  }}
-                >
-                  {" "}
-                  ({state.problems.length})
-                </span>
-              )}
-              {tab.id === "debugger" && state.isDebugging && (
-                <span
-                  style={{
-                    color: state.debugPaused
-                      ? "var(--stream-warning)"
-                      : "var(--text-accent)",
-                    fontWeight: 600,
-                  }}
-                >
-                  {" "}
-                  ({state.debugPaused ? "paused" : "active"})
-                </span>
-              )}
-            </button>
-          ))}
+          <button
+            key={tab.id}
+            data-testid={`output-tab-${tab.id}`}
+            onClick={() => {
+              dispatch({ type: "SET_BOTTOM_TAB", tab: tab.id });
+              // When switching to the terminal, focus it immediately while
+              // we are still inside the user-gesture call stack so WebView2
+              // allows the focus() call to succeed.
+              if (tab.id === "terminal") {
+                requestAnimationFrame(() => {
+                  (
+                    window as unknown as Record<string, () => void>
+                  ).__psforge_terminal_focus?.();
+                });
+              }
+            }}
+            className="transition-colors"
+            style={{
+              padding: "8px 28px",
+              display: "inline-flex",
+              alignItems: "center",
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+              backgroundColor: "transparent",
+              color:
+                state.bottomPanelTab === tab.id
+                  ? "var(--text-primary)"
+                  : "var(--text-secondary)",
+              borderBottom:
+                state.bottomPanelTab === tab.id
+                  ? "2px solid var(--accent)"
+                  : "2px solid transparent",
+            }}
+          >
+            {tab.label}
+            {tab.id === "output" && state.outputLines.length > 0 && (
+              <span className="opacity-60"> ({state.outputLines.length})</span>
+            )}
+            {tab.id === "problems" && state.problems.length > 0 && (
+              <span
+                style={{
+                  color: "var(--stream-stderr)",
+                  fontWeight: 600,
+                }}
+              >
+                {" "}
+                ({state.problems.length})
+              </span>
+            )}
+            {tab.id === "debugger" && state.isDebugging && (
+              <span
+                style={{
+                  color: state.debugPaused
+                    ? "var(--stream-warning)"
+                    : "var(--text-accent)",
+                  fontWeight: 600,
+                }}
+              >
+                {" "}
+                ({state.debugPaused ? "paused" : "active"})
+              </span>
+            )}
+          </button>
+        ))}
 
         <div className="flex-1" />
 
-        {state.bottomPanelTab === "output" && (
+        {activeEditableTab && (
+          <>
+            <button
+              data-testid="bottom-pane-text-mode-toggle"
+              onClick={toggleTextEditor}
+              style={{
+                padding: "6px 14px",
+                backgroundColor: "transparent",
+                color: isTextEditorActive
+                  ? "var(--text-accent)"
+                  : "var(--text-secondary)",
+                cursor: "pointer",
+                fontSize: "var(--ui-font-size-sm)",
+                border: "none",
+                borderRadius: "3px",
+                marginRight: isTextEditorActive ? "4px" : "8px",
+              }}
+              title="Open an editable text snapshot for the current pane"
+            >
+              {isTextEditorActive ? "Structured" : "Text Mode"}
+            </button>
+
+            {isTextEditorActive && (
+              <>
+                <button
+                  data-testid="bottom-pane-text-undo"
+                  onClick={undoTextEditor}
+                  disabled={
+                    !textEditorState || textEditorState.undoStack.length === 0
+                  }
+                  style={{
+                    padding: "6px 14px",
+                    backgroundColor: "transparent",
+                    color:
+                      !textEditorState || textEditorState.undoStack.length === 0
+                        ? "var(--text-muted)"
+                        : "var(--text-secondary)",
+                    cursor:
+                      !textEditorState || textEditorState.undoStack.length === 0
+                        ? "default"
+                        : "pointer",
+                    fontSize: "var(--ui-font-size-sm)",
+                    border: "none",
+                    borderRadius: "3px",
+                    marginRight: "4px",
+                  }}
+                  title="Undo the last text edit (Ctrl+Z)"
+                >
+                  Undo
+                </button>
+                <button
+                  data-testid="bottom-pane-text-redo"
+                  onClick={redoTextEditor}
+                  disabled={
+                    !textEditorState || textEditorState.redoStack.length === 0
+                  }
+                  style={{
+                    padding: "6px 14px",
+                    backgroundColor: "transparent",
+                    color:
+                      !textEditorState || textEditorState.redoStack.length === 0
+                        ? "var(--text-muted)"
+                        : "var(--text-secondary)",
+                    cursor:
+                      !textEditorState || textEditorState.redoStack.length === 0
+                        ? "default"
+                        : "pointer",
+                    fontSize: "var(--ui-font-size-sm)",
+                    border: "none",
+                    borderRadius: "3px",
+                    marginRight: "4px",
+                  }}
+                  title="Redo the last undone edit (Ctrl+Y / Ctrl+Shift+Z)"
+                >
+                  Redo
+                </button>
+                <button
+                  data-testid="bottom-pane-text-copy"
+                  onClick={copyTextEditor}
+                  disabled={
+                    !textEditorState || textEditorState.text.length === 0
+                  }
+                  style={{
+                    padding: "6px 14px",
+                    backgroundColor: "transparent",
+                    color:
+                      !textEditorState || textEditorState.text.length === 0
+                        ? "var(--text-muted)"
+                        : "var(--text-secondary)",
+                    cursor:
+                      !textEditorState || textEditorState.text.length === 0
+                        ? "default"
+                        : "pointer",
+                    fontSize: "var(--ui-font-size-sm)",
+                    border: "none",
+                    borderRadius: "3px",
+                    marginRight: "4px",
+                  }}
+                  title="Copy the editable pane text"
+                >
+                  Copy
+                </button>
+                <button
+                  data-testid="bottom-pane-text-reset"
+                  onClick={resetTextEditor}
+                  style={{
+                    padding: "6px 14px",
+                    backgroundColor: "transparent",
+                    color: "var(--text-secondary)",
+                    cursor: "pointer",
+                    fontSize: "var(--ui-font-size-sm)",
+                    border: "none",
+                    borderRadius: "3px",
+                    marginRight: "4px",
+                  }}
+                  title="Reload the current pane text into the editor"
+                >
+                  Reset
+                </button>
+                <button
+                  data-testid="bottom-pane-text-clear"
+                  onClick={clearTextEditor}
+                  disabled={
+                    !textEditorState || textEditorState.text.length === 0
+                  }
+                  style={{
+                    padding: "6px 14px",
+                    backgroundColor: "transparent",
+                    color:
+                      !textEditorState || textEditorState.text.length === 0
+                        ? "var(--text-muted)"
+                        : "var(--text-secondary)",
+                    cursor:
+                      !textEditorState || textEditorState.text.length === 0
+                        ? "default"
+                        : "pointer",
+                    fontSize: "var(--ui-font-size-sm)",
+                    border: "none",
+                    borderRadius: "3px",
+                    marginRight: "8px",
+                  }}
+                  title="Clear only the editable pane text"
+                >
+                  Clear
+                </button>
+              </>
+            )}
+          </>
+        )}
+
+        {!isTextEditorActive && state.bottomPanelTab === "output" && (
           <>
             <button
               onClick={copyAll}
@@ -470,6 +767,7 @@ export function OutputPane({
               {isSavingOutput ? "Saving..." : "Save..."}
             </button>
             <button
+              data-testid="output-clear-button"
               onClick={() => dispatch({ type: "CLEAR_OUTPUT" })}
               disabled={state.outputLines.length === 0}
               style={{
@@ -492,7 +790,7 @@ export function OutputPane({
           </>
         )}
 
-        {state.bottomPanelTab === "problems" && (
+        {!isTextEditorActive && state.bottomPanelTab === "problems" && (
           <>
             <button
               onClick={copyProblems}
@@ -538,7 +836,8 @@ export function OutputPane({
               {isSavingProblems ? "Saving..." : "Save..."}
             </button>
             <button
-              onClick={() => dispatch({ type: "CLEAR_OUTPUT" })}
+              data-testid="problems-clear-button"
+              onClick={() => dispatch({ type: "CLEAR_PROBLEMS" })}
               disabled={state.problems.length === 0}
               style={{
                 padding: "6px 14px",
@@ -778,7 +1077,7 @@ export function OutputPane({
           </>
         )}
 
-        {state.bottomPanelTab === "variables" && (
+        {!isTextEditorActive && state.bottomPanelTab === "variables" && (
           <input
             data-testid="variables-filter"
             value={varFilter}
@@ -812,7 +1111,30 @@ export function OutputPane({
           WebkitUserSelect: "text",
         }}
       >
-        {state.bottomPanelTab === "output" && (
+        {isTextEditorActive && textEditorState && (
+          <textarea
+            data-testid={`bottom-pane-text-editor-${textEditorState.tab}`}
+            value={textEditorState.text}
+            onChange={(e) => pushTextEditorChange(e.target.value)}
+            onKeyDown={handleTextEditorKeyDown}
+            spellCheck={false}
+            wrap={state.settings.outputWordWrap === true ? "soft" : "off"}
+            className="h-full w-full p-3 resize-none"
+            style={{
+              border: "none",
+              borderRadius: 0,
+              backgroundColor: "var(--bg-panel)",
+              color: "var(--text-primary)",
+              fontFamily:
+                state.settings.outputFontFamily ??
+                "Cascadia Code, Consolas, monospace",
+              fontSize: `${state.settings.outputFontSize ?? 13}px`,
+              outline: "none",
+            }}
+          />
+        )}
+
+        {!isTextEditorActive && state.bottomPanelTab === "output" && (
           /* Scroll container: needs explicit height so the virtualizer can
              calculate visible rows.  flex-1 fills the available panel space.
              Font family/size come from user output font settings. */
@@ -915,77 +1237,91 @@ export function OutputPane({
           </div>
         )}
 
-        {state.bottomPanelTab === "variables" && (
-          <VariableTable
-            variables={filteredVars}
-            typeColor={typeColor}
-            fontSize={state.settings.outputFontSize ?? 13}
-            fontFamily={
-              state.settings.outputFontFamily ??
-              "Cascadia Code, Consolas, monospace"
-            }
-          />
+        {!isTextEditorActive && state.bottomPanelTab === "variables" && (
+          <div className="flex-1 min-h-0 overflow-auto">
+            <VariableTable
+              variables={filteredVars}
+              typeColor={typeColor}
+              fontSize={state.settings.outputFontSize ?? 13}
+              fontFamily={
+                state.settings.outputFontFamily ??
+                "Cascadia Code, Consolas, monospace"
+              }
+            />
+          </div>
         )}
 
-        {state.bottomPanelTab === "problems" && (
-          <ProblemsPane
-            problems={state.problems}
-            fontSize={state.settings.outputFontSize ?? 13}
-            fontFamily={
-              state.settings.outputFontFamily ??
-              "Cascadia Code, Consolas, monospace"
-            }
-          />
+        {!isTextEditorActive && state.bottomPanelTab === "problems" && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <ProblemsPane
+              problems={state.problems}
+              fontSize={state.settings.outputFontSize ?? 13}
+              fontFamily={
+                state.settings.outputFontFamily ??
+                "Cascadia Code, Consolas, monospace"
+              }
+            />
+          </div>
         )}
 
-        {state.bottomPanelTab === "debugger" && (
-          <DebuggerPane
-            isRunning={state.isRunning}
-            isDebugging={state.isDebugging}
-            debugPaused={state.debugPaused}
-            debugLine={state.debugLine}
-            debugColumn={state.debugColumn}
-            selectedFrameIndex={state.debugSelectedFrame}
-            activeTabName={
-              activeTab?.tabType === "code" ? activeTab.title : undefined
-            }
-            breakpoints={activeTabBreakpoints}
-            locals={state.debugLocals}
-            callStack={state.debugCallStack}
-            watches={state.debugWatches}
-            onNavigate={navigateTo}
-            onSelectFrame={onDebugSelectFrame}
-            onToggleBreakpoint={(line) => {
-              if (!activeTab || activeTab.tabType === "welcome") return;
-              dispatch({
-                type: "TOGGLE_BREAKPOINT",
-                tabId: activeTab.id,
-                line,
-              });
-            }}
-            onUpsertBreakpoint={upsertActiveTabBreakpoint}
-            onRemoveBreakpoint={removeActiveTabBreakpoint}
-            onAddVariableBreakpoint={(variable, mode) =>
-              upsertActiveTabBreakpoint({ variable, mode })
-            }
-            onAddCommandBreakpoint={(targetCommand) =>
-              upsertActiveTabBreakpoint({ targetCommand })
-            }
-            onRefresh={onDebugRefreshInspector}
-            onAddWatch={handleAddDebugWatch}
-            onRemoveWatch={handleRemoveDebugWatch}
-            onEvaluateWatch={onDebugEvaluateWatch}
-            fontSize={state.settings.outputFontSize ?? 13}
-            fontFamily={
-              state.settings.outputFontFamily ??
-              "Cascadia Code, Consolas, monospace"
-            }
-          />
+        {!isTextEditorActive && state.bottomPanelTab === "debugger" && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <DebuggerPane
+              isRunning={state.isRunning}
+              isDebugging={state.isDebugging}
+              debugPaused={state.debugPaused}
+              debugLine={state.debugLine}
+              debugColumn={state.debugColumn}
+              selectedFrameIndex={state.debugSelectedFrame}
+              activeTabName={
+                activeTab?.tabType === "code" ? activeTab.title : undefined
+              }
+              breakpoints={activeTabBreakpoints}
+              locals={state.debugLocals}
+              callStack={state.debugCallStack}
+              watches={state.debugWatches}
+              onNavigate={navigateTo}
+              onSelectFrame={onDebugSelectFrame}
+              onToggleBreakpoint={(line) => {
+                if (!activeTab || activeTab.tabType === "welcome") return;
+                dispatch({
+                  type: "TOGGLE_BREAKPOINT",
+                  tabId: activeTab.id,
+                  line,
+                });
+              }}
+              onUpsertBreakpoint={upsertActiveTabBreakpoint}
+              onRemoveBreakpoint={removeActiveTabBreakpoint}
+              onAddVariableBreakpoint={(variable, mode) =>
+                upsertActiveTabBreakpoint({ variable, mode })
+              }
+              onAddCommandBreakpoint={(targetCommand) =>
+                upsertActiveTabBreakpoint({ targetCommand })
+              }
+              onRefresh={onDebugRefreshInspector}
+              onAddWatch={handleAddDebugWatch}
+              onRemoveWatch={handleRemoveDebugWatch}
+              onEvaluateWatch={onDebugEvaluateWatch}
+              fontSize={state.settings.outputFontSize ?? 13}
+              fontFamily={
+                state.settings.outputFontFamily ??
+                "Cascadia Code, Consolas, monospace"
+              }
+            />
+          </div>
         )}
 
-        {state.bottomPanelTab === "show-command" && <ShowCommandPane />}
+        {!isTextEditorActive && state.bottomPanelTab === "show-command" && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <ShowCommandPane />
+          </div>
+        )}
 
-        {state.bottomPanelTab === "help" && <HelpPane />}
+        {!isTextEditorActive && state.bottomPanelTab === "help" && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <HelpPane />
+          </div>
+        )}
 
         {/* TerminalPane is always mounted (never conditionally removed) so the
             xterm.js instance and PS session survive tab switches.
@@ -1120,9 +1456,9 @@ function DebuggerPane({
     "Read" | "Write" | "ReadWrite"
   >("ReadWrite");
   const [newCommandName, setNewCommandName] = useState("");
-  const [editingBreakpointKey, setEditingBreakpointKey] = useState<string | null>(
-    null,
-  );
+  const [editingBreakpointKey, setEditingBreakpointKey] = useState<
+    string | null
+  >(null);
   const [editCondition, setEditCondition] = useState("");
   const [editHitCount, setEditHitCount] = useState("");
   const [editAction, setEditAction] = useState("");
@@ -1169,10 +1505,12 @@ function DebuggerPane({
   );
   const commandBreakpoints = breakpoints.filter(
     (bp): bp is DebugBreakpoint & { targetCommand: string } =>
-      typeof bp.targetCommand === "string" && bp.targetCommand.trim().length > 0,
+      typeof bp.targetCommand === "string" &&
+      bp.targetCommand.trim().length > 0,
   );
   const editingBreakpoint = editingBreakpointKey
-    ? breakpoints.find((bp) => breakpointKey(bp) === editingBreakpointKey) ?? null
+    ? (breakpoints.find((bp) => breakpointKey(bp) === editingBreakpointKey) ??
+      null)
     : null;
 
   const beginEditBreakpoint = useCallback((bp: DebugBreakpoint) => {
@@ -1199,7 +1537,9 @@ function DebuggerPane({
 
   useEffect(() => {
     if (!editingBreakpointKey) return;
-    const exists = breakpoints.some((bp) => breakpointKey(bp) === editingBreakpointKey);
+    const exists = breakpoints.some(
+      (bp) => breakpointKey(bp) === editingBreakpointKey,
+    );
     if (!exists) {
       cancelEditBreakpoint();
     }
@@ -1473,7 +1813,8 @@ function DebuggerPane({
                 >
                   {watch.error
                     ? `Error: ${watch.error}`
-                    : watch.value || "Value unavailable (pause debugger to evaluate)."}
+                    : watch.value ||
+                      "Value unavailable (pause debugger to evaluate)."}
                 </div>
               </div>
             ))}
@@ -1517,7 +1858,10 @@ function DebuggerPane({
                         : "transparent",
                     }}
                   >
-                    <td className="px-2 py-1" style={{ color: "var(--text-primary)" }}>
+                    <td
+                      className="px-2 py-1"
+                      style={{ color: "var(--text-primary)" }}
+                    >
                       <button
                         onClick={() => onSelectFrame(idx)}
                         style={{
@@ -1588,7 +1932,10 @@ function DebuggerPane({
                   key={local.name}
                   style={{ borderBottom: "1px solid var(--border-primary)" }}
                 >
-                  <td className="px-2 py-1" style={{ color: "var(--text-accent)" }}>
+                  <td
+                    className="px-2 py-1"
+                    style={{ color: "var(--text-accent)" }}
+                  >
                     ${local.name}
                   </td>
                   <td
@@ -1601,10 +1948,16 @@ function DebuggerPane({
                   >
                     {local.value}
                   </td>
-                  <td className="px-2 py-1" style={{ color: "var(--text-secondary)" }}>
+                  <td
+                    className="px-2 py-1"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
                     {local.typeName}
                   </td>
-                  <td className="px-2 py-1" style={{ color: "var(--text-muted)" }}>
+                  <td
+                    className="px-2 py-1"
+                    style={{ color: "var(--text-muted)" }}
+                  >
                     {local.scope}
                   </td>
                 </tr>
@@ -1620,7 +1973,8 @@ function DebuggerPane({
         </div>
         {lineBreakpoints.length === 0 ? (
           <div className="mt-1" style={{ color: "var(--text-muted)" }}>
-            No line breakpoints in the active tab. Click the editor gutter to add one.
+            No line breakpoints in the active tab. Click the editor gutter to
+            add one.
           </div>
         ) : (
           <div className="mt-2 flex flex-wrap gap-2">
@@ -1648,7 +2002,9 @@ function DebuggerPane({
                   {breakpointLabel(bp)}
                 </button>
                 {summarizeBreakpointOptions(bp) && (
-                  <span style={{ color: "var(--text-muted)", fontSize: "0.82em" }}>
+                  <span
+                    style={{ color: "var(--text-muted)", fontSize: "0.82em" }}
+                  >
                     {summarizeBreakpointOptions(bp)}
                   </span>
                 )}
@@ -1685,7 +2041,9 @@ function DebuggerPane({
       </div>
 
       <div className="mt-3">
-        <div style={{ color: "var(--text-secondary)" }}>Variable Breakpoints</div>
+        <div style={{ color: "var(--text-secondary)" }}>
+          Variable Breakpoints
+        </div>
         <form
           className="mt-2 flex items-center gap-2"
           onSubmit={(e) => {
@@ -1712,7 +2070,9 @@ function DebuggerPane({
           <select
             value={newVariableMode}
             onChange={(e) =>
-              setNewVariableMode(e.target.value as "Read" | "Write" | "ReadWrite")
+              setNewVariableMode(
+                e.target.value as "Read" | "Write" | "ReadWrite",
+              )
             }
             style={{
               ...monoFontStyle,
@@ -1755,11 +2115,15 @@ function DebuggerPane({
                 }}
               >
                 <div className="flex items-center gap-2">
-                  <span style={{ ...monoFontStyle, color: "var(--text-accent)" }}>
+                  <span
+                    style={{ ...monoFontStyle, color: "var(--text-accent)" }}
+                  >
                     {breakpointLabel(bp)}
                   </span>
                   {summarizeBreakpointOptions(bp) && (
-                    <span style={{ color: "var(--text-muted)", fontSize: "0.82em" }}>
+                    <span
+                      style={{ color: "var(--text-muted)", fontSize: "0.82em" }}
+                    >
                       {summarizeBreakpointOptions(bp)}
                     </span>
                   )}
@@ -1795,7 +2159,9 @@ function DebuggerPane({
       </div>
 
       <div className="mt-3">
-        <div style={{ color: "var(--text-secondary)" }}>Command Breakpoints</div>
+        <div style={{ color: "var(--text-secondary)" }}>
+          Command Breakpoints
+        </div>
         <form
           className="mt-2 flex items-center gap-2"
           onSubmit={(e) => {
@@ -1847,11 +2213,15 @@ function DebuggerPane({
                 }}
               >
                 <div className="flex items-center gap-2">
-                  <span style={{ ...monoFontStyle, color: "var(--text-accent)" }}>
+                  <span
+                    style={{ ...monoFontStyle, color: "var(--text-accent)" }}
+                  >
                     {breakpointLabel(bp)}
                   </span>
                   {summarizeBreakpointOptions(bp) && (
-                    <span style={{ color: "var(--text-muted)", fontSize: "0.82em" }}>
+                    <span
+                      style={{ color: "var(--text-muted)", fontSize: "0.82em" }}
+                    >
                       {summarizeBreakpointOptions(bp)}
                     </span>
                   )}
@@ -1890,7 +2260,8 @@ function DebuggerPane({
         <div style={{ color: "var(--text-secondary)" }}>Breakpoint Editor</div>
         {!editingBreakpoint ? (
           <div className="mt-1" style={{ color: "var(--text-muted)" }}>
-            Select Edit on any breakpoint to modify condition, hit count, and action.
+            Select Edit on any breakpoint to modify condition, hit count, and
+            action.
           </div>
         ) : (
           <div
@@ -1904,7 +2275,10 @@ function DebuggerPane({
               Editing {breakpointLabel(editingBreakpoint)}
             </div>
             {editingBreakpoint.line !== undefined && (
-              <div className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+              <div
+                className="mt-2 text-xs"
+                style={{ color: "var(--text-secondary)" }}
+              >
                 Line breakpoint at line {editingBreakpoint.line}
               </div>
             )}
@@ -2022,7 +2396,10 @@ function DebuggerPane({
             </div>
 
             {editError && (
-              <div className="mt-2 text-xs" style={{ color: "var(--stream-stderr)" }}>
+              <div
+                className="mt-2 text-xs"
+                style={{ color: "var(--stream-stderr)" }}
+              >
                 {editError}
               </div>
             )}
@@ -2218,12 +2595,28 @@ function ProblemsPane({
     if (severity === "warning") {
       return (
         <svg
-          width="14" height="14" viewBox="0 0 16 16"
-          fill="none" xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
           style={{ flexShrink: 0, marginTop: "1px" }}
         >
-          <path d="M8 1L15 14H1L8 1Z" stroke={color} strokeWidth="1.5" fill="none" />
-          <line x1="8" y1="6" x2="8" y2="10" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+          <path
+            d="M8 1L15 14H1L8 1Z"
+            stroke={color}
+            strokeWidth="1.5"
+            fill="none"
+          />
+          <line
+            x1="8"
+            y1="6"
+            x2="8"
+            y2="10"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
           <circle cx="8" cy="12" r="0.75" fill={color} />
         </svg>
       );
@@ -2231,12 +2624,23 @@ function ProblemsPane({
     if (severity === "info") {
       return (
         <svg
-          width="14" height="14" viewBox="0 0 16 16"
-          fill="none" xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
           style={{ flexShrink: 0, marginTop: "1px" }}
         >
           <circle cx="8" cy="8" r="6.5" stroke={color} strokeWidth="1.5" />
-          <line x1="8" y1="7" x2="8" y2="11" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+          <line
+            x1="8"
+            y1="7"
+            x2="8"
+            y2="11"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
           <circle cx="8" cy="5" r="0.75" fill={color} />
         </svg>
       );
@@ -2244,13 +2648,32 @@ function ProblemsPane({
     // default: error
     return (
       <svg
-        width="14" height="14" viewBox="0 0 16 16"
-        fill="none" xmlns="http://www.w3.org/2000/svg"
+        width="14"
+        height="14"
+        viewBox="0 0 16 16"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
         style={{ flexShrink: 0, marginTop: "1px" }}
       >
         <circle cx="8" cy="8" r="6.5" stroke={color} strokeWidth="1.5" />
-        <line x1="5.5" y1="5.5" x2="10.5" y2="10.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-        <line x1="10.5" y1="5.5" x2="5.5" y2="10.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+        <line
+          x1="5.5"
+          y1="5.5"
+          x2="10.5"
+          y2="10.5"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+        <line
+          x1="10.5"
+          y1="5.5"
+          x2="5.5"
+          y2="10.5"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
       </svg>
     );
   };
@@ -2307,7 +2730,12 @@ function ProblemsPane({
             {/* Message + meta */}
             <div className="flex-1 min-w-0">
               {/* Message — strip any residual ANSI escape sequences */}
-              <div style={{ color: "var(--text-primary)", wordBreak: "break-word" }}>
+              <div
+                style={{
+                  color: "var(--text-primary)",
+                  wordBreak: "break-word",
+                }}
+              >
                 <AnsiText text={p.message} color="var(--text-primary)" />
               </div>
 
@@ -2334,4 +2762,3 @@ function ProblemsPane({
     </div>
   );
 }
-

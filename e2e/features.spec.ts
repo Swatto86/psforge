@@ -36,6 +36,50 @@ async function typeIntoEditor(content: string): Promise<void> {
   }
 }
 
+async function clickRunAndShowOutput(): Promise<void> {
+  const runBtn = await $('[data-testid="toolbar-run"]');
+  await runBtn.click();
+  await browser.pause(200);
+  const outputTab = await $('[data-testid="output-tab-output"]');
+  await outputTab.click();
+}
+
+async function waitForOutputText(
+  substring: string,
+  timeoutMs = 20_000,
+): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const scroll = await $('[data-testid="output-scroll"]');
+      const text = await scroll.getText();
+      return text.includes(substring);
+    },
+    {
+      timeout: timeoutMs,
+      interval: POLL_MS,
+      timeoutMsg: `Output never contained ${substring}`,
+    },
+  );
+}
+
+async function waitForProblemsText(
+  substring: string,
+  timeoutMs = 20_000,
+): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const pane = await $('[data-testid="output-pane"]');
+      const text = await pane.getText();
+      return text.includes(substring);
+    },
+    {
+      timeout: timeoutMs,
+      interval: POLL_MS,
+      timeoutMsg: `Problems pane never contained ${substring}`,
+    },
+  );
+}
+
 /** Create a new code tab and return its id prefix. */
 async function openNewCodeTab(): Promise<void> {
   const btn = await $('[data-testid="toolbar-new"]');
@@ -515,7 +559,10 @@ describe("Feature: Save All", () => {
 
       // Wait for the opened file tab to become active (saved path => Sign enabled).
       await browser.waitUntil(
-        async () => (await (await $('[data-testid="toolbar-sign"]')).getAttribute("disabled")) === null,
+        async () =>
+          (await (
+            await $('[data-testid="toolbar-sign"]')
+          ).getAttribute("disabled")) === null,
         {
           timeout: TAB_TIMEOUT,
           interval: POLL_MS,
@@ -584,7 +631,9 @@ describe("Feature: Sidebar Outline", () => {
       },
     );
 
-    const sidebarText = await (await $('[data-testid="sidebar-root"]')).getText();
+    const sidebarText = await (
+      await $('[data-testid="sidebar-root"]')
+    ).getText();
     expect(sidebarText).toContain("Get-Widget");
     expect(sidebarText).toContain("DemoType");
   });
@@ -620,6 +669,175 @@ describe("Feature: Sidebar Outline", () => {
   });
 });
 
+// ── 9. Bottom Pane Text Mode + Clear Isolation ─────────────────────────────
+describe("Feature: Bottom Pane Text Mode", () => {
+  it("only output and problems expose text mode, and output text mode supports undo", async () => {
+    const helpTab = await $('[data-testid="output-tab-help"]');
+    await helpTab.click();
+    await browser.pause(200);
+
+    const helpToggle = await $('[data-testid="bottom-pane-text-mode-toggle"]');
+    expect(await helpToggle.isExisting()).toBe(false);
+
+    const outputMarker = `TEXT_MODE_OUTPUT_${Date.now()}`;
+
+    await openNewCodeTab();
+    await browser.waitUntil(
+      async () => (await $('[data-testid="editor-container"]')).isDisplayed(),
+      {
+        timeout: TAB_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Editor did not appear for output text-mode test",
+      },
+    );
+
+    await typeIntoEditor(`Write-Host \"${outputMarker}\"`);
+    await clickRunAndShowOutput();
+    await waitForOutputText(outputMarker);
+
+    const toggle = await $('[data-testid="bottom-pane-text-mode-toggle"]');
+    await toggle.click();
+
+    const editor = await $('[data-testid="bottom-pane-text-editor-output"]');
+    await expect(editor).toBeDisplayed();
+
+    const original = await editor.getValue();
+    await editor.click();
+    await browser.keys(["End"]);
+    await browser.keys("X");
+
+    await browser.waitUntil(
+      async () => (await editor.getValue()) !== original,
+      {
+        timeout: DIALOG_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Output text mode did not accept text edits",
+      },
+    );
+
+    const edited = await editor.getValue();
+    const clearBtn = await $('[data-testid="bottom-pane-text-clear"]');
+    await clearBtn.click();
+
+    await browser.waitUntil(async () => (await editor.getValue()) === "", {
+      timeout: DIALOG_TIMEOUT,
+      interval: POLL_MS,
+      timeoutMsg: "Output text mode clear did not empty the editor",
+    });
+
+    const undoBtn = await $('[data-testid="bottom-pane-text-undo"]');
+    await undoBtn.click();
+
+    await browser.waitUntil(async () => (await editor.getValue()) === edited, {
+      timeout: DIALOG_TIMEOUT,
+      interval: POLL_MS,
+      timeoutMsg: "Output text mode undo did not restore the previous text",
+    });
+
+    await toggle.click();
+    await browser.pause(200);
+
+    const problemsTab = await $('[data-testid="output-tab-problems"]');
+    await problemsTab.click();
+    await browser.pause(200);
+    await expect(
+      await $('[data-testid="bottom-pane-text-mode-toggle"]'),
+    ).toBeDisplayed();
+  });
+});
+
+describe("Feature: Bottom Pane Clear Isolation", () => {
+  it("clearing Problems leaves Output intact", async () => {
+    const outputMarker = `PANE_OUTPUT_${Date.now()}`;
+    const errorMarker = `PANE_ERROR_${Date.now()}`;
+
+    await openNewCodeTab();
+    await browser.waitUntil(
+      async () => (await $('[data-testid="editor-container"]')).isDisplayed(),
+      {
+        timeout: TAB_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Editor did not appear for clear-isolation test",
+      },
+    );
+
+    await typeIntoEditor(
+      `Write-Host \"${outputMarker}\"\nWrite-Error \"${errorMarker}\"`,
+    );
+    await clickRunAndShowOutput();
+    await waitForOutputText(outputMarker);
+
+    const problemsTab = await $('[data-testid="output-tab-problems"]');
+    await problemsTab.click();
+    await waitForProblemsText(errorMarker);
+
+    const clearProblems = await $('[data-testid="problems-clear-button"]');
+    await clearProblems.click();
+    await browser.waitUntil(
+      async () => {
+        const pane = await $('[data-testid="output-pane"]');
+        const text = await pane.getText();
+        return !text.includes(errorMarker);
+      },
+      {
+        timeout: DIALOG_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Problems clear did not remove the problem entry",
+      },
+    );
+
+    await expect(await $('[data-testid="output-tab-output"]')).toBeDisplayed();
+    const outputTab = await $('[data-testid="output-tab-output"]');
+    await outputTab.click();
+    await waitForOutputText(outputMarker);
+  });
+
+  it("clearing Output leaves Problems intact", async () => {
+    const outputMarker = `PANE_OUTPUT_KEEP_${Date.now()}`;
+    const errorMarker = `PANE_ERROR_KEEP_${Date.now()}`;
+
+    await openNewCodeTab();
+    await browser.waitUntil(
+      async () => (await $('[data-testid="editor-container"]')).isDisplayed(),
+      {
+        timeout: TAB_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Editor did not appear for output-clear isolation test",
+      },
+    );
+
+    await typeIntoEditor(
+      `Write-Host \"${outputMarker}\"\nWrite-Error \"${errorMarker}\"`,
+    );
+    await clickRunAndShowOutput();
+    await waitForOutputText(outputMarker);
+
+    const problemsTab = await $('[data-testid="output-tab-problems"]');
+    await problemsTab.click();
+    await waitForProblemsText(errorMarker);
+
+    const outputTab = await $('[data-testid="output-tab-output"]');
+    await outputTab.click();
+    const clearOutput = await $('[data-testid="output-clear-button"]');
+    await clearOutput.click();
+    await browser.waitUntil(
+      async () => {
+        const scroll = await $('[data-testid="output-scroll"]');
+        const text = await scroll.getText();
+        return !text.includes(outputMarker);
+      },
+      {
+        timeout: DIALOG_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg: "Output clear did not remove the output entry",
+      },
+    );
+
+    await problemsTab.click();
+    await waitForProblemsText(errorMarker);
+  });
+});
+
 // ── Keyboard Shortcut Panel: new entries ──────────────────────────────────────
 describe("Feature: Keyboard Shortcut Panel - new entries", () => {
   beforeEach(async () => {
@@ -631,26 +849,20 @@ describe("Feature: Keyboard Shortcut Panel - new entries", () => {
     // Open the shortcut panel via F1.
     await browser.keys("F1");
     const openedByFirstPress = await browser
-      .waitUntil(
-        async () => isPanelVisible(),
-        {
-          timeout: 1500,
-          interval: POLL_MS,
-        },
-      )
+      .waitUntil(async () => isPanelVisible(), {
+        timeout: 1500,
+        interval: POLL_MS,
+      })
       .catch(() => false);
 
     // WebView2 can occasionally drop the first F1 key event.
     if (!openedByFirstPress) {
       await browser.keys("F1");
       const openedBySecondPress = await browser
-        .waitUntil(
-          async () => isPanelVisible(),
-          {
-            timeout: 1500,
-            interval: POLL_MS,
-          },
-        )
+        .waitUntil(async () => isPanelVisible(), {
+          timeout: 1500,
+          interval: POLL_MS,
+        })
         .catch(() => false);
 
       if (openedBySecondPress) return;
@@ -659,15 +871,12 @@ describe("Feature: Keyboard Shortcut Panel - new entries", () => {
       await browser.execute(() => {
         (window as any).__psforge_dispatch?.({ type: "TOGGLE_SHORTCUT_PANEL" });
       });
-      await browser.waitUntil(
-        async () => isPanelVisible(),
-        {
-          timeout: DIALOG_TIMEOUT,
-          interval: POLL_MS,
-          timeoutMsg:
-            "Keyboard shortcut panel did not open via F1 or dispatch fallback",
-        },
-      );
+      await browser.waitUntil(async () => isPanelVisible(), {
+        timeout: DIALOG_TIMEOUT,
+        interval: POLL_MS,
+        timeoutMsg:
+          "Keyboard shortcut panel did not open via F1 or dispatch fallback",
+      });
     }
   });
 
