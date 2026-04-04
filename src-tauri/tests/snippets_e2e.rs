@@ -1,9 +1,9 @@
-/// E2E integration tests for snippet management (Rule 3).
-///
-/// Tests exercise `get_snippets_from`, `save_user_snippets_to`, and the
-/// builtin-snippet catalogue. No changes are made to real AppData directories.
+// E2E integration tests for snippet management (Rule 3).
+//
+// Tests exercise `get_snippets_from`, `save_user_snippets_to`, and the
+// builtin-snippet catalogue. No changes are made to real AppData directories.
 
-/// Conservative blocking-operation deadline (Rule 3).
+// Conservative blocking-operation deadline (Rule 3).
 const TEST_TIMEOUT_SECS: u64 = 30;
 
 use psforge_lib::commands::{self, Snippet};

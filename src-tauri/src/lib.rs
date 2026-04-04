@@ -7,7 +7,7 @@ pub mod settings;
 pub mod terminal;
 pub mod utils;
 
-use log::info;
+use log::{info, warn};
 use tauri::Manager;
 
 /// Entry point for the Tauri application.
@@ -17,6 +17,16 @@ pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
+
+    match utils::cleanup_psforge_temp_files() {
+        Ok(removed) if removed > 0 => {
+            info!("Removed {} stale PSForge temp file(s)", removed);
+        }
+        Ok(_) => {}
+        Err(err) => {
+            warn!("Failed to clean up stale PSForge temp files: {}", err);
+        }
+    }
 
     info!("PSForge starting up");
 

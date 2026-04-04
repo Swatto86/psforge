@@ -1,26 +1,26 @@
-/// E2E integration tests for PowerShell IntelliSense completions (Rule 3).
-///
-/// These tests drive `commands::get_completions` directly — no Tauri app or browser
-/// required.  They exercise the full backend path: Rust → PowerShell subprocess →
-/// TabExpansion2 → JSON parse → Vec<PsCompletion>.
-///
-/// Coverage:
-///   1. Cmdlet completions are returned for a partial cmdlet name.
-///   2. Parameter completions are returned when cursor follows `<cmdlet> -`.
-///   3. Parameter `completion_text` includes the leading `-`, but `list_item_text` does not.
-///      (This confirms the Monaco filterText bug described in the issue: Monaco's filter
-///       compared the label "Path" against trigger text "-" and discarded the suggestion.
-///       The fix adds `filterText: c.completionText` so Monaco uses "-Path" for matching.)
-///   4. Partial parameter entry still surfaces matching suggestions.
-///   5. Graceful degradation: garbage input returns Ok([]) not a panic or Err.
-///   6. Empty script returns Ok([]) not an error.
-///   7. Variable completions are returned for `$` trigger.
-///   8. Named-parameter value completions (e.g. `-ErrorAction `) surface enum values.
-///   9. Completions succeed for a multi-line script (cursor inside the script).
-///  10. Cursor at offset 0 in empty script returns Ok([]).
+// E2E integration tests for PowerShell IntelliSense completions (Rule 3).
+//
+// These tests drive `commands::get_completions` directly, without a Tauri app
+// or browser. They exercise the full backend path: Rust -> PowerShell
+// subprocess -> TabExpansion2 -> JSON parse -> Vec<PsCompletion>.
+//
+// Coverage:
+// 1. Cmdlet completions are returned for a partial cmdlet name.
+// 2. Parameter completions are returned when cursor follows `<cmdlet> -`.
+// 3. Parameter `completion_text` includes the leading `-`, but `list_item_text` does not.
+//    This confirms the Monaco filterText bug described in the issue: Monaco's filter
+//    compared the label "Path" against trigger text "-" and discarded the suggestion.
+//    The fix adds `filterText: c.completionText` so Monaco uses "-Path" for matching.
+// 4. Partial parameter entry still surfaces matching suggestions.
+// 5. Graceful degradation: garbage input returns Ok([]) not a panic or Err.
+// 6. Empty script returns Ok([]) not an error.
+// 7. Variable completions are returned for `$` trigger.
+// 8. Named-parameter value completions (e.g. `-ErrorAction `) surface enum values.
+// 9. Completions succeed for a multi-line script (cursor inside the script).
+// 10. Cursor at offset 0 in empty script returns Ok([]).
 
-/// Conservative async deadline — TabExpansion2 can be slow on cold Windows PowerShell 5.1.
-/// 60 s is 5× the worst-case local time on a clean machine.  Rule 3 requires this constant.
+// Conservative async deadline: TabExpansion2 can be slow on cold Windows PowerShell 5.1.
+// 60 s is 5x the worst-case local time on a clean machine. Rule 3 requires this constant.
 const TEST_TIMEOUT_SECS: u64 = 60;
 
 use psforge_lib::commands::{self, PsCompletion};

@@ -1,20 +1,20 @@
-/// E2E failure-mode and regression tests for PSForge backend (Rule 3).
-///
-/// These tests explicitly exercise error paths, boundary conditions, and
-/// corruption scenarios. Every scenario that could break user data, leak
-/// sensitive information, or silently fail must be covered here.
-///
-/// Coverage map:
-///   - Corrupt settings JSON  -> defaults (Rule 11)
-///   - Missing PowerShell     -> empty version list, not panic
-///   - File size limit        -> FILE_TOO_LARGE before any read
-///   - Path length limit      -> PATH_TOO_LONG before any I/O
-///   - Corrupt user snippets  -> builtins still returned
-///   - Empty file read        -> treats as valid UTF-8, returns ""
-///   - BatchResult error cap  -> never exceeds MAX_BATCH_ERRORS
+// E2E failure-mode and regression tests for PSForge backend (Rule 3).
+//
+// These tests explicitly exercise error paths, boundary conditions, and
+// corruption scenarios. Every scenario that could break user data, leak
+// sensitive information, or silently fail must be covered here.
+//
+// Coverage map:
+// - Corrupt settings JSON  -> defaults (Rule 11)
+// - Missing PowerShell     -> empty version list, not panic
+// - File size limit        -> FILE_TOO_LARGE before any read
+// - Path length limit      -> PATH_TOO_LONG before any I/O
+// - Corrupt user snippets  -> builtins still returned
+// - Empty file read        -> treats as valid UTF-8, returns ""
+// - BatchResult error cap  -> never exceeds MAX_BATCH_ERRORS
 
-/// Conservative deadline for operations that may involve process spawning or
-/// registry calls on a cold CI runner (Rule 3: at least 5x local worst case).
+// Conservative deadline for operations that may involve process spawning or
+// registry calls on a cold CI runner (Rule 3: at least 5x local worst case).
 const TEST_TIMEOUT_SECS: u64 = 60;
 
 use psforge_lib::commands;

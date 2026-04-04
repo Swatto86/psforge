@@ -6,16 +6,16 @@ PSForge is a modern, fast PowerShell ISE replacement for Windows, built with Tau
 
 ## Domain Concepts
 
-| Concept | Description |
-|---------|-------------|
-| **Editor Tab** | An open file or untitled script buffer with dirty-tracking |
-| **PowerShell Process** | A managed child process for script execution with stdin/stdout/stderr streaming |
-| **Output Pane** | Tabbed area showing execution output, variables, and problems |
-| **Module Browser** | Sidebar listing installed PowerShell modules and their exported commands |
-| **Snippet** | Reusable code template (built-in or user-defined) insertable via Command Palette |
-| **File Association** | Per-user HKCU registry mapping of PS extensions to PSForge (no admin required) |
-| **Theme** | CSS variable-driven visual theme (dark, light, ise-classic) synced with Monaco |
-| **Param Prompt** | Pre-run modal that collects values for mandatory `param()` parameters before execution |
+| Concept                | Description                                                                            |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| **Editor Tab**         | An open file or untitled script buffer with dirty-tracking                             |
+| **PowerShell Process** | A managed child process for script execution with stdin/stdout/stderr streaming        |
+| **Output Pane**        | Tabbed area showing execution output, variables, and problems                          |
+| **Module Browser**     | Sidebar listing installed PowerShell modules and their exported commands               |
+| **Snippet**            | Reusable code template (built-in or user-defined) insertable via Command Palette       |
+| **File Association**   | Per-user HKCU registry mapping of PS extensions to PSForge (no admin required)         |
+| **Theme**              | CSS variable-driven visual theme (dark, light, ise-classic) synced with Monaco         |
+| **Param Prompt**       | Pre-run modal that collects values for mandatory `param()` parameters before execution |
 
 ## Architecture
 
@@ -47,11 +47,11 @@ PSForge is a modern, fast PowerShell ISE replacement for Windows, built with Tau
 - **No Redux/Zustand**: State managed via React Context + useReducer for simplicity
 - **CSS Variables for theming**: Themes defined as CSS custom properties, not Monaco-only
 - **Global ProcessManager**: Single `OnceLock<ProcessManager>` shared across Tauri commands
-- **Event-based output streaming**: Rust emits `ps-output` and `ps-complete` events; frontend listens
+- **Event-based execution streaming**: Rust emits `ps-output`, `ps-variables`, and `ps-complete` events; frontend listens
 
 ## Repository Structure
 
-```
+````
 PSForge/
   index.html              # HTML shell with React mount point
   package.json            # Node dependencies and scripts
@@ -129,7 +129,7 @@ PSForge/
 | `get_ps_versions` | commands | Discover installed PowerShell versions |
 | `get_installed_modules` | commands | List PS modules via Get-Module |
 | `get_module_commands` | commands | List commands in a specific module |
-| `get_variables_after_run` | commands | Retrieve variables from last execution |
+| `get_variables_after_run` | commands | Retrieve the cached variable snapshot captured from the last completed execution without re-running the script |
 | `read_file_content` | commands | Read file with encoding detection |
 | `save_file_content` | commands | Write file with specified encoding |
 | `load_settings` | commands | Load settings from %APPDATA% |
@@ -161,6 +161,7 @@ PSForge/
 | Event | Payload | Description |
 |-------|---------|-------------|
 | `ps-output` | `OutputLine` | Stdout/stderr line from running script |
+| `ps-variables` | `VariableInfo[]` | Variable snapshot captured from the completed run/debug session |
 | `ps-complete` | `{ exit_code }` | Script execution completed |
 | `terminal-output` | `string` | A stdout line from the interactive terminal session |
 | `terminal-stderr` | `string` | A stderr line from the interactive terminal session (displayed in red) |
@@ -200,7 +201,7 @@ npx tauri build        # Produces .exe, .msi, .nsis
 
 # Development mode with hot reload
 npx tauri dev
-```
+````
 
 ### Rust Quality Gates
 
@@ -213,14 +214,14 @@ cargo test             # 86 tests (23 unit + 63 integration)
 
 ### Integration Tests
 
-| Test File | Coverage |
-|-----------|----------|
-| `tests/settings_e2e.rs` | Settings load/save/corrupt JSON/roundtrip (8 tests) |
-| `tests/file_ops_e2e.rs` | File read/save/encoding detection/validation guards (12 tests) |
-| `tests/snippets_e2e.rs` | Builtin + user snippet management/corruption recovery (9 tests) |
-| `tests/batch_associations_e2e.rs` | Registry association register/unregister/batch (6 tests) |
-| `tests/failure_modes_e2e.rs` | Corrupt settings, empty paths, BatchResult caps, edge cases (13 tests) |
-| `tests/execution_policy_e2e.rs` | Execution policy validation: invalid/empty/injection/case-insensitive (6 tests) |
+| Test File                          | Coverage                                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------------- |
+| `tests/settings_e2e.rs`            | Settings load/save/corrupt JSON/roundtrip (8 tests)                                   |
+| `tests/file_ops_e2e.rs`            | File read/save/encoding detection/validation guards (12 tests)                        |
+| `tests/snippets_e2e.rs`            | Builtin + user snippet management/corruption recovery (9 tests)                       |
+| `tests/batch_associations_e2e.rs`  | Registry association register/unregister/batch (6 tests)                              |
+| `tests/failure_modes_e2e.rs`       | Corrupt settings, empty paths, BatchResult caps, edge cases (13 tests)                |
+| `tests/execution_policy_e2e.rs`    | Execution policy validation: invalid/empty/injection/case-insensitive (6 tests)       |
 | `tests/encoding_edge_cases_e2e.rs` | Encoding boundaries: zero-byte, BOM-only, UTF-16LE/BE, large file, fallback (9 tests) |
 
 ### Frontend WebDriver E2E Tests
@@ -240,21 +241,23 @@ npm run test:e2e:syntax-highlighting # Syntax highlighting in editor + terminal 
 npm run test:e2e:terminal            # Integrated terminal (19 tests)
 npm run test:e2e:variables           # Variables tab (23 tests)
 npm run test:e2e:features            # New ISE-parity features: format, find/replace, drag-drop, profile, signing, print
+npm run test:e2e:session-restore     # Session restore: disk reload + dirty-buffer recovery
 ```
 
-| Spec | Tests | Coverage |
-|------|-------|----------|
-| `e2e/app.spec.ts` | 22 | Layout, sidebar, settings panel, theme switch, keyboard shortcuts |
-| `e2e/about.spec.ts` | 16 | About dialog open/close/content/Escape/backdrop |
-| `e2e/editor.spec.ts` | 9 | Monaco editor: open file, edit, save, tab management |
-| `e2e/script-run.spec.ts` | 9 | F5/F8 run (including current-line F8), stdin, stop, error output |
-| `e2e/intellisense.spec.ts` | 14 | PS completion triggers, parameter/cmdlet/variable/multiline completions |
-| `e2e/settings.spec.ts` | 32 | Settings modal sections, select widths, toggles, theme switch |
-| `e2e/syntax-highlighting.spec.ts` | 33 | Monaco + terminal ANSI highlighting for keywords/cmdlets/params/types |
-| `e2e/terminal.spec.ts` | 19 | Tab nav, session startup, keyboard input, commands, history, CWD bar |
-| `e2e/variables.spec.ts` | 23 | Variable population, filter, type/value/name columns, built-ins |
-| `e2e/params.spec.ts` | 7 | Mandatory param dialog appear/cancel/run, multi-param, types, default bypass, disabled Run btn |
-| `e2e/features.spec.ts` | ~20 | Format toolbar button states, Find/Replace shortcut, drag-drop event handlers, profile button, signing dialog open/close/cert-list, print button states |
+| Spec                              | Tests | Coverage                                                                                                                                                |
+| --------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e2e/app.spec.ts`                 | 22    | Layout, sidebar, settings panel, theme switch, keyboard shortcuts                                                                                       |
+| `e2e/about.spec.ts`               | 16    | About dialog open/close/content/Escape/backdrop                                                                                                         |
+| `e2e/editor.spec.ts`              | 9     | Monaco editor: open file, edit, save, tab management                                                                                                    |
+| `e2e/script-run.spec.ts`          | 9     | F5/F8 run (including current-line F8), stdin, stop, error output                                                                                        |
+| `e2e/intellisense.spec.ts`        | 14    | PS completion triggers, parameter/cmdlet/variable/multiline completions                                                                                 |
+| `e2e/settings.spec.ts`            | 32    | Settings modal sections, select widths, toggles, theme switch                                                                                           |
+| `e2e/syntax-highlighting.spec.ts` | 33    | Monaco + terminal ANSI highlighting for keywords/cmdlets/params/types                                                                                   |
+| `e2e/terminal.spec.ts`            | 19    | Tab nav, session startup, keyboard input, commands, history, CWD bar                                                                                    |
+| `e2e/variables.spec.ts`           | 23    | Variable population, filter, type/value/name columns, built-ins                                                                                         |
+| `e2e/session-restore.spec.ts`     | 2     | Clean file-backed tab restore from disk and dirty-buffer recovery when the backing file is gone                                                         |
+| `e2e/params.spec.ts`              | 7     | Mandatory param dialog appear/cancel/run, multi-param, types, default bypass, disabled Run btn                                                          |
+| `e2e/features.spec.ts`            | ~20   | Format toolbar button states, Find/Replace shortcut, drag-drop event handlers, profile button, signing dialog open/close/cert-list, print button states |
 
 **Test infrastructure:** `wdio.conf.cjs` — starts Vite dev server → launches debug binary with `--enable-remote-debugging=9222` → starts msedgedriver matching WebView2 runtime version → connects WebdriverIO. Teardown kills all three in reverse order.
 
@@ -267,30 +270,33 @@ npx prettier --write "src/**/*.{ts,tsx,css}"  # Format
 
 ### Build Outputs
 
-| Artifact | Path |
-|----------|------|
-| Executable | `src-tauri/target/release/psforge.exe` |
-| MSI Installer | `src-tauri/target/release/bundle/msi/PSForge_X.Y.Z_x64_en-US.msi` |
+| Artifact       | Path                                                               |
+| -------------- | ------------------------------------------------------------------ |
+| Executable     | `src-tauri/target/release/psforge.exe`                             |
+| MSI Installer  | `src-tauri/target/release/bundle/msi/PSForge_X.Y.Z_x64_en-US.msi`  |
 | NSIS Installer | `src-tauri/target/release/bundle/nsis/PSForge_X.Y.Z_x64-setup.exe` |
 
 ## Configuration
 
 ### Settings File
+
 - **Location**: `%APPDATA%/PSForge/settings.json`
 - **Format**: JSON with camelCase keys
 - **Fields**:
-  - *Core*: `defaultPsVersion`, `theme`, `fontSize`, `fontFamily`, `wordWrap`, `showTimestamps`, `splitPosition`, `recentFiles`, `fileAssociations`
-  - *Editor*: `tabSize`, `insertSpaces`, `showMinimap`, `lineNumbers`, `renderWhitespace`, `showIndentGuides`, `stickyScroll`, `enablePssa`, `enableIntelliSense`
-  - *Execution*: `autoSaveOnRun`, `clearOutputOnRun`, `executionPolicy`, `workingDirMode` (`"file"` | `"custom"`), `customWorkingDir`
-  - *Output*: `terminalLoadProfile`, `outputFontSize`, `outputFontFamily`, `outputWordWrap`, `maxRecentFiles`
+  - _Core_: `defaultPsVersion`, `theme`, `fontSize`, `fontFamily`, `wordWrap`, `showTimestamps`, `splitPosition`, `recentFiles`, `fileAssociations`
+  - _Editor_: `tabSize`, `insertSpaces`, `showMinimap`, `lineNumbers`, `renderWhitespace`, `showIndentGuides`, `stickyScroll`, `enablePssa`, `enableIntelliSense`
+  - _Execution_: `autoSaveOnRun`, `clearOutputOnRun`, `executionPolicy`, `workingDirMode` (`"file"` | `"custom"`), `customWorkingDir`
+  - _Output_: `terminalLoadProfile`, `outputFontSize`, `outputFontFamily`, `outputWordWrap`, `maxRecentFiles`
 - **Defaults**: Auto PS version, dark theme, 14px, Cascadia Code, no wrap, no timestamps, 65% split, tab size 4, spaces, PSSA on, IntelliSense on, clear output on run, max 20 recent files
 - **Font note**: `fontSize`/`fontFamily` apply to the entire UI via `--ui-font-size` / `--ui-font-family` CSS custom properties; `outputFontSize`/`outputFontFamily` apply only to the Output pane
 
 ### User Snippets
+
 - **Location**: `%APPDATA%/PSForge/snippets.json`
 - **Format**: JSON array of `{ prefix, label, body, description, category }` objects
 
 ### Tauri Permissions
+
 - `core:default` - Basic Tauri functionality
 - `opener:default` - URL/file opening
 - `dialog:default` - Native file dialogs
@@ -301,81 +307,81 @@ npx prettier --write "src/**/*.{ts,tsx,css}"  # Format
 
 ### Rust (src-tauri/Cargo.toml)
 
-| Crate | Version | Purpose |
-|-------|---------|---------|
-| tauri | 2 | Application framework |
-| tauri-plugin-dialog | 2 | Native file dialogs |
-| tauri-plugin-fs | 2 | Filesystem access |
-| tauri-plugin-opener | 2 | URL/file opening |
-| serde / serde_json | 1 | Serialization |
-| tokio | 1 (full) | Async runtime for process management |
-| winreg | 0.55 | Windows registry for file associations |
-| log / env_logger | 0.4 / 0.11 | Structured logging |
-| dirs | 6 | Platform directory resolution |
-| uuid | 1 (v4) | Unique ID generation |
-| encoding_rs | 0.8 | Character encoding detection |
+| Crate               | Version    | Purpose                                |
+| ------------------- | ---------- | -------------------------------------- |
+| tauri               | 2          | Application framework                  |
+| tauri-plugin-dialog | 2          | Native file dialogs                    |
+| tauri-plugin-fs     | 2          | Filesystem access                      |
+| tauri-plugin-opener | 2          | URL/file opening                       |
+| serde / serde_json  | 1          | Serialization                          |
+| tokio               | 1 (full)   | Async runtime for process management   |
+| winreg              | 0.55       | Windows registry for file associations |
+| log / env_logger    | 0.4 / 0.11 | Structured logging                     |
+| dirs                | 6          | Platform directory resolution          |
+| uuid                | 1 (v4)     | Unique ID generation                   |
+| encoding_rs         | 0.8        | Character encoding detection           |
 
 **Dev Dependencies:**
 
-| Crate | Version | Purpose |
-|-------|---------|--------|
-| tempfile | 3 | OS-managed temp directories for integration tests (never touches real AppData) |
+| Crate    | Version | Purpose                                                                        |
+| -------- | ------- | ------------------------------------------------------------------------------ |
+| tempfile | 3       | OS-managed temp directories for integration tests (never touches real AppData) |
 
 ### Frontend (package.json)
 
-| Package | Purpose |
-|---------|---------|
-| react / react-dom | UI framework |
-| @monaco-editor/react | Code editor component |
-| @tanstack/react-virtual | Output pane virtual list — only renders visible rows (performance) |
-| @tauri-apps/api | Tauri IPC bridge |
-| @tauri-apps/plugin-dialog | Dialog API |
-| @tauri-apps/plugin-fs | FS API |
-| xterm + xterm-addon-fit | Integrated terminal renderer |
-| @tailwindcss/vite | Tailwind CSS v4 |
-| @vitejs/plugin-react | Vite React support |
-| typescript ~5.6 | Type system |
+| Package                   | Purpose                                                            |
+| ------------------------- | ------------------------------------------------------------------ |
+| react / react-dom         | UI framework                                                       |
+| @monaco-editor/react      | Code editor component                                              |
+| @tanstack/react-virtual   | Output pane virtual list — only renders visible rows (performance) |
+| @tauri-apps/api           | Tauri IPC bridge                                                   |
+| @tauri-apps/plugin-dialog | Dialog API                                                         |
+| @tauri-apps/plugin-fs     | FS API                                                             |
+| xterm + xterm-addon-fit   | Integrated terminal renderer                                       |
+| @tailwindcss/vite         | Tailwind CSS v4                                                    |
+| @vitejs/plugin-react      | Vite React support                                                 |
+| typescript ~5.6           | Type system                                                        |
 
 ## Types Reference
 
 ### Rust (errors.rs)
 
-| Type | Description |
-|------|-------------|
-| `AppError { code, message }` | All Tauri command errors; serialized for IPC |
-| `BatchError { item, code, message }` | Per-item error in a batch operation |
-| `BatchResult<T> { items, errors }` | Batch op result: successes + capped error list |
-| `MAX_BATCH_ERRORS: usize` | Cap on per-batch error accumulation (100) |
+| Type                                 | Description                                    |
+| ------------------------------------ | ---------------------------------------------- |
+| `AppError { code, message }`         | All Tauri command errors; serialized for IPC   |
+| `BatchError { item, code, message }` | Per-item error in a batch operation            |
+| `BatchResult<T> { items, errors }`   | Batch op result: successes + capped error list |
+| `MAX_BATCH_ERRORS: usize`            | Cap on per-batch error accumulation (100)      |
 
 ### Testability Helpers
 
-| Function | Description |
-|----------|-------------|
-| `settings::load_from(&path)` | Load settings from explicit path (used in tests) |
-| `settings::save_to(&path, &settings)` | Save settings to explicit path (used in tests) |
-| `commands::get_snippets_from(path)` | Load snippets from explicit path (used in tests) |
-| `commands::save_user_snippets_to(&path, &[Snippet])` | Save snippets to explicit path (used in tests) |
+| Function                                             | Description                                      |
+| ---------------------------------------------------- | ------------------------------------------------ |
+| `settings::load_from(&path)`                         | Load settings from explicit path (used in tests) |
+| `settings::save_to(&path, &settings)`                | Save settings to explicit path (used in tests)   |
+| `commands::get_snippets_from(path)`                  | Load snippets from explicit path (used in tests) |
+| `commands::save_user_snippets_to(&path, &[Snippet])` | Save snippets to explicit path (used in tests)   |
 
 ### Frontend Types (types.ts)
 
-| Type | Description |
-|------|-------------|
+| Type                                                     | Description                                                                                  |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `CertInfo { thumbprint, subject, expiry, friendlyName }` | Code-signing certificate from `Cert:\CurrentUser\My`; returned by `get_signing_certificates` |
 
 ### Terminal E2E Window Globals
 
 Registered by `TerminalPane.tsx`'s mount effect and cleaned up on unmount. Exposed on `window` so WebDriver E2E tests can inspect/drive the terminal without going through OS keyboard events (which xterm and WebView2 can intercept or drop):
 
-| Global | Signature | Description |
-|--------|-----------|-------------|
-| `window.__psforge_terminal_get_content` | `(lineCount?: number) => string` | Read the last N lines from xterm's active buffer as plain text. Used because canvas rendering makes DOM text inaccessible to WebDriver. |
-| `window.__psforge_terminal_is_ready` | `() => boolean` | Returns `isReadyRef.current` — true when the PS REPL is running and accepting input. |
-| `window.__psforge_terminal_submit_current_input` | `() => void` | Mirrors the onData `'\r'` branch: submits `inputBufferRef.current` as a command. Used in tests to verify command execution independently of keyboard Enter routing. |
-| `window.__psforge_terminal_reset_input` | `() => void` | Clears `inputBufferRef`, repositions cursor to 0, writes `\r\n` + fresh prompt. Used in `beforeEach` for isolation without relying on Ctrl+C. |
-| `window.__psforge_terminal_clear` | `() => void` | Calls `term.clear()` + fresh prompt. |
-| `window.__psforge_terminal_focus` | `() => void` | Calls `term.focus()` + `fitAddon.fit()`. |
-| `window.__psforge_terminal_restart` | `() => void` | Resets restart counter and calls `startSession(false)`. |
-| `window.__psforge_dispatch` | `(action: Action) => void` | Exposes the store reducer dispatch for E2E tests (e.g. `TOGGLE_SIGNING_DIALOG`). Registered by `App.tsx` alongside other test globals. |
+| Global                                           | Signature                        | Description                                                                                                                                                         |
+| ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `window.__psforge_terminal_get_content`          | `(lineCount?: number) => string` | Read the last N lines from xterm's active buffer as plain text. Used because canvas rendering makes DOM text inaccessible to WebDriver.                             |
+| `window.__psforge_terminal_is_ready`             | `() => boolean`                  | Returns `isReadyRef.current` — true when the PS REPL is running and accepting input.                                                                                |
+| `window.__psforge_terminal_submit_current_input` | `() => void`                     | Mirrors the onData `'\r'` branch: submits `inputBufferRef.current` as a command. Used in tests to verify command execution independently of keyboard Enter routing. |
+| `window.__psforge_terminal_reset_input`          | `() => void`                     | Clears `inputBufferRef`, repositions cursor to 0, writes `\r\n` + fresh prompt. Used in `beforeEach` for isolation without relying on Ctrl+C.                       |
+| `window.__psforge_terminal_clear`                | `() => void`                     | Calls `term.clear()` + fresh prompt.                                                                                                                                |
+| `window.__psforge_terminal_focus`                | `() => void`                     | Calls `term.focus()` + `fitAddon.fit()`.                                                                                                                            |
+| `window.__psforge_terminal_restart`              | `() => void`                     | Resets restart counter and calls `startSession(false)`.                                                                                                             |
+| `window.__psforge_dispatch`                      | `(action: Action) => void`       | Exposes the store reducer dispatch for E2E tests (e.g. `TOGGLE_SIGNING_DIALOG`). Registered by `App.tsx` alongside other test globals.                              |
 
 ## Critical Invariants
 
@@ -390,7 +396,7 @@ Registered by `TerminalPane.tsx`'s mount effect and cleaned up on unmount. Expos
 9. **Content Security Policy**: CSP is enforced in `tauri.conf.json` restricting scripts/styles/connections to self-origin, blob workers (Monaco), inline styles (Tailwind), and IPC protocols
 10. **Monaco loader must use local package**: `src/main.tsx` calls `loader.config({ monaco })` to force `@monaco-editor/react` to use the locally installed `monaco-editor` npm package instead of the CDN default (`cdn.jsdelivr.net`). The CDN is blocked by Tauri's CSP; without this call the editor silently hangs on "Loading editor...". The editor worker is configured via `self.MonacoEnvironment.getWorker` using Vite's `?worker` import suffix (`import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker"`). The `new URL(…, import.meta.url)` pattern must NOT be used for bare npm specifiers — Rollup resolves them relative to the HTML root and the build fails. Vite type support for `?worker` requires `src/vite-env.d.ts` with `/// <reference types="vite/client" />`.
 11. **Terminal `onData` must parse VT escape sequences**: xterm.js delivers raw VT byte sequences (e.g. `\x1b[D` for left-arrow) to the `onData` callback. Only the `\x1b` byte is below the printable threshold; the remainder (`[D`) passes the `ch >= " "` check and would be silently appended to the input buffer as literal text, corrupting commands. `TerminalPane.tsx` handles this via `escapeSeqRef` which accumulates CSI (`\x1b[`) and SS3 (`\x1bO`) sequences across characters until a recognised terminator, then dispatches to `handleEscapeSequence()`. Arrow keys, Home/End, and Delete are mapped to proper line-editing operations; all other sequences are discarded.
-12. **Monaco completion item range must replace the partial token**: TabExpansion2 returns the *full* completion text (e.g. `Get-ChildItem` when the editor contains `Get-C`). The Monaco `CompletionItem.range` must span from the start of the incomplete token back to the cursor; a zero-width range at the cursor causes Monaco to *insert* rather than *replace*, producing doubled text. `EditorPane.tsx` calculates `tokenStart` by scanning backwards from the cursor offset over characters that are not PS word boundaries (`\s,;|(){}[]` etc.) and passes the resulting range to both registered completion providers.
+12. **Monaco completion item range must replace the partial token**: TabExpansion2 returns the _full_ completion text (e.g. `Get-ChildItem` when the editor contains `Get-C`). The Monaco `CompletionItem.range` must span from the start of the incomplete token back to the cursor; a zero-width range at the cursor causes Monaco to _insert_ rather than _replace_, producing doubled text. `EditorPane.tsx` calculates `tokenStart` by scanning backwards from the cursor offset over characters that are not PS word boundaries (`\s,;|(){}[]` etc.) and passes the resulting range to both registered completion providers.
 13. **`settlingRef` and `isReadyRef` ordering in terminal-exit handler**: `start_terminal` in Rust internally calls `kill_session()` before spawning a new process. The killed session's stdout reader fires `terminal-exit` asynchronously. By the time this event arrives at the JS terminal-exit handler, the new React effect run has already reset `isStoppingRef` to `false`, so the handler would mistakenly schedule a restart — which would kill the just-started session, fire another `terminal-exit`, and loop until all 5 restart attempts were exhausted. Fix: `startSession()` sets `settlingRef.current = true` before calling `startTerminal()` and keeps it true for `SETTLE_MS` (3000 ms) after the promise resolves. The terminal-exit handler **checks `settlingRef`/`isStoppingRef` BEFORE setting `isReadyRef.current = false`** — the fast-return must come first; otherwise stale exits from React StrictMode's first-run cleanup (which arrive during the second run's settle window) permanently corrupt `isReadyRef.current`, leaving the live session unable to accept input even though the PS REPL process is healthy. `settlingRef` is cleared in effect cleanup (where `isStoppingRef` takes over), and reset to `false` at the start of each new effect run. This same guard pattern applies in React StrictMode: effects run twice; the first run's cleanup fires `stopTerminal()`; the resulting `terminal-exit` arrives during the second run's settle window — must be discarded without touching `isReadyRef`.
 
 ## Debug Mode

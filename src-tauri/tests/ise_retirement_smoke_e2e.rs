@@ -1,20 +1,20 @@
-/// ISE-retirement smoke tests (backend).
-///
-/// Goal: validate that PSForge can replace day-to-day ISE workflows on the
-/// command backend surface for each detected shell (PowerShell 7+ and Windows
-/// PowerShell 5.1 where available).
-///
-/// Coverage in this suite:
-/// - Script parameter inspection
-/// - Module enumeration + command enumeration
-/// - Command parameter metadata + help retrieval
-/// - Completions, formatting, static-analysis graceful behavior
-/// - Runspace persistence semantics (persist on/off)
-/// - Debug breakpoint pause + continue flow
-///
-/// Notes:
-/// - Tests skip cleanly when no PowerShell executable is present.
-/// - Each async test is wrapped in a hard timeout per Rule 3.
+// ISE-retirement smoke tests (backend).
+//
+// Goal: validate that PSForge can replace day-to-day ISE workflows on the
+// command backend surface for each detected shell (PowerShell 7+ and Windows
+// PowerShell 5.1 where available).
+//
+// Coverage in this suite:
+// - Script parameter inspection
+// - Module enumeration + command enumeration
+// - Command parameter metadata + help retrieval
+// - Completions, formatting, static-analysis graceful behavior
+// - Runspace persistence semantics (persist on/off)
+// - Debug breakpoint pause + continue flow
+//
+// Notes:
+// - Tests skip cleanly when no PowerShell executable is present.
+// - Each async test is wrapped in a hard timeout per Rule 3.
 
 const TEST_TIMEOUT_SECS: u64 = 240;
 const DEBUG_BREAK_WAIT_SECS: u64 = 45;

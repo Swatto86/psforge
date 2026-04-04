@@ -1,15 +1,15 @@
-/// E2E integration tests for file association commands (Rule 3).
-///
-/// File associations write to HKCU (per-user, no elevation required), so these
-/// tests run on the real Windows registry and clean up after themselves.
-///
-/// All tests are conditionally compiled for Windows only; they are skipped
-/// automatically on non-Windows CI runners (which cannot run the app anyway).
-///
-/// Batch commands test Rule 11 error accumulation: processing multiple items
-/// while collecting per-item errors instead of aborting on the first failure.
+// E2E integration tests for file association commands (Rule 3).
+//
+// File associations write to HKCU (per-user, no elevation required), so these
+// tests run on the real Windows registry and clean up after themselves.
+//
+// All tests are conditionally compiled for Windows only; they are skipped
+// automatically on non-Windows CI runners (which cannot run the app anyway).
+//
+// Batch commands test Rule 11 error accumulation: processing multiple items
+// while collecting per-item errors instead of aborting on the first failure.
 
-/// Conservative async timeout for registry I/O (Rule 3).
+// Conservative async timeout for registry I/O (Rule 3).
 const TEST_TIMEOUT_SECS: u64 = 30;
 
 use psforge_lib::commands;

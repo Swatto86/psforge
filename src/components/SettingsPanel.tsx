@@ -52,6 +52,10 @@ const POLICY_DESCRIPTIONS: Record<string, string> = {
   Bypass: "No restrictions or warnings (for automation -- use with caution)",
 };
 
+function isLikelyAbsoluteWindowsPath(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+}
+
 export function SettingsPanel() {
   const { state, dispatch } = useAppState();
   const [activeSection, setActiveSection] = useState<Section>("editor");
@@ -152,6 +156,12 @@ export function SettingsPanel() {
   ) {
     validationErrors.customWorkingDir =
       "A working directory path is required when mode is Custom.";
+  } else if (
+    state.settings.workingDirMode === "custom" &&
+    !isLikelyAbsoluteWindowsPath(state.settings.customWorkingDir.trim())
+  ) {
+    validationErrors.customWorkingDir =
+      "Custom working directory must be an absolute path.";
   }
 
   // ---------------------------------------------------------------------------
@@ -571,10 +581,7 @@ export function SettingsPanel() {
                       </option>
                     ))}
                   </select>
-                  <p
-                    className="text-xs"
-                    style={{ color: "var(--text-muted)" }}
-                  >
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                     The PowerShell version selected in the toolbar is saved and
                     restored on next launch.
                   </p>
@@ -620,7 +627,9 @@ export function SettingsPanel() {
               >
                 <div className="flex flex-col gap-1">
                   <Toggle
-                    checked={state.settings.persistRunspaceBetweenRuns !== false}
+                    checked={
+                      state.settings.persistRunspaceBetweenRuns !== false
+                    }
                     onChange={(v) =>
                       updateSetting("persistRunspaceBetweenRuns", v)
                     }
@@ -783,8 +792,9 @@ export function SettingsPanel() {
                     label="Load PowerShell profile scripts when terminal starts"
                   />
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Enables profile-based customizations (for example command-not-found
-                    addons) but may slow startup or run profile side effects.
+                    Enables profile-based customizations (for example
+                    command-not-found addons) but may slow startup or run
+                    profile side effects.
                   </p>
                 </div>
               </SettingRow>
@@ -1272,4 +1282,3 @@ function InfoBox({
     </div>
   );
 }
-

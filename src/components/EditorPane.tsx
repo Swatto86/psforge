@@ -90,6 +90,12 @@ function completionKind(
 /** Token boundary characters for PowerShell completion range detection. */
 const PS_TOKEN_BOUNDARY_RE = /[\s,;|(){}\[\]`"'<>@#%&*!?+^]/;
 
+/** Trigger characters supported by the PowerShell completion provider. */
+const PS_COMPLETION_TRIGGER_CHARACTERS = ["-", "$", "\\", " ", "."];
+
+/** Characters that need a post-commit re-trigger to refresh suggestions reliably. */
+const PS_POST_COMMIT_TRIGGER_CHARACTERS = ["-"];
+
 /** Finds the start offset (0-based) of the token that ends at `offset`. */
 function findTokenStart(scriptContent: string, offset: number): number {
   let tokenStart = offset;
@@ -163,7 +169,10 @@ function hasParameterCandidates(items: PsCompletion[]): boolean {
 
 /** True when all candidates are path/provider completions (or list is empty). */
 function onlyPathLikeCandidates(items: PsCompletion[]): boolean {
-  return items.length > 0 && items.every((item) => PATHLIKE_RESULT_TYPES.has(item.resultType));
+  return (
+    items.length > 0 &&
+    items.every((item) => PATHLIKE_RESULT_TYPES.has(item.resultType))
+  );
 }
 
 /**
@@ -297,7 +306,10 @@ export function EditorPane() {
     w.__psforge_navigateTo = (line: number, column: number) => {
       if (!editorRef.current) return;
       editorRef.current.revealLineInCenter(line);
-      editorRef.current.setPosition({ lineNumber: line, column: Math.max(1, column) });
+      editorRef.current.setPosition({
+        lineNumber: line,
+        column: Math.max(1, column),
+      });
       editorRef.current.focus();
     };
     // Returns the currently selected text, or the full current line when
@@ -391,8 +403,8 @@ export function EditorPane() {
           typeof bp.line === "number" && bp.line >= 1 && bp.line <= maxLine,
       )
       .sort((a, b) => a.line - b.line);
-    const decorations: MonacoEditor.IModelDeltaDecoration[] = lineBreakpoints.map(
-      (bp) => ({
+    const decorations: MonacoEditor.IModelDeltaDecoration[] =
+      lineBreakpoints.map((bp) => ({
         range: new monaco.Range(bp.line, 1, bp.line, 1),
         options: {
           isWholeLine: true,
@@ -409,8 +421,7 @@ export function EditorPane() {
           },
           linesDecorationsClassName: "psforge-breakpoint-line",
         },
-      }),
-    );
+      }));
     breakpointDecorationsRef.current = editor.deltaDecorations(
       breakpointDecorationsRef.current,
       decorations,
@@ -430,17 +441,19 @@ export function EditorPane() {
     const lines = (state.bookmarks[activeTab.id] ?? [])
       .filter((line) => line >= 1 && line <= maxLine)
       .sort((a, b) => a - b);
-    const decorations: MonacoEditor.IModelDeltaDecoration[] = lines.map((line) => ({
-      range: new monaco.Range(line, 1, line, 1),
-      options: {
-        isWholeLine: true,
-        glyphMarginClassName: "psforge-bookmark-glyph",
-        glyphMarginHoverMessage: {
-          value: `Bookmark (line ${line})`,
+    const decorations: MonacoEditor.IModelDeltaDecoration[] = lines.map(
+      (line) => ({
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          isWholeLine: true,
+          glyphMarginClassName: "psforge-bookmark-glyph",
+          glyphMarginHoverMessage: {
+            value: `Bookmark (line ${line})`,
+          },
+          linesDecorationsClassName: "psforge-bookmark-line",
         },
-        linesDecorationsClassName: "psforge-bookmark-line",
-      },
-    }));
+      }),
+    );
     bookmarkDecorationsRef.current = editor.deltaDecorations(
       bookmarkDecorationsRef.current,
       decorations,
@@ -472,6 +485,24 @@ export function EditorPane() {
           line: e.position.lineNumber,
           column: e.position.column,
         });
+      });
+
+      editor.onDidChangeModelContent((e) => {
+        if (!state.settings.enableIntelliSense) return;
+
+        const insertedTrigger = e.changes.some(
+          (change) =>
+            change.rangeLength === 0 &&
+            change.text.length === 1 &&
+            PS_POST_COMMIT_TRIGGER_CHARACTERS.includes(change.text),
+        );
+
+        if (!insertedTrigger) return;
+
+        window.setTimeout(() => {
+          editor.trigger("psforge", "hideSuggestWidget", {});
+          editor.trigger("psforge", "editor.action.triggerSuggest", {});
+        }, 0);
       });
 
       // Toggle breakpoints by clicking the gutter glyph margin or line numbers.
@@ -574,7 +605,7 @@ export function EditorPane() {
             // Note: space (" ") fires the provider so that file-path completions
             // appear after a cmdlet name (e.g. "Get-ChildItem ").  The provider
             // also fires for "-" to show parameter completions.
-            triggerCharacters: ["-", "$", "\\", " ", "."],
+            triggerCharacters: PS_COMPLETION_TRIGGER_CHARACTERS,
             provideCompletionItems: async (
               model: MonacoEditor.ITextModel,
               position: MonacoPosition,
@@ -587,6 +618,7 @@ export function EditorPane() {
               // Monaco getOffsetAt gives a 0-based character offset, which is
               // what TabExpansion2 expects for -cursorColumn.
               let offset = model.getOffsetAt(position);
+              let rangeEndColumn = position.column;
 
               // Monaco fires the completion provider when a trigger character is
               // typed, but may call provideCompletionItems before the trigger
@@ -605,6 +637,7 @@ export function EditorPane() {
                   context.triggerCharacter +
                   scriptContent.slice(offset);
                 offset += context.triggerCharacter.length;
+                rangeEndColumn += context.triggerCharacter.length;
               }
 
               const tokenStart = findTokenStart(scriptContent, offset);
@@ -627,7 +660,7 @@ export function EditorPane() {
                   startLineNumber: tokenStartPos.lineNumber,
                   startColumn: tokenStartPos.column,
                   endLineNumber: position.lineNumber,
-                  endColumn: position.column,
+                  endColumn: rangeEndColumn,
                 };
 
                 const suggestions = items.map((c) => ({
@@ -646,9 +679,9 @@ export function EditorPane() {
                   documentation: c.toolTip || undefined,
                   range: completionRange,
                 }));
-                return { suggestions };
+                return { suggestions, incomplete: true };
               } catch {
-                return { suggestions: [] };
+                return { suggestions: [], incomplete: true };
               }
             },
           });
@@ -705,7 +738,7 @@ export function EditorPane() {
 
     completionDisposableRef.current =
       monaco.languages.registerCompletionItemProvider("powershell", {
-        triggerCharacters: ["-", "$", "\\", " ", "."],
+        triggerCharacters: PS_COMPLETION_TRIGGER_CHARACTERS,
         provideCompletionItems: async (
           model: MonacoEditor.ITextModel,
           position: MonacoPosition,
@@ -715,6 +748,7 @@ export function EditorPane() {
           if (!psPath) return { suggestions: [] };
           let scriptContent = model.getValue();
           let offset = model.getOffsetAt(position);
+          let rangeEndColumn = position.column;
           // Monaco may fire the provider before the trigger character is
           // committed to the model.  Splice it in if absent at cursor-1.
           if (
@@ -727,6 +761,7 @@ export function EditorPane() {
               context.triggerCharacter +
               scriptContent.slice(offset);
             offset += context.triggerCharacter.length;
+            rangeEndColumn += context.triggerCharacter.length;
           }
           const tokenStart = findTokenStart(scriptContent, offset);
           const completionOffset = completionCursorOffset(
@@ -747,7 +782,7 @@ export function EditorPane() {
               startLineNumber: tokenStartPos.lineNumber,
               startColumn: tokenStartPos.column,
               endLineNumber: position.lineNumber,
-              endColumn: position.column,
+              endColumn: rangeEndColumn,
             };
             return {
               suggestions: items.map((c) => ({
@@ -766,9 +801,10 @@ export function EditorPane() {
                 documentation: c.toolTip || undefined,
                 range: completionRange,
               })),
+              incomplete: true,
             };
           } catch {
-            return { suggestions: [] };
+            return { suggestions: [], incomplete: true };
           }
         },
       });

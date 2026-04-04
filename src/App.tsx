@@ -26,6 +26,7 @@ import type {
   DebugStackFrame,
   DebugWatch,
   PsVersion,
+  VariableInfo,
 } from "./types";
 
 // Expose the startup reveal function injected by public/preload.js.
@@ -118,6 +119,68 @@ function normalizeFrameIndex(value: number): number {
   return Math.floor(value);
 }
 
+function directoryFromFilePath(filePath: string): string {
+  const lastSeparator = filePath.lastIndexOf("\\");
+  return lastSeparator > 0 ? filePath.slice(0, lastSeparator) : "";
+}
+
+function resolveExecutionWorkDir(
+  activeTab: EditorTab,
+  stateWorkingDir: string,
+  workingDirMode: "file" | "custom",
+  customWorkingDir: string,
+): string {
+  if (workingDirMode === "custom" && customWorkingDir.trim()) {
+    return customWorkingDir.trim();
+  }
+
+  const fileDir = activeTab.filePath
+    ? directoryFromFilePath(activeTab.filePath)
+    : "";
+
+  return stateWorkingDir || fileDir || "C:\\";
+}
+
+function resolveFallbackWorkDir(activeTab: EditorTab): string {
+  return (
+    (activeTab.filePath ? directoryFromFilePath(activeTab.filePath) : "") ||
+    "C:\\"
+  );
+}
+
+function isInvalidWorkingDirError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    (error as { code?: unknown }).code === "INVALID_WORKING_DIR"
+  );
+}
+
+function extractInvokeErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    const record = error as { message?: unknown; code?: unknown };
+    const message =
+      typeof record.message === "string" ? record.message.trim() : "";
+    const code = typeof record.code === "string" ? record.code.trim() : "";
+    if (message && code) {
+      return `${message} (${code})`;
+    }
+    if (message) {
+      return message;
+    }
+    if (code) {
+      return code;
+    }
+  }
+  return String(error);
+}
+
 function buildDebugLocalsCommand(frameIndex: number): string {
   const scope = normalizeFrameIndex(frameIndex);
   return (
@@ -127,7 +190,7 @@ function buildDebugLocalsCommand(frameIndex: number): string {
     "name = $_.Name; " +
     "typeName = if ($null -eq $_.Value) { 'null' } else { $_.Value.GetType().FullName }; " +
     "value = ($_.Value | Out-String).Trim(); " +
-    "scope = \"Frame:$__psf_scope\" " +
+    'scope = "Frame:$__psf_scope" ' +
     "} }; " +
     `Write-Host '${DEBUG_LOCALS_PREFIX}' + ($__psf_locals | ConvertTo-Json -Compress -Depth 4)`
   );
@@ -150,10 +213,7 @@ function buildWatchEvalCommand(expression: string, frameIndex: number): string {
   );
 }
 
-function parseMarkerJson<T>(
-  line: string,
-  prefix: string,
-): T | T[] | null {
+function parseMarkerJson<T>(line: string, prefix: string): T | T[] | null {
   if (!line.startsWith(prefix)) return null;
   const json = line.slice(prefix.length).trim();
   if (!json) return null;
@@ -189,7 +249,11 @@ function normalizeBreakpointForDebug(
       : "";
   const targetCommand =
     targetCommandRaw.length > 0 ? targetCommandRaw : undefined;
-  if (line === undefined && variable === undefined && targetCommand === undefined) {
+  if (
+    line === undefined &&
+    variable === undefined &&
+    targetCommand === undefined
+  ) {
     return null;
   }
 
@@ -214,7 +278,10 @@ function normalizeBreakpointForDebug(
   return { line, variable, targetCommand, mode, condition, hitCount, command };
 }
 
-function clampSplitPercentForHeight(percent: number, containerHeight: number): number {
+function clampSplitPercentForHeight(
+  percent: number,
+  containerHeight: number,
+): number {
   const safePercent = Number.isFinite(percent) ? percent : 65;
   if (!Number.isFinite(containerHeight) || containerHeight <= 0) {
     return Math.max(
@@ -222,7 +289,10 @@ function clampSplitPercentForHeight(percent: number, containerHeight: number): n
       Math.min(HARD_MAX_SPLIT_PERCENT, safePercent),
     );
   }
-  const availableHeight = Math.max(1, containerHeight - SPLIT_RESIZER_HEIGHT_PX);
+  const availableHeight = Math.max(
+    1,
+    containerHeight - SPLIT_RESIZER_HEIGHT_PX,
+  );
   const minPercent = Math.max(
     HARD_MIN_SPLIT_PERCENT,
     (MIN_EDITOR_PANE_HEIGHT_PX / availableHeight) * 100,
@@ -276,14 +346,17 @@ function AppInner() {
   const activeTabRef = useRef<EditorTab | undefined>(activeTab);
   const cursorLineRef = useRef(state.cursorLine);
   const bookmarksRef = useRef(state.bookmarks);
-  const clampSplitForCurrentLayout = useCallback((nextPercent: number): number => {
-    const containerHeight =
-      splitRef.current?.getBoundingClientRect().height ?? window.innerHeight;
-    const clamped = clampSplitPercentForHeight(nextPercent, containerHeight);
-    setSplitPercent(clamped);
-    splitPercentRef.current = clamped;
-    return clamped;
-  }, []);
+  const clampSplitForCurrentLayout = useCallback(
+    (nextPercent: number): number => {
+      const containerHeight =
+        splitRef.current?.getBoundingClientRect().height ?? window.innerHeight;
+      const clamped = clampSplitPercentForHeight(nextPercent, containerHeight);
+      setSplitPercent(clamped);
+      splitPercentRef.current = clamped;
+      return clamped;
+    },
+    [],
+  );
 
   /**
    * Pending parameter-prompt state.  When a script has mandatory parameters
@@ -409,7 +482,9 @@ function AppInner() {
     debugWatchesRef.current = state.debugWatches;
   }, [state.debugWatches]);
   useEffect(() => {
-    debugSelectedFrameRef.current = normalizeFrameIndex(state.debugSelectedFrame);
+    debugSelectedFrameRef.current = normalizeFrameIndex(
+      state.debugSelectedFrame,
+    );
   }, [state.debugSelectedFrame]);
 
   const evaluateDebugWatch = useCallback(
@@ -431,21 +506,26 @@ function AppInner() {
     [state.isDebugging, state.debugPaused, dispatch],
   );
 
-  const refreshDebugInspector = useCallback(async (frameIndex?: number) => {
-    if (!state.isDebugging || !state.debugPaused) return;
-    const scope = normalizeFrameIndex(frameIndex ?? debugSelectedFrameRef.current);
-    try {
-      await cmd.sendStdin(buildDebugLocalsCommand(scope));
-      await cmd.sendStdin(DEBUG_STACK_COMMAND);
-      for (const watch of debugWatchesRef.current) {
-        const expr = watch.expression.trim();
-        if (!expr) continue;
-        await cmd.sendStdin(buildWatchEvalCommand(expr, scope));
+  const refreshDebugInspector = useCallback(
+    async (frameIndex?: number) => {
+      if (!state.isDebugging || !state.debugPaused) return;
+      const scope = normalizeFrameIndex(
+        frameIndex ?? debugSelectedFrameRef.current,
+      );
+      try {
+        await cmd.sendStdin(buildDebugLocalsCommand(scope));
+        await cmd.sendStdin(DEBUG_STACK_COMMAND);
+        for (const watch of debugWatchesRef.current) {
+          const expr = watch.expression.trim();
+          if (!expr) continue;
+          await cmd.sendStdin(buildWatchEvalCommand(expr, scope));
+        }
+      } catch {
+        // Best-effort only; debugger execution should continue.
       }
-    } catch {
-      // Best-effort only; debugger execution should continue.
-    }
-  }, [state.isDebugging, state.debugPaused]);
+    },
+    [state.isDebugging, state.debugPaused],
+  );
 
   // Remove the startup loading mask once React has successfully mounted.
   // This completes the white-flash prevention sequence started by preload.js
@@ -498,14 +578,16 @@ function AppInner() {
           DEBUG_STACK_PREFIX,
         );
         if (stackPayload !== null) {
-          const frames: DebugStackFrame[] = asArray(stackPayload).map((item) => ({
-            functionName:
-              typeof item.functionName === "string"
-                ? item.functionName
-                : "<script>",
-            location: typeof item.location === "string" ? item.location : "",
-            command: typeof item.command === "string" ? item.command : "",
-          }));
+          const frames: DebugStackFrame[] = asArray(stackPayload).map(
+            (item) => ({
+              functionName:
+                typeof item.functionName === "string"
+                  ? item.functionName
+                  : "<script>",
+              location: typeof item.location === "string" ? item.location : "",
+              command: typeof item.command === "string" ? item.command : "",
+            }),
+          );
           dispatch({ type: "SET_DEBUG_CALL_STACK", frames });
           return;
         }
@@ -570,6 +652,13 @@ function AppInner() {
       }
     });
 
+    const unlistenVariables = listen<VariableInfo[]>(
+      "ps-variables",
+      (event) => {
+        dispatch({ type: "SET_VARIABLES", variables: event.payload });
+      },
+    );
+
     const unlistenDebugBreak = listen<number>("ps-debug-break", (event) => {
       if (!debugSessionRef.current) return;
       const line = event.payload;
@@ -622,6 +711,7 @@ function AppInner() {
 
     return () => {
       unlisten.then((fn) => fn());
+      unlistenVariables.then((fn) => fn());
       unlistenDebugBreak.then((fn) => fn());
       unlistenComplete.then((fn) => fn());
     };
@@ -762,7 +852,9 @@ function AppInner() {
   );
 
   const saveTab = useCallback(
-    async (tab: EditorTab): Promise<{ saved: boolean; cancelled: boolean; path?: string }> => {
+    async (
+      tab: EditorTab,
+    ): Promise<{ saved: boolean; cancelled: boolean; path?: string }> => {
       let filePath = tab.filePath;
 
       if (!filePath) {
@@ -888,7 +980,9 @@ function AppInner() {
   const activateRelativeTab = useCallback(
     (offset: number) => {
       if (state.tabs.length <= 1) return;
-      const currentIndex = state.tabs.findIndex((t) => t.id === state.activeTabId);
+      const currentIndex = state.tabs.findIndex(
+        (t) => t.id === state.activeTabId,
+      );
       if (currentIndex === -1) return;
       const nextIndex =
         (currentIndex + offset + state.tabs.length) % state.tabs.length;
@@ -960,23 +1054,12 @@ function AppInner() {
     const scriptContent = activeTab.content;
 
     // Determine working directory early (needed even if param dialog cancels).
-    let workDir: string;
-    if (
-      state.settings.workingDirMode === "custom" &&
-      state.settings.customWorkingDir
-    ) {
-      workDir = state.settings.customWorkingDir;
-    } else {
-      workDir =
-        state.workingDir ||
-        (activeTab.filePath
-          ? activeTab.filePath.substring(
-              0,
-              activeTab.filePath.lastIndexOf("\\"),
-            )
-          : "C:\\") ||
-        "C:\\";
-    }
+    const workDir = resolveExecutionWorkDir(
+      activeTab,
+      state.workingDir,
+      state.settings.workingDirMode,
+      state.settings.customWorkingDir,
+    );
 
     // ------------------------------------------------------------------
     // Mandatory-parameter pre-flight (Rule 17).
@@ -1020,6 +1103,7 @@ function AppInner() {
     if (state.settings.clearOutputOnRun !== false) {
       dispatch({ type: "CLEAR_OUTPUT" });
     }
+    dispatch({ type: "SET_VARIABLES", variables: [] });
     dispatch({ type: "SET_RUNNING", running: true });
 
     try {
@@ -1031,17 +1115,40 @@ function AppInner() {
         scriptArgs,
         state.settings.persistRunspaceBetweenRuns !== false,
       );
-
-      // Populate the Variables tab by re-running the *original* script in
-      // a fresh process.  Fire-and-forget so a failure here never prevents
-      // the run from completing cleanly.
-      cmd
-        .getVariablesAfterRun(psPath, scriptContent, workDir)
-        .then((vars) => dispatch({ type: "SET_VARIABLES", variables: vars }))
-        .catch(() => {});
     } catch (err) {
+      if (
+        state.settings.workingDirMode !== "custom" &&
+        isInvalidWorkingDirError(err)
+      ) {
+        const fallbackWorkDir = resolveFallbackWorkDir(activeTab);
+        if (fallbackWorkDir !== workDir) {
+          dispatch({
+            type: "ADD_OUTPUT",
+            line: {
+              stream: "warning",
+              text: `Working directory "${workDir}" is unavailable; retrying from "${fallbackWorkDir}".`,
+              timestamp: String(Math.floor(Date.now() / 1000)),
+            },
+          });
+          dispatch({ type: "SET_WORKING_DIR", dir: fallbackWorkDir });
+          try {
+            await cmd.executeScript(
+              psPath,
+              scriptContent,
+              fallbackWorkDir,
+              state.settings.executionPolicy,
+              scriptArgs,
+              state.settings.persistRunspaceBetweenRuns !== false,
+            );
+            return;
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
+
       console.error("runScript failed:", err);
-      const message = err instanceof Error ? err.message : String(err);
+      const message = extractInvokeErrorMessage(err);
       dispatch({
         type: "ADD_OUTPUT",
         line: {
@@ -1114,27 +1221,18 @@ function AppInner() {
 
     const psPath = state.selectedPsPath;
     const scriptContent = activeTab.content;
-    const breakpoints: DebugBreakpoint[] = (state.breakpoints[activeTab.id] ?? [])
+    const breakpoints: DebugBreakpoint[] = (
+      state.breakpoints[activeTab.id] ?? []
+    )
       .map((bp) => normalizeBreakpointForDebug(bp))
       .filter((bp): bp is DebugBreakpoint => bp !== null);
 
-    let workDir: string;
-    if (
-      state.settings.workingDirMode === "custom" &&
-      state.settings.customWorkingDir
-    ) {
-      workDir = state.settings.customWorkingDir;
-    } else {
-      workDir =
-        state.workingDir ||
-        (activeTab.filePath
-          ? activeTab.filePath.substring(
-              0,
-              activeTab.filePath.lastIndexOf("\\"),
-            )
-          : "C:\\") ||
-        "C:\\";
-    }
+    const workDir = resolveExecutionWorkDir(
+      activeTab,
+      state.workingDir,
+      state.settings.workingDirMode,
+      state.settings.customWorkingDir,
+    );
 
     let scriptArgs: string[] = [];
     try {
@@ -1180,6 +1278,7 @@ function AppInner() {
     });
     dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: 0 });
     dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
+    dispatch({ type: "SET_VARIABLES", variables: [] });
     dispatch({ type: "SET_RUNNING", running: true });
 
     try {
@@ -1193,8 +1292,40 @@ function AppInner() {
         state.settings.persistRunspaceBetweenRuns !== false,
       );
     } catch (err) {
+      if (
+        state.settings.workingDirMode !== "custom" &&
+        isInvalidWorkingDirError(err)
+      ) {
+        const fallbackWorkDir = resolveFallbackWorkDir(activeTab);
+        if (fallbackWorkDir !== workDir) {
+          dispatch({
+            type: "ADD_OUTPUT",
+            line: {
+              stream: "warning",
+              text: `Working directory "${workDir}" is unavailable; retrying debug session from "${fallbackWorkDir}".`,
+              timestamp: String(Math.floor(Date.now() / 1000)),
+            },
+          });
+          dispatch({ type: "SET_WORKING_DIR", dir: fallbackWorkDir });
+          try {
+            await cmd.executeScriptDebug(
+              psPath,
+              scriptContent,
+              fallbackWorkDir,
+              state.settings.executionPolicy,
+              breakpoints,
+              scriptArgs,
+              state.settings.persistRunspaceBetweenRuns !== false,
+            );
+            return;
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
+
       console.error("startDebugSession failed:", err);
-      const message = err instanceof Error ? err.message : String(err);
+      const message = extractInvokeErrorMessage(err);
       dispatch({
         type: "ADD_OUTPUT",
         line: {
@@ -1203,6 +1334,7 @@ function AppInner() {
           timestamp: String(Math.floor(Date.now() / 1000)),
         },
       });
+      dispatch({ type: "SET_VARIABLES", variables: [] });
       runGuardRef.current = false;
       debugSessionRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
@@ -1352,12 +1484,15 @@ function AppInner() {
 
     // Get run text from Monaco: selected text when available, otherwise
     // the current line (PowerShell ISE F8 behavior).
-    const runText = (
-      (window as unknown as Record<string, unknown>)
-        .__psforge_getRunText as (() => string) | undefined
-    )?.() ??
-      ((window as unknown as Record<string, unknown>)
-        .__psforge_selection as string | undefined) ??
+    const runText =
+      (
+        (window as unknown as Record<string, unknown>).__psforge_getRunText as
+          | (() => string)
+          | undefined
+      )?.() ??
+      ((window as unknown as Record<string, unknown>).__psforge_selection as
+        | string
+        | undefined) ??
       "";
     if (!runText.trim()) {
       runGuardRef.current = false;
@@ -1369,15 +1504,12 @@ function AppInner() {
 
     dispatch({ type: "SET_RUNNING", running: true });
 
-    let workDir: string;
-    if (
-      state.settings.workingDirMode === "custom" &&
-      state.settings.customWorkingDir
-    ) {
-      workDir = state.settings.customWorkingDir;
-    } else {
-      workDir = state.workingDir || "C:\\";
-    }
+    const workDir = resolveExecutionWorkDir(
+      activeTab,
+      state.workingDir,
+      state.settings.workingDirMode,
+      state.settings.customWorkingDir,
+    );
 
     try {
       await cmd.executeSelection(
@@ -1388,7 +1520,46 @@ function AppInner() {
         state.settings.persistRunspaceBetweenRuns !== false,
       );
     } catch (err) {
+      if (
+        state.settings.workingDirMode !== "custom" &&
+        isInvalidWorkingDirError(err)
+      ) {
+        const fallbackWorkDir = resolveFallbackWorkDir(activeTab);
+        if (fallbackWorkDir !== workDir) {
+          dispatch({
+            type: "ADD_OUTPUT",
+            line: {
+              stream: "warning",
+              text: `Working directory "${workDir}" is unavailable; retrying selection from "${fallbackWorkDir}".`,
+              timestamp: String(Math.floor(Date.now() / 1000)),
+            },
+          });
+          dispatch({ type: "SET_WORKING_DIR", dir: fallbackWorkDir });
+          try {
+            await cmd.executeSelection(
+              psPath,
+              runText,
+              fallbackWorkDir,
+              state.settings.executionPolicy,
+              state.settings.persistRunspaceBetweenRuns !== false,
+            );
+            return;
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
+
       console.error("runSelection failed:", err);
+      const message = extractInvokeErrorMessage(err);
+      dispatch({
+        type: "ADD_OUTPUT",
+        line: {
+          stream: "stderr",
+          text: `Selection run failed: ${message}`,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+        },
+      });
       runGuardRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
     }
@@ -1452,10 +1623,7 @@ function AppInner() {
     const w = window.open("", "_blank", "width=900,height=700");
     if (!w) return;
     const escapeHtml = (value: string) =>
-      value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+      value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const escaped = escapeHtml(activeTab.content);
     const title = activeTab.title || "Script";
     const safeTitle = escapeHtml(title);
@@ -1631,7 +1799,12 @@ function AppInner() {
       }
 
       // Ctrl+J: ISE-style snippets picker
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "j") {
+      if (
+        e.ctrlKey &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "j"
+      ) {
         e.preventDefault();
         dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "snippets" });
       }
@@ -1645,10 +1818,11 @@ function AppInner() {
       // F1: Context-sensitive help for selected token/command.
       if (e.key === "F1" && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         e.preventDefault();
-        const query = (
-          (window as unknown as Record<string, unknown>)
-            .__psforge_getHelpQuery as (() => string) | undefined
-        )?.() ?? "";
+        const query =
+          (
+            (window as unknown as Record<string, unknown>)
+              .__psforge_getHelpQuery as (() => string) | undefined
+          )?.() ?? "";
         dispatch({ type: "SET_BOTTOM_TAB", tab: "help" });
         window.dispatchEvent(
           new CustomEvent("psforge-help-request", { detail: { query } }),
@@ -1942,10 +2116,12 @@ function AppInner() {
         >
           <div className="min-w-0">
             <div style={{ fontWeight: 600 }}>
-              PowerShell 7 not detected. PSForge is using Windows PowerShell 5.1.
+              PowerShell 7 not detected. PSForge is using Windows PowerShell
+              5.1.
             </div>
             <div style={{ color: "var(--text-secondary)" }}>
-              Install PS7 for better module compatibility, performance, and modern features.
+              Install PS7 for better module compatibility, performance, and
+              modern features.
             </div>
           </div>
           <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>

@@ -19,7 +19,8 @@
     "test:e2e:variables": "wdio run wdio.conf.cjs --spec e2e/variables.spec.ts",
     "test:e2e:about": "wdio run wdio.conf.cjs --spec e2e/about.spec.ts",
     "test:e2e:params": "wdio run wdio.conf.cjs --spec e2e/params.spec.ts",
-    "test:e2e:features": "wdio run wdio.conf.cjs --spec e2e/features.spec.ts"
+    "test:e2e:features": "wdio run wdio.conf.cjs --spec e2e/features.spec.ts",
+    "test:e2e:session-restore": "wdio run wdio.conf.cjs --spec e2e/session-restore.spec.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

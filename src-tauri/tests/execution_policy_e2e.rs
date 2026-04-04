@@ -1,15 +1,15 @@
-/// E2E tests for execution policy management (Rule 3 + Rule 11).
-///
-/// Validates that:
-///   - Invalid policy values are rejected with the correct error code.
-///   - The allow-list is enforced (no arbitrary strings pass through to PS).
-///   - "Default" policy is accepted as a no-op (does not invoke Set-ExecutionPolicy).
-///   - Case-insensitive matching works for valid policies.
-///
-/// These tests do NOT mutate the real execution policy on the machine; they
-/// only test validation logic and the "Default" no-op path.
+// E2E tests for execution policy management (Rule 3 + Rule 11).
+//
+// Validates that:
+// - Invalid policy values are rejected with the correct error code.
+// - The allow-list is enforced (no arbitrary strings pass through to PS).
+// - "Default" policy is accepted as a no-op (does not invoke Set-ExecutionPolicy).
+// - Case-insensitive matching works for valid policies.
+//
+// These tests do NOT mutate the real execution policy on the machine; they
+// only test validation logic and the "Default" no-op path.
 
-/// Conservative async timeout for CI runners (Rule 3).
+// Conservative async timeout for CI runners (Rule 3).
 const TEST_TIMEOUT_SECS: u64 = 30;
 
 use psforge_lib::commands;
