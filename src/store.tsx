@@ -267,7 +267,7 @@ function loadPersistedSession(): PersistedSession | null {
           : uniqueTabs[0].id,
       bottomPanelTab: isBottomPanelTab(rec.bottomPanelTab)
         ? rec.bottomPanelTab
-        : "terminal",
+        : "output",
       workingDir: typeof rec.workingDir === "string" ? rec.workingDir : "",
       selectedPsPath:
         typeof rec.selectedPsPath === "string" ? rec.selectedPsPath : "",
@@ -381,7 +381,7 @@ const initialState: AppState = {
   modulesLoading: false,
   sidebarVisible: true,
   sidebarPosition: "left" as const,
-  bottomPanelTab: "terminal",
+  bottomPanelTab: "output",
   settingsOpen: false,
   commandPaletteOpen: false,
   commandPaletteMode: "all",
