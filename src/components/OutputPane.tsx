@@ -24,7 +24,6 @@ import { TerminalPane } from "./TerminalPane";
 import { ShowCommandPane } from "./ShowCommandPane";
 import { HelpPane } from "./HelpPane";
 
-/** Prompt the user for a save path and write plain text to disk. */
 async function saveTextToFile({
   title,
   defaultPath,
@@ -43,13 +42,12 @@ async function saveTextToFile({
       { name: "All files", extensions: ["*"] },
     ],
   });
-  if (!path) return; // user cancelled
+  if (!path) return;
   await cmd.saveFileContent(path, text, "utf8");
 }
 
-/** Prompt the user for a save path and write output lines to disk. */
 async function saveOutputToFile(lines: { text: string }[]): Promise<void> {
-  const text = lines.map((l) => l.text).join("\n");
+  const text = lines.map((line) => line.text).join("\n");
   await saveTextToFile({
     title: "Save Output",
     defaultPath: "output.log",
@@ -57,21 +55,19 @@ async function saveOutputToFile(lines: { text: string }[]): Promise<void> {
   });
 }
 
-/** Converts structured problems into plain text for copy/save actions. */
 function problemsToText(problems: ProblemItem[]): string {
   return problems
-    .map((p) => {
-      const severity = p.severity.toUpperCase();
+    .map((problem) => {
+      const severity = problem.severity.toUpperCase();
       const location =
-        p.line !== undefined
-          ? ` (Ln ${p.line}${p.column !== undefined ? `, Col ${p.column}` : ""})`
+        problem.line !== undefined
+          ? ` (Ln ${problem.line}${problem.column !== undefined ? `, Col ${problem.column}` : ""})`
           : "";
-      return `[${severity}] ${p.source}${location}: ${p.message}`;
+      return `[${severity}] ${problem.source}${location}: ${problem.message}`;
     })
     .join("\n");
 }
 
-/** Prompt the user for a save path and write problems to disk. */
 async function saveProblemsToFile(problems: ProblemItem[]): Promise<void> {
   await saveTextToFile({
     title: "Save Problems",
@@ -128,6 +124,25 @@ function outputLinesToText(
     .join("\n");
 }
 
+function formatCount(value: number, noun: string): string {
+  return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
+}
+
+type BottomTabId =
+  | "terminal"
+  | "output"
+  | "debugger"
+  | "variables"
+  | "problems"
+  | "show-command"
+  | "help";
+
+type BottomTabDescriptor = {
+  id: BottomTabId;
+  label: string;
+  secondary?: boolean;
+};
+
 interface OutputPaneProps {
   onDebugStart: () => void;
   onDebugContinue: () => void;
@@ -152,15 +167,11 @@ export function OutputPane({
   onStop,
 }: OutputPaneProps) {
   const { state, dispatch, activeTab } = useAppState();
-  /** Scroll container for the virtualised output list. */
   const outputScrollRef = useRef<HTMLDivElement>(null);
   const [stdinInput, setStdinInput] = useState("");
   const [varFilter, setVarFilter] = useState("");
-  /** Tracks whether the user has manually scrolled up (suppresses auto-scroll). */
   const isAtBottomRef = useRef(true);
 
-  // Virtual list: renders only the visible rows plus OVERSCAN_COUNT buffer rows
-  // on either side.  estimateSize uses the line-height for text-xs (20 px).
   const OVERSCAN_COUNT = 10;
   const ESTIMATED_LINE_HEIGHT_PX = 20;
 
@@ -171,16 +182,13 @@ export function OutputPane({
     overscan: OVERSCAN_COUNT,
   });
 
-  // Detect whether the user is already at the bottom of the list.
   const handleScroll = useCallback(() => {
     const el = outputScrollRef.current;
     if (!el) return;
-    // Allow 4 px tolerance for subpixel rounding.
     isAtBottomRef.current =
       el.scrollHeight - el.scrollTop - el.clientHeight < 4;
   }, []);
 
-  // Auto-scroll to bottom only when new output arrives and the user hasn't scrolled up.
   useEffect(() => {
     if (
       isAtBottomRef.current &&
@@ -192,8 +200,7 @@ export function OutputPane({
         behavior: "auto",
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.outputLines.length, state.bottomPanelTab]);
+  }, [state.outputLines.length, state.bottomPanelTab, virtualizer]);
 
   const isDebuggerInputTab = state.bottomPanelTab === "debugger";
   const isStdinEnabled = isDebuggerInputTab
@@ -217,7 +224,7 @@ export function OutputPane({
       });
       setStdinInput("");
     } catch {
-      // Failed to send stdin
+      // Failed to send stdin.
     }
   };
 
@@ -255,9 +262,6 @@ export function OutputPane({
     }
   }, [isSavingProblems, state.problems]);
 
-  /** Maps a stream type to its display colour CSS variable.
-   *  Colours are defined in styles.css and vary per theme.
-   */
   const streamColor = (stream: string): string => {
     switch (stream) {
       case "stderr":
@@ -271,14 +275,15 @@ export function OutputPane({
     }
   };
 
-  /** Maps a PowerShell type name to a colour CSS variable for the variable inspector. */
   const typeColor = (typeName: string): string => {
     const lower = typeName.toLowerCase();
     if (lower === "string") return "var(--type-string)";
-    if (lower.includes("int") || lower === "double" || lower === "decimal")
+    if (lower.includes("int") || lower === "double" || lower === "decimal") {
       return "var(--type-int)";
-    if (lower === "boolean" || lower === "switchparameter")
+    }
+    if (lower === "boolean" || lower === "switchparameter") {
       return "var(--type-bool)";
+    }
     return "var(--type-object)";
   };
 
@@ -462,641 +467,502 @@ export function OutputPane({
     [activeTab, dispatch],
   );
 
-  const bottomTabs: Array<{
-    id:
-      | "terminal"
-      | "output"
-      | "debugger"
-      | "variables"
-      | "problems"
-      | "show-command"
-      | "help";
-    label: string;
-  }> = [
-    { id: "terminal", label: "terminal" },
-    { id: "output", label: "output" },
-    { id: "debugger", label: "debugger" },
-    { id: "show-command", label: "show command" },
-    { id: "help", label: "help" },
-    { id: "variables", label: "variables" },
-    { id: "problems", label: "problems" },
+  const primaryBottomTabs: BottomTabDescriptor[] = [
+    { id: "output", label: "Output" },
+    { id: "problems", label: "Problems" },
+    { id: "terminal", label: "Terminal" },
   ];
+
+  const utilityBottomTabs: BottomTabDescriptor[] = [
+    { id: "variables", label: "Variables", secondary: true },
+    { id: "debugger", label: "Debugger", secondary: true },
+    { id: "show-command", label: "Show Command", secondary: true },
+    { id: "help", label: "Help", secondary: true },
+  ];
+
+  const outputLineCountText = formatCount(state.outputLines.length, "line");
+  const problemCountText = formatCount(state.problems.length, "problem");
+  const variableCountText = formatCount(state.variables.length, "variable");
+
+  const activePaneMeta = (() => {
+    switch (state.bottomPanelTab) {
+      case "output":
+        return {
+          title: "Script Output",
+          subtitle:
+            state.outputLines.length === 0
+              ? "Run a script and keep the results ready to copy, save, or review here."
+              : `${outputLineCountText} from the current session, ready to copy or save.`,
+          chipLabel: state.isDebugging
+            ? state.debugPaused
+              ? "Debug paused"
+              : "Debugging"
+            : state.isRunning
+              ? "Running"
+              : "Copy-first view",
+          chipTone: state.isDebugging
+            ? state.debugPaused
+              ? "warn"
+              : "accent"
+            : state.isRunning
+              ? "accent"
+              : "default",
+        };
+      case "problems":
+        return {
+          title: "Problems",
+          subtitle:
+            state.problems.length === 0
+              ? "Parser and runtime issues from the last run appear here when they exist."
+              : `${problemCountText} parsed from the most recent script run.`,
+          chipLabel:
+            state.problems.length === 0 ? "No issues" : problemCountText,
+          chipTone: state.problems.length === 0 ? "default" : "danger",
+        };
+      case "terminal":
+        return {
+          title: "Interactive Terminal",
+          subtitle:
+            "Persistent PowerShell session for ad-hoc commands between script runs.",
+          chipLabel: "Persistent session",
+          chipTone: "accent",
+        };
+      case "variables":
+        return {
+          title: "Variables",
+          subtitle:
+            state.variables.length === 0
+              ? "Variables captured after a script run will appear here."
+              : `${variableCountText} captured from the last completed execution.`,
+          chipLabel:
+            state.variables.length === 0 ? "No variables" : variableCountText,
+          chipTone: state.variables.length === 0 ? "default" : "accent",
+        };
+      case "debugger":
+        return {
+          title: "Debugger",
+          subtitle:
+            "Breakpoints, locals, call stack, and watches for the active debug session.",
+          chipLabel: !state.isDebugging
+            ? "Idle"
+            : state.debugPaused
+              ? "Paused"
+              : "Active",
+          chipTone: !state.isDebugging
+            ? "default"
+            : state.debugPaused
+              ? "warn"
+              : "accent",
+        };
+      case "show-command":
+        return {
+          title: "Show Command",
+          subtitle:
+            "Build command invocations visually and send them back to the editor.",
+          chipLabel: "Utility",
+          chipTone: "default",
+        };
+      case "help":
+        return {
+          title: "Help",
+          subtitle:
+            "Look up command help without leaving the editor workspace.",
+          chipLabel: "Utility",
+          chipTone: "default",
+        };
+    }
+  })();
+
+  const toolbarMeta = (() => {
+    switch (state.bottomPanelTab) {
+      case "output":
+        if (state.isDebugging) {
+          return state.debugPaused
+            ? "Debugger output is paused and ready for input."
+            : "Debugger output is streaming live.";
+        }
+        return state.isRunning
+          ? "Script output is streaming live."
+          : state.outputLines.length === 0
+            ? "Use F5 to run the active script into this pane."
+            : `${outputLineCountText} available to copy, save, or clear.`;
+      case "problems":
+        return state.problems.length === 0
+          ? "No problems were parsed from the last run."
+          : `${problemCountText} available to copy or save.`;
+      case "terminal":
+        return "Use the terminal for quick PowerShell commands without changing your main output view.";
+      case "variables":
+        return state.variables.length === 0
+          ? "Run a script to capture variables here."
+          : `Showing ${formatCount(filteredVars.length, "match")} from ${variableCountText}.`;
+      case "debugger":
+        return !state.isDebugging
+          ? "Start a debug session to inspect locals and watches here."
+          : state.debugPaused
+            ? "Debugger paused: step, continue, or inspect the current frame."
+            : "Debugger active: controls will enable when execution pauses.";
+      case "show-command":
+        return "Build commands here and insert them back into the editor when ready.";
+      case "help":
+        return "Use inline help for command lookup without opening extra tools.";
+    }
+  })();
+
+  const chipClassName =
+    activePaneMeta.chipTone === "accent"
+      ? "bottom-pane-chip bottom-pane-chip-accent"
+      : activePaneMeta.chipTone === "warn"
+        ? "bottom-pane-chip bottom-pane-chip-warn"
+        : activePaneMeta.chipTone === "danger"
+          ? "bottom-pane-chip bottom-pane-chip-danger"
+          : "bottom-pane-chip";
+
+  const actionButtonClassName = (
+    options: { danger?: boolean; primary?: boolean } = {},
+  ) => {
+    const classNames = ["bottom-pane-action"];
+    if (options.primary) classNames.push("bottom-pane-action-primary");
+    if (options.danger) classNames.push("bottom-pane-action-danger");
+    return classNames.join(" ");
+  };
+
+  const renderTabButton = (tab: BottomTabDescriptor) => {
+    const isActive = state.bottomPanelTab === tab.id;
+    let badgeText: string | null = null;
+    let badgeClassName = "bottom-pane-badge";
+
+    if (tab.id === "output" && state.outputLines.length > 0) {
+      badgeText = state.outputLines.length.toLocaleString();
+    }
+    if (tab.id === "problems" && state.problems.length > 0) {
+      badgeText = state.problems.length.toLocaleString();
+      badgeClassName = "bottom-pane-badge bottom-pane-badge-danger";
+    }
+    if (tab.id === "variables" && state.variables.length > 0) {
+      badgeText = state.variables.length.toLocaleString();
+      badgeClassName = "bottom-pane-badge bottom-pane-badge-accent";
+    }
+    if (tab.id === "debugger" && state.isDebugging) {
+      badgeText = state.debugPaused ? "Paused" : "Active";
+      badgeClassName = state.debugPaused
+        ? "bottom-pane-badge bottom-pane-badge-warn"
+        : "bottom-pane-badge bottom-pane-badge-accent";
+    }
+
+    return (
+      <button
+        key={tab.id}
+        data-testid={`output-tab-${tab.id}`}
+        onClick={() => {
+          dispatch({ type: "SET_BOTTOM_TAB", tab: tab.id });
+          if (tab.id === "terminal") {
+            requestAnimationFrame(() => {
+              (
+                window as unknown as Record<string, () => void>
+              ).__psforge_terminal_focus?.();
+            });
+          }
+          if (tab.id === "output") {
+            isAtBottomRef.current = true;
+            requestAnimationFrame(() => {
+              if (state.outputLines.length > 0) {
+                virtualizer.scrollToIndex(state.outputLines.length - 1, {
+                  align: "end",
+                  behavior: "auto",
+                });
+              }
+            });
+          }
+        }}
+        className={[
+          "bottom-pane-tab",
+          isActive ? "bottom-pane-tab-active" : "",
+          tab.secondary ? "bottom-pane-tab-secondary" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        title={tab.label}
+      >
+        <span>{tab.label}</span>
+        {badgeText && <span className={badgeClassName}>{badgeText}</span>}
+      </button>
+    );
+  };
+
+  const showInputRow =
+    (state.bottomPanelTab === "output" && state.isRunning) ||
+    (state.bottomPanelTab === "debugger" && state.isDebugging);
 
   return (
     <div
       data-testid="output-pane"
-      className="flex flex-col h-full"
-      style={{
-        backgroundColor: "var(--bg-panel)",
-        borderTop: "1px solid var(--border-primary)",
-      }}
+      className="flex flex-col h-full bottom-pane-shell"
     >
-      {/* Panel tabs */}
-      <div
-        className="flex items-center no-select text-sm"
-        style={{
-          borderBottom: "1px solid var(--border-primary)",
-          backgroundColor: "var(--bg-secondary)",
-          minHeight: "38px",
-          whiteSpace: "nowrap",
-          overflowX: "auto",
-          overflowY: "hidden",
-        }}
-      >
-        {bottomTabs.map((tab) => (
-          <button
-            key={tab.id}
-            data-testid={`output-tab-${tab.id}`}
-            onClick={() => {
-              dispatch({ type: "SET_BOTTOM_TAB", tab: tab.id });
-              // When switching to the terminal, focus it immediately while
-              // we are still inside the user-gesture call stack so WebView2
-              // allows the focus() call to succeed.
-              if (tab.id === "terminal") {
-                requestAnimationFrame(() => {
+      <div className="bottom-pane-header no-select text-sm">
+        <div className="bottom-pane-heading">
+          <div className="bottom-pane-title-row">
+            <span className="bottom-pane-title">{activePaneMeta.title}</span>
+            <span className={chipClassName}>{activePaneMeta.chipLabel}</span>
+          </div>
+          <div className="bottom-pane-subtitle">{activePaneMeta.subtitle}</div>
+        </div>
+
+        <div className="bottom-pane-tab-rails">
+          <div className="bottom-pane-tab-group">
+            {primaryBottomTabs.map(renderTabButton)}
+          </div>
+          <div className="bottom-pane-tab-group">
+            {utilityBottomTabs.map(renderTabButton)}
+          </div>
+        </div>
+      </div>
+
+      <div className="bottom-pane-toolbar">
+        <div className="bottom-pane-toolbar-meta">{toolbarMeta}</div>
+
+        <div className="bottom-pane-action-group">
+          {activeEditableTab && (
+            <>
+              <button
+                data-testid="bottom-pane-text-mode-toggle"
+                onClick={toggleTextEditor}
+                className={actionButtonClassName({
+                  primary: isTextEditorActive,
+                })}
+                title="Open an editable text snapshot for the current pane"
+              >
+                {isTextEditorActive ? "Structured View" : "Text View"}
+              </button>
+
+              {isTextEditorActive && (
+                <>
+                  <button
+                    data-testid="bottom-pane-text-undo"
+                    onClick={undoTextEditor}
+                    disabled={
+                      !textEditorState || textEditorState.undoStack.length === 0
+                    }
+                    className={actionButtonClassName()}
+                    title="Undo the last text edit (Ctrl+Z)"
+                  >
+                    Undo
+                  </button>
+                  <button
+                    data-testid="bottom-pane-text-redo"
+                    onClick={redoTextEditor}
+                    disabled={
+                      !textEditorState || textEditorState.redoStack.length === 0
+                    }
+                    className={actionButtonClassName()}
+                    title="Redo the last undone edit (Ctrl+Y / Ctrl+Shift+Z)"
+                  >
+                    Redo
+                  </button>
+                  <button
+                    data-testid="bottom-pane-text-copy"
+                    onClick={copyTextEditor}
+                    disabled={
+                      !textEditorState || textEditorState.text.length === 0
+                    }
+                    className={actionButtonClassName({ primary: true })}
+                    title="Copy the editable pane text"
+                  >
+                    Copy
+                  </button>
+                  <button
+                    data-testid="bottom-pane-text-reset"
+                    onClick={resetTextEditor}
+                    className={actionButtonClassName()}
+                    title="Reload the current pane text into the editor"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    data-testid="bottom-pane-text-clear"
+                    onClick={clearTextEditor}
+                    disabled={
+                      !textEditorState || textEditorState.text.length === 0
+                    }
+                    className={actionButtonClassName({ danger: true })}
+                    title="Clear only the editable pane text"
+                  >
+                    Clear
+                  </button>
+                </>
+              )}
+            </>
+          )}
+
+          {!isTextEditorActive && state.bottomPanelTab === "output" && (
+            <>
+              <button
+                onClick={copyAll}
+                disabled={state.outputLines.length === 0}
+                className={actionButtonClassName({ primary: true })}
+                title="Copy all output to clipboard"
+              >
+                Copy Output
+              </button>
+              <button
+                onClick={handleSaveOutput}
+                disabled={isSavingOutput || state.outputLines.length === 0}
+                className={actionButtonClassName()}
+                title="Save output to file"
+              >
+                {isSavingOutput ? "Saving..." : "Save..."}
+              </button>
+              <button
+                data-testid="output-clear-button"
+                onClick={() => dispatch({ type: "CLEAR_OUTPUT" })}
+                disabled={state.outputLines.length === 0}
+                className={actionButtonClassName({ danger: true })}
+                title="Clear output"
+              >
+                Clear
+              </button>
+            </>
+          )}
+
+          {!isTextEditorActive && state.bottomPanelTab === "problems" && (
+            <>
+              <button
+                onClick={copyProblems}
+                disabled={state.problems.length === 0}
+                className={actionButtonClassName({ primary: true })}
+                title="Copy all problems to clipboard"
+              >
+                Copy Problems
+              </button>
+              <button
+                onClick={handleSaveProblems}
+                disabled={isSavingProblems || state.problems.length === 0}
+                className={actionButtonClassName()}
+                title="Save problems to file"
+              >
+                {isSavingProblems ? "Saving..." : "Save..."}
+              </button>
+              <button
+                data-testid="problems-clear-button"
+                onClick={() => dispatch({ type: "CLEAR_PROBLEMS" })}
+                disabled={state.problems.length === 0}
+                className={actionButtonClassName({ danger: true })}
+                title="Clear problems"
+              >
+                Clear
+              </button>
+            </>
+          )}
+
+          {state.bottomPanelTab === "terminal" && (
+            <>
+              <button
+                onClick={() =>
                   (
                     window as unknown as Record<string, () => void>
-                  ).__psforge_terminal_focus?.();
-                });
-              }
-            }}
-            className="transition-colors"
-            style={{
-              padding: "8px 28px",
-              display: "inline-flex",
-              alignItems: "center",
-              whiteSpace: "nowrap",
-              flexShrink: 0,
-              backgroundColor: "transparent",
-              color:
-                state.bottomPanelTab === tab.id
-                  ? "var(--text-primary)"
-                  : "var(--text-secondary)",
-              borderBottom:
-                state.bottomPanelTab === tab.id
-                  ? "2px solid var(--accent)"
-                  : "2px solid transparent",
-            }}
-          >
-            {tab.label}
-            {tab.id === "output" && state.outputLines.length > 0 && (
-              <span className="opacity-60"> ({state.outputLines.length})</span>
-            )}
-            {tab.id === "problems" && state.problems.length > 0 && (
-              <span
-                style={{
-                  color: "var(--stream-stderr)",
-                  fontWeight: 600,
-                }}
+                  ).__psforge_terminal_clear?.()
+                }
+                className={actionButtonClassName()}
+                title="Clear terminal output"
               >
-                {" "}
-                ({state.problems.length})
-              </span>
-            )}
-            {tab.id === "debugger" && state.isDebugging && (
-              <span
-                style={{
-                  color: state.debugPaused
-                    ? "var(--stream-warning)"
-                    : "var(--text-accent)",
-                  fontWeight: 600,
-                }}
+                Clear
+              </button>
+              <button
+                onClick={() =>
+                  (
+                    window as unknown as Record<string, () => void>
+                  ).__psforge_terminal_restart?.()
+                }
+                className={actionButtonClassName()}
+                title="Restart PowerShell session"
               >
-                {" "}
-                ({state.debugPaused ? "paused" : "active"})
-              </span>
-            )}
-          </button>
-        ))}
+                Restart Session
+              </button>
+            </>
+          )}
 
-        <div className="flex-1" />
-
-        {activeEditableTab && (
-          <>
-            <button
-              data-testid="bottom-pane-text-mode-toggle"
-              onClick={toggleTextEditor}
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color: isTextEditorActive
-                  ? "var(--text-accent)"
-                  : "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: isTextEditorActive ? "4px" : "8px",
-              }}
-              title="Open an editable text snapshot for the current pane"
-            >
-              {isTextEditorActive ? "Structured" : "Text Mode"}
-            </button>
-
-            {isTextEditorActive && (
-              <>
-                <button
-                  data-testid="bottom-pane-text-undo"
-                  onClick={undoTextEditor}
-                  disabled={
-                    !textEditorState || textEditorState.undoStack.length === 0
-                  }
-                  style={{
-                    padding: "6px 14px",
-                    backgroundColor: "transparent",
-                    color:
-                      !textEditorState || textEditorState.undoStack.length === 0
-                        ? "var(--text-muted)"
-                        : "var(--text-secondary)",
-                    cursor:
-                      !textEditorState || textEditorState.undoStack.length === 0
-                        ? "default"
-                        : "pointer",
-                    fontSize: "var(--ui-font-size-sm)",
-                    border: "none",
-                    borderRadius: "3px",
-                    marginRight: "4px",
-                  }}
-                  title="Undo the last text edit (Ctrl+Z)"
-                >
-                  Undo
-                </button>
-                <button
-                  data-testid="bottom-pane-text-redo"
-                  onClick={redoTextEditor}
-                  disabled={
-                    !textEditorState || textEditorState.redoStack.length === 0
-                  }
-                  style={{
-                    padding: "6px 14px",
-                    backgroundColor: "transparent",
-                    color:
-                      !textEditorState || textEditorState.redoStack.length === 0
-                        ? "var(--text-muted)"
-                        : "var(--text-secondary)",
-                    cursor:
-                      !textEditorState || textEditorState.redoStack.length === 0
-                        ? "default"
-                        : "pointer",
-                    fontSize: "var(--ui-font-size-sm)",
-                    border: "none",
-                    borderRadius: "3px",
-                    marginRight: "4px",
-                  }}
-                  title="Redo the last undone edit (Ctrl+Y / Ctrl+Shift+Z)"
-                >
-                  Redo
-                </button>
-                <button
-                  data-testid="bottom-pane-text-copy"
-                  onClick={copyTextEditor}
-                  disabled={
-                    !textEditorState || textEditorState.text.length === 0
-                  }
-                  style={{
-                    padding: "6px 14px",
-                    backgroundColor: "transparent",
-                    color:
-                      !textEditorState || textEditorState.text.length === 0
-                        ? "var(--text-muted)"
-                        : "var(--text-secondary)",
-                    cursor:
-                      !textEditorState || textEditorState.text.length === 0
-                        ? "default"
-                        : "pointer",
-                    fontSize: "var(--ui-font-size-sm)",
-                    border: "none",
-                    borderRadius: "3px",
-                    marginRight: "4px",
-                  }}
-                  title="Copy the editable pane text"
-                >
-                  Copy
-                </button>
-                <button
-                  data-testid="bottom-pane-text-reset"
-                  onClick={resetTextEditor}
-                  style={{
-                    padding: "6px 14px",
-                    backgroundColor: "transparent",
-                    color: "var(--text-secondary)",
-                    cursor: "pointer",
-                    fontSize: "var(--ui-font-size-sm)",
-                    border: "none",
-                    borderRadius: "3px",
-                    marginRight: "4px",
-                  }}
-                  title="Reload the current pane text into the editor"
-                >
-                  Reset
-                </button>
-                <button
-                  data-testid="bottom-pane-text-clear"
-                  onClick={clearTextEditor}
-                  disabled={
-                    !textEditorState || textEditorState.text.length === 0
-                  }
-                  style={{
-                    padding: "6px 14px",
-                    backgroundColor: "transparent",
-                    color:
-                      !textEditorState || textEditorState.text.length === 0
-                        ? "var(--text-muted)"
-                        : "var(--text-secondary)",
-                    cursor:
-                      !textEditorState || textEditorState.text.length === 0
-                        ? "default"
-                        : "pointer",
-                    fontSize: "var(--ui-font-size-sm)",
-                    border: "none",
-                    borderRadius: "3px",
-                    marginRight: "8px",
-                  }}
-                  title="Clear only the editable pane text"
-                >
-                  Clear
-                </button>
-              </>
-            )}
-          </>
-        )}
-
-        {!isTextEditorActive && state.bottomPanelTab === "output" && (
-          <>
-            <button
-              onClick={copyAll}
-              disabled={state.outputLines.length === 0}
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color:
-                  state.outputLines.length === 0
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor: state.outputLines.length === 0 ? "default" : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Copy all output to clipboard"
-            >
-              Copy
-            </button>
-            <button
-              onClick={handleSaveOutput}
-              disabled={isSavingOutput || state.outputLines.length === 0}
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color:
-                  isSavingOutput || state.outputLines.length === 0
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor:
-                  isSavingOutput || state.outputLines.length === 0
-                    ? "default"
-                    : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Save output to file"
-            >
-              {isSavingOutput ? "Saving..." : "Save..."}
-            </button>
-            <button
-              data-testid="output-clear-button"
-              onClick={() => dispatch({ type: "CLEAR_OUTPUT" })}
-              disabled={state.outputLines.length === 0}
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color:
-                  state.outputLines.length === 0
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor: state.outputLines.length === 0 ? "default" : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "8px",
-              }}
-              title="Clear output"
-            >
-              Clear
-            </button>
-          </>
-        )}
-
-        {!isTextEditorActive && state.bottomPanelTab === "problems" && (
-          <>
-            <button
-              onClick={copyProblems}
-              disabled={state.problems.length === 0}
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color:
-                  state.problems.length === 0
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor: state.problems.length === 0 ? "default" : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Copy all problems to clipboard"
-            >
-              Copy
-            </button>
-            <button
-              onClick={handleSaveProblems}
-              disabled={isSavingProblems || state.problems.length === 0}
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color:
-                  isSavingProblems || state.problems.length === 0
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor:
-                  isSavingProblems || state.problems.length === 0
-                    ? "default"
-                    : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Save problems to file"
-            >
-              {isSavingProblems ? "Saving..." : "Save..."}
-            </button>
-            <button
-              data-testid="problems-clear-button"
-              onClick={() => dispatch({ type: "CLEAR_PROBLEMS" })}
-              disabled={state.problems.length === 0}
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color:
-                  state.problems.length === 0
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor: state.problems.length === 0 ? "default" : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "8px",
-              }}
-              title="Clear problems"
-            >
-              Clear
-            </button>
-          </>
-        )}
-
-        {state.bottomPanelTab === "terminal" && (
-          <>
-            <button
-              onClick={() =>
-                (
-                  window as unknown as Record<string, () => void>
-                ).__psforge_terminal_clear?.()
-              }
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color: "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Clear terminal output"
-            >
-              Clear
-            </button>
-            <button
-              onClick={() =>
-                (
-                  window as unknown as Record<string, () => void>
-                ).__psforge_terminal_restart?.()
-              }
-              style={{
-                padding: "6px 14px",
-                backgroundColor: "transparent",
-                color: "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "8px",
-              }}
-              title="Restart PowerShell session"
-            >
-              Restart
-            </button>
-          </>
-        )}
-
-        {state.bottomPanelTab === "debugger" && (
-          <>
-            <button
-              onClick={onDebugStart}
-              disabled={
-                state.isRunning ||
-                !state.selectedPsPath ||
-                !activeTab ||
-                activeTab.tabType === "welcome"
-              }
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "transparent",
-                color:
+          {state.bottomPanelTab === "debugger" && (
+            <>
+              <button
+                onClick={onDebugStart}
+                disabled={
                   state.isRunning ||
                   !state.selectedPsPath ||
                   !activeTab ||
                   activeTab.tabType === "welcome"
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor:
-                  state.isRunning ||
-                  !state.selectedPsPath ||
-                  !activeTab ||
-                  activeTab.tabType === "welcome"
-                    ? "default"
-                    : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Start debugging"
-            >
-              Start
-            </button>
-            <button
-              onClick={onDebugContinue}
-              disabled={!state.isDebugging || !state.debugPaused}
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "transparent",
-                color:
-                  !state.isDebugging || !state.debugPaused
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor:
-                  !state.isDebugging || !state.debugPaused
-                    ? "default"
-                    : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Continue (F5)"
-            >
-              Continue
-            </button>
-            <button
-              onClick={onDebugStepOver}
-              disabled={!state.isDebugging || !state.debugPaused}
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "transparent",
-                color:
-                  !state.isDebugging || !state.debugPaused
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor:
-                  !state.isDebugging || !state.debugPaused
-                    ? "default"
-                    : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Step Over (F10)"
-            >
-              Step Over
-            </button>
-            <button
-              onClick={onDebugStepInto}
-              disabled={!state.isDebugging || !state.debugPaused}
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "transparent",
-                color:
-                  !state.isDebugging || !state.debugPaused
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor:
-                  !state.isDebugging || !state.debugPaused
-                    ? "default"
-                    : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Step Into (F11)"
-            >
-              Step Into
-            </button>
-            <button
-              onClick={onDebugStepOut}
-              disabled={!state.isDebugging || !state.debugPaused}
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "transparent",
-                color:
-                  !state.isDebugging || !state.debugPaused
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor:
-                  !state.isDebugging || !state.debugPaused
-                    ? "default"
-                    : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Step Out (Shift+F11)"
-            >
-              Step Out
-            </button>
-            <button
-              onClick={onDebugRefreshInspector}
-              disabled={!state.isDebugging || !state.debugPaused}
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "transparent",
-                color:
-                  !state.isDebugging || !state.debugPaused
-                    ? "var(--text-muted)"
-                    : "var(--text-secondary)",
-                cursor:
-                  !state.isDebugging || !state.debugPaused
-                    ? "default"
-                    : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "4px",
-              }}
-              title="Refresh locals, call stack, and watches"
-            >
-              Refresh
-            </button>
-            <button
-              onClick={onStop}
-              disabled={!state.isRunning}
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "transparent",
-                color: !state.isRunning
-                  ? "var(--text-muted)"
-                  : "var(--stream-stderr)",
-                cursor: !state.isRunning ? "default" : "pointer",
-                fontSize: "var(--ui-font-size-sm)",
-                border: "none",
-                borderRadius: "3px",
-                marginRight: "8px",
-              }}
-              title="Stop (Shift+F5)"
-            >
-              Stop
-            </button>
-          </>
-        )}
+                }
+                className={actionButtonClassName({ primary: true })}
+                title="Start debugging"
+              >
+                Start
+              </button>
+              <button
+                onClick={onDebugContinue}
+                disabled={!state.isDebugging || !state.debugPaused}
+                className={actionButtonClassName()}
+                title="Continue (F5)"
+              >
+                Continue
+              </button>
+              <button
+                onClick={onDebugStepOver}
+                disabled={!state.isDebugging || !state.debugPaused}
+                className={actionButtonClassName()}
+                title="Step Over (F10)"
+              >
+                Step Over
+              </button>
+              <button
+                onClick={onDebugStepInto}
+                disabled={!state.isDebugging || !state.debugPaused}
+                className={actionButtonClassName()}
+                title="Step Into (F11)"
+              >
+                Step Into
+              </button>
+              <button
+                onClick={onDebugStepOut}
+                disabled={!state.isDebugging || !state.debugPaused}
+                className={actionButtonClassName()}
+                title="Step Out (Shift+F11)"
+              >
+                Step Out
+              </button>
+              <button
+                onClick={onDebugRefreshInspector}
+                disabled={!state.isDebugging || !state.debugPaused}
+                className={actionButtonClassName()}
+                title="Refresh locals, call stack, and watches"
+              >
+                Refresh
+              </button>
+              <button
+                onClick={onStop}
+                disabled={!state.isRunning}
+                className={actionButtonClassName({ danger: true })}
+                title="Stop (Shift+F5)"
+              >
+                Stop
+              </button>
+            </>
+          )}
 
-        {!isTextEditorActive && state.bottomPanelTab === "variables" && (
-          <input
-            data-testid="variables-filter"
-            value={varFilter}
-            onChange={(e) => setVarFilter(e.target.value)}
-            placeholder="Filter variables..."
-            className="mr-1 px-2 py-0.5"
-            style={{
-              fontSize: `${state.settings.outputFontSize ?? 13}px`,
-              fontFamily:
-                state.settings.outputFontFamily ??
-                "Cascadia Code, Consolas, monospace",
-              width: "180px",
-              backgroundColor: "var(--bg-input)",
-              border: "1px solid var(--border-primary)",
-              color: "var(--text-primary)",
-              borderRadius: "2px",
-            }}
-          />
-        )}
+          {!isTextEditorActive && state.bottomPanelTab === "variables" && (
+            <input
+              data-testid="variables-filter"
+              value={varFilter}
+              onChange={(e) => setVarFilter(e.target.value)}
+              placeholder="Filter variables..."
+              className="bottom-pane-filter"
+              style={{
+                fontSize: `${state.settings.outputFontSize ?? 13}px`,
+                fontFamily:
+                  state.settings.outputFontFamily ??
+                  "Cascadia Code, Consolas, monospace",
+              }}
+            />
+          )}
+        </div>
       </div>
 
       {/* Panel content — flex column so the terminal gets explicit height via flex:1 */}
@@ -1152,8 +1018,12 @@ export function OutputPane({
             }}
           >
             {state.outputLines.length === 0 && (
-              <div className="p-2" style={{ color: "var(--text-muted)" }}>
-                Output will appear here when you run a script (F5).
+              <div className="bottom-pane-empty">
+                <strong>Run a script to fill this pane.</strong>
+                <span>
+                  PSForge is now tuned to keep script output easy to read, copy,
+                  and save without switching into the terminal first.
+                </span>
               </div>
             )}
             {/* Outer div sized to the total virtual height so the scrollbar is correct. */}
@@ -1171,6 +1041,7 @@ export function OutputPane({
                     key={vItem.key}
                     data-index={vItem.index}
                     ref={virtualizer.measureElement}
+                    className="bottom-pane-log-line"
                     style={{
                       position: "absolute",
                       top: 0,
@@ -1343,15 +1214,10 @@ export function OutputPane({
       </div>
 
       {/* Stdin/debugger input row (visible in output and debugger tabs). */}
-      {(state.bottomPanelTab === "output" ||
-        state.bottomPanelTab === "debugger") && (
+      {showInputRow && (
         <form
           onSubmit={handleStdinSubmit}
-          className="flex items-center px-2 py-1"
-          style={{
-            borderTop: "1px solid var(--border-primary)",
-            backgroundColor: "var(--bg-secondary)",
-          }}
+          className="flex items-center px-2 py-1 bottom-pane-input-row"
         >
           <span
             className="mr-1 text-xs"
