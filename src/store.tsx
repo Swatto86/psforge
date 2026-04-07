@@ -13,12 +13,10 @@ import React, {
 } from "react";
 import type {
   EditorTab,
-  OutputLine,
   PsVersion,
   AppSettings,
   VariableInfo,
   ModuleInfo,
-  ProblemItem,
   DebugBreakpoint,
   DebugLocal,
   DebugStackFrame,
@@ -31,17 +29,10 @@ import * as cmd from "./commands";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Maximum number of output lines retained in React state.
- *  Prevents unbounded memory growth for long-running scripts.
- *  The Rust backend already caps at 100 000 lines; this is the UI-side bound.
- */
-const MAX_OUTPUT_LINES = 10_000;
 const SESSION_STORAGE_KEY = "psforge.session.v1";
 
 type BottomPanelTab =
-  | "output"
   | "variables"
-  | "problems"
   | "terminal"
   | "debugger"
   | "show-command"
@@ -61,9 +52,7 @@ interface PersistedSession {
 
 function isBottomPanelTab(value: unknown): value is BottomPanelTab {
   return (
-    value === "output" ||
     value === "variables" ||
-    value === "problems" ||
     value === "terminal" ||
     value === "debugger" ||
     value === "show-command" ||
@@ -265,9 +254,12 @@ function loadPersistedSession(): PersistedSession | null {
         typeof rec.activeTabId === "string"
           ? rec.activeTabId
           : uniqueTabs[0].id,
-      bottomPanelTab: isBottomPanelTab(rec.bottomPanelTab)
-        ? rec.bottomPanelTab
-        : "output",
+      bottomPanelTab:
+        rec.bottomPanelTab === "output" || rec.bottomPanelTab === "problems"
+          ? "terminal"
+          : isBottomPanelTab(rec.bottomPanelTab)
+            ? rec.bottomPanelTab
+            : "terminal",
       workingDir: typeof rec.workingDir === "string" ? rec.workingDir : "",
       selectedPsPath:
         typeof rec.selectedPsPath === "string" ? rec.selectedPsPath : "",
@@ -286,9 +278,6 @@ function loadPersistedSession(): PersistedSession | null {
 export interface AppState {
   tabs: EditorTab[];
   activeTabId: string;
-  outputLines: OutputLine[];
-  /** Diagnostic problems parsed from the last script run's stderr output. */
-  problems: ProblemItem[];
   isRunning: boolean;
   psVersions: PsVersion[];
   selectedPsPath: string;
@@ -368,8 +357,6 @@ const initialTab = createInitialTab();
 const initialState: AppState = {
   tabs: [initialTab],
   activeTabId: initialTab.id,
-  outputLines: [],
-  problems: [],
   isRunning: false,
   psVersions: [],
   selectedPsPath: "",
@@ -381,7 +368,7 @@ const initialState: AppState = {
   modulesLoading: false,
   sidebarVisible: true,
   sidebarPosition: "left" as const,
-  bottomPanelTab: "output",
+  bottomPanelTab: "terminal",
   settingsOpen: false,
   commandPaletteOpen: false,
   commandPaletteMode: "all",
@@ -413,9 +400,6 @@ type Action =
   | { type: "CLOSE_TAB"; id: string }
   | { type: "UPDATE_TAB"; id: string; changes: Partial<EditorTab> }
   | { type: "REORDER_TABS"; fromId: string; toId: string }
-  | { type: "ADD_OUTPUT"; line: OutputLine }
-  | { type: "CLEAR_OUTPUT" }
-  | { type: "CLEAR_PROBLEMS" }
   | { type: "SET_RUNNING"; running: boolean }
   | { type: "SET_PS_VERSIONS"; versions: PsVersion[] }
   | { type: "SET_SELECTED_PS"; path: string }
@@ -425,7 +409,6 @@ type Action =
   | { type: "SET_VARIABLES"; variables: VariableInfo[] }
   | { type: "SET_MODULES"; modules: ModuleInfo[] }
   | { type: "SET_MODULES_LOADING"; loading: boolean }
-  | { type: "SET_PROBLEMS"; problems: ProblemItem[] }
   | { type: "TOGGLE_SIDEBAR" }
   | { type: "SET_SIDEBAR_POSITION"; position: "left" | "right" }
   | { type: "REMOVE_RECENT_FILE"; path: string }
@@ -461,117 +444,6 @@ type Action =
   | { type: "REMOVE_DEBUG_WATCH"; expression: string }
   | { type: "UPDATE_DEBUG_WATCH"; watch: DebugWatch }
   | { type: "CLEAR_DEBUG_INSPECTOR_VALUES" };
-
-// ---------------------------------------------------------------------------
-// Problem parsing
-// ---------------------------------------------------------------------------
-
-/**
- * Strips ANSI/VT escape sequences from a string.
- * PowerShell emits colour codes (e.g. \x1b[31;1m) in error records when the
- * host reports it supports colour.  These must be removed before the text is
- * stored or displayed as plain text.
- */
-function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  return text
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "");
-}
-
-/**
- * Parses stderr output lines from a completed run into structured ProblemItem records.
- *
- * Handles both PS5 and PS7 error record formats:
- *
- * PS5 / common runtime errors:
- *   <message>
- *   At <path>:<line> char:<col>
- *   + <context snippet>
- *   + FullyQualifiedErrorId: ...
- *
- * PS7 parser / compile errors:
- *   ParserError:          <- error type header (skipped)
- *   Line |                <- line separator (skipped)
- *     N | <code snippet>  <- code line (skipped)
- *       | ~~~~            <- pointer (skipped)
- *       | <actual message> <- real message (| prefix stripped)
- *   At <path>:<line> char:<col>
- *
- * Location info is extracted from the nearest following "At ... char:N" line.
- */
-function parseProblems(lines: OutputLine[]): ProblemItem[] {
-  const problems: ProblemItem[] = [];
-  const stderrLines = lines.filter((l) => l.stream === "stderr");
-  if (stderrLines.length === 0) return problems;
-
-  // Matches "At line:N char:M" or "At C:\path\file.ps1:N char:M"
-  const locRe = /At\s+(?:.+:)?(\d+)\s+char:(\d+)/i;
-
-  // PS7-specific patterns (matched against the trimmed line)
-  // e.g. "ParserError:" / "RuntimeException:" standalone type headers
-  const ps7TypeHeader = /^[\w.]+(?:Error|Exception):\s*$/;
-  // e.g. "Line |" separator
-  const ps7LineSep = /^[Ll]ine\s*\|\s*$/;
-  // e.g. "  14 |  code here" code snippet
-  const ps7CodeSnippet = /^\d+\s*\|/;
-  // e.g. "|  ~~~~~" pointer-only line
-  const ps7Pointer = /^\|\s*~+\s*$/;
-  // e.g. "|  Variable reference is not valid" pipe-prefixed message
-  const ps7PipeMsg = /^\|\s+(.*)/;
-
-  for (let i = 0; i < stderrLines.length; i++) {
-    // Strip ANSI codes before any processing so escape sequences don't bleed
-    // into messages or confuse the metadata-line detection regexes.
-    const text = stripAnsi(stderrLines[i].text).trim();
-    if (!text) continue;
-    // Skip PS5-style metadata continuation lines (start with + or ~)
-    if (text.startsWith("+") || text.startsWith("~")) continue;
-    // Skip location-only lines -- they are associated with the preceding message
-    if (/^At /i.test(text) && locRe.test(text)) continue;
-    // Skip process-exit notifications emitted by the PSForge runner, not PS itself
-    if (/^Process exited with code/i.test(text)) continue;
-    // Skip lines that are just punctuation / single chars after ANSI stripping
-    if (text.length <= 2) continue;
-    // Skip PS7 noise lines
-    if (ps7TypeHeader.test(text)) continue;
-    if (ps7LineSep.test(text)) continue;
-    if (ps7CodeSnippet.test(text)) continue;
-    if (ps7Pointer.test(text)) continue;
-
-    // For PS7 pipe-prefixed lines ("| message text"), strip the leading "|".
-    let messageText = text;
-    const pipeMatch = ps7PipeMsg.exec(text);
-    if (pipeMatch) {
-      messageText = pipeMatch[1].trim();
-      if (!messageText) continue;
-    }
-
-    // Look ahead up to 6 lines for the location context.
-    let lineNum: number | undefined;
-    let colNum: number | undefined;
-    for (let j = i + 1; j < Math.min(i + 7, stderrLines.length); j++) {
-      // Trim + strip ANSI before matching: PowerShell indents "At line:N char:M"
-      // lines with leading spaces, which would otherwise cause the regex to miss them.
-      const m = locRe.exec(stripAnsi(stderrLines[j].text).trim());
-      if (m) {
-        lineNum = parseInt(m[1], 10);
-        colNum = parseInt(m[2], 10);
-        break;
-      }
-    }
-
-    problems.push({
-      severity: "error",
-      message: messageText,
-      source: "PowerShell",
-      line: lineNum,
-      column: colNum,
-    });
-  }
-
-  return problems;
-}
 
 /** Pure reducer function for PSForge app state.
  *  Handles every Action variant by returning a new state object (immutable update).
@@ -631,36 +503,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, tabs };
     }
 
-    case "ADD_OUTPUT": {
-      const next = [...state.outputLines, action.line];
-      // Trim oldest lines when the cap is exceeded to prevent memory growth.
-      const trimmed =
-        next.length > MAX_OUTPUT_LINES
-          ? next.slice(next.length - MAX_OUTPUT_LINES)
-          : next;
-      return { ...state, outputLines: trimmed };
-    }
-
-    case "CLEAR_OUTPUT":
-      return { ...state, outputLines: [] };
-
-    case "CLEAR_PROBLEMS":
-      return { ...state, problems: [] };
-
     case "SET_RUNNING":
-      if (!action.running) {
-        // When a run finishes, parse stderr lines into structured problems.
-        return {
-          ...state,
-          isRunning: false,
-          problems: parseProblems(state.outputLines),
-        };
-      }
-      // BUG-NEW-3 fix: clear stale problems immediately when a new run starts
-      // so the Problems tab never shows diagnostics from the previous run
-      // while the current script is executing.  Problems are re-populated
-      // from stderr when SET_RUNNING: false fires at run completion.
-      return { ...state, isRunning: true, problems: [] };
+      return { ...state, isRunning: action.running };
 
     case "SET_PS_VERSIONS":
       return { ...state, psVersions: action.versions };
@@ -685,9 +529,6 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "SET_MODULES_LOADING":
       return { ...state, modulesLoading: action.loading };
-
-    case "SET_PROBLEMS":
-      return { ...state, problems: action.problems };
 
     case "TOGGLE_SIDEBAR":
       return { ...state, sidebarVisible: !state.sidebarVisible };

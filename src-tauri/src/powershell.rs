@@ -18,6 +18,8 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
+const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+
 /// Maximum number of output lines to buffer per process (memory bound).
 const MAX_OUTPUT_LINES: usize = 100_000;
 /// Poll interval for checking whether the persistent PowerShell process exited.
@@ -453,6 +455,8 @@ impl ProcessManager {
         })?;
 
         let mut ps_args: Vec<String> = vec!["-NoLogo".to_string(), "-NoProfile".to_string()];
+        ps_args.push("-WindowStyle".to_string());
+        ps_args.push("Hidden".to_string());
         if exec_policy != "Default" {
             ps_args.push("-ExecutionPolicy".to_string());
             ps_args.push(exec_policy.to_string());
@@ -466,7 +470,11 @@ impl ProcessManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .creation_flags(0x08000000)
+            // Start ConsoleHost with a real console from process creation time.
+            // Some scripts and debugger flows touch RawUI screen-buffer APIs;
+            // launching with CREATE_NO_WINDOW and allocating a console later can
+            // leave those APIs bound to an invalid handle.
+            .creation_flags(CREATE_NEW_CONSOLE)
             .spawn()
             .map_err(|e| {
                 let _ = std::fs::remove_file(&bootstrap_script_path);

@@ -218,4 +218,4 @@ In `tauri.conf.json`, the CSP is set to allow `devtools`. Open the WebView2 devt
 | `cargo clippy` warns about `new_without_default` | Struct with `new()` lacks `Default` | Add `impl Default { fn default() -> Self { Self::new() } }` |
 | Frontend shows blank white screen on first launch | Expensive init inside `run_native` closure | Move all init before `run_native` (Rule 16) |
 | Settings silently reset to defaults | Corrupt JSON in `%APPDATA%/PSForge/settings.json` | Delete the file to regenerate defaults; check error logs |
-| PowerShell execution fails | Wrong path or execution policy | Verify path with `Get-Command powershell` and check Output pane for errors |
+| PowerShell execution fails | Wrong path or execution policy | Verify path with `Get-Command powershell` and inspect the integrated terminal output |

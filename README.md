@@ -11,12 +11,12 @@ PSForge is a native desktop application built with [Tauri v2](https://tauri.app/
 | Feature                 | Description                                                                   |
 | ----------------------- | ----------------------------------------------------------------------------- |
 | **Monaco Editor**       | Syntax highlighting, IntelliSense, find/replace, multi-cursor                 |
-| **Script Execution**    | Run full scripts (F5) or selection/current line (F8); streamed stdout/stderr  |
+| **Script Execution**    | Run full scripts (F5) or selection/current line (F8) directly in the integrated terminal |
 | **Integrated Terminal** | xterm.js-based persistent PowerShell session                                  |
 | **Module Browser**      | Sidebar listing installed modules with expandable command lists               |
 | **Outline Navigator**   | Sidebar outline of functions/classes/regions with click-to-jump               |
 | **Variables Inspector** | View all variables after a script run                                         |
-| **Problems Panel**      | Parse and navigate stderr errors with line/column references                  |
+| **Error Navigation**    | Parse PowerShell errors and jump to line/column locations in the editor       |
 | **Snippet Library**     | 20 built-in PowerShell templates + user-defined snippets via Command Palette  |
 | **File Associations**   | Register PSForge as the default .ps1/.psm1/.psd1 handler (per-user, no admin) |
 | **Themes**              | Dark, Light, and ISE-Classic themes synced across editor and UI               |
@@ -123,7 +123,7 @@ This starts Vite with HMR and a live-reload Tauri window.
          Tauri IPC  (invoke / emit / listen)
 +------------------------------------------------------+
 |  Backend  (Rust + Tauri v2 + tokio)                  |
-|  Process management, file I/O, settings, registry    |
+|  Terminal orchestration, debug host, file I/O, settings, registry |
 +------------------------------------------------------+
          OS Layer
 +------------------------------------------------------+

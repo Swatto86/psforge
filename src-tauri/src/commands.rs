@@ -6,6 +6,7 @@ use crate::settings::{self, AppSettings};
 use crate::utils::{with_retry, write_secure_temp_file};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use tauri::{Emitter, Window};
 
@@ -46,83 +47,104 @@ fn variables_marker_payload(text: &str) -> Option<&str> {
         .map(str::trim)
 }
 
+fn ps_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn resolve_terminal_working_dir(working_dir: &str) -> Result<String, AppError> {
+    let trimmed = working_dir.trim();
+    if !trimmed.is_empty() {
+        let candidate = PathBuf::from(trimmed);
+        if candidate.is_dir() {
+            return Ok(candidate.to_string_lossy().into_owned());
+        }
+        return Err(AppError {
+            code: "INVALID_WORKING_DIR".to_string(),
+            message: format!(
+                "Working directory '{}' does not exist or is not a directory",
+                trimmed
+            ),
+        });
+    }
+
+    match std::env::current_dir() {
+        Ok(path) => Ok(path.to_string_lossy().into_owned()),
+        Err(_) => Ok(std::env::temp_dir().to_string_lossy().into_owned()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Script Execution
 // ---------------------------------------------------------------------------
 
-/// Executes a complete PowerShell script. Output is streamed via Tauri events.
+/// Prepares a one-shot PowerShell command line for execution inside the
+/// integrated terminal.
+///
+/// The returned command:
+/// - launches the selected PowerShell executable as a child process,
+/// - runs the provided script from a secure temp file,
+/// - executes within the requested working directory,
+/// - optionally applies an execution policy override, and
+/// - removes the temp file afterwards so terminal-driven runs do not leave
+///   stale wrapper scripts behind.
 #[tauri::command]
-pub async fn execute_script(
-    window: Window,
+pub async fn prepare_terminal_script_command(
     ps_path: String,
     script: String,
     working_dir: String,
     exec_policy: String,
     script_args: Option<Vec<String>>,
-    persist_runspace: Option<bool>,
-) -> Result<i32, AppError> {
-    info!("execute_script called with ps_path={}", ps_path);
+) -> Result<String, AppError> {
+    info!("prepare_terminal_script_command called with ps_path={}", ps_path);
     powershell::validate_ps_path(&ps_path)?;
 
-    let win = window.clone();
-    let exit_code = pm()
-        .execute(
-            &ps_path,
-            &script,
-            &working_dir,
-            &exec_policy,
-            persist_runspace.unwrap_or(true),
-            script_args.as_deref().unwrap_or(&[]),
-            None,
-            move |line: OutputLine| {
-                if let Some(json) = variables_marker_payload(&line.text) {
-                    pm().cache_last_variables_json(json.to_string());
-                    let variables = parse_variable_info_json(json);
-                    if let Err(e) = win.emit("ps-variables", &variables) {
-                        error!("Failed to emit ps-variables event: {}", e);
-                    }
-                    return;
-                }
-                if let Err(e) = win.emit("ps-output", &line) {
-                    error!("Failed to emit ps-output event: {}", e);
-                }
-            },
-        )
-        .await?;
-
-    // Emit completion event
-    window
-        .emit("ps-complete", exit_code)
-        .map_err(|e| AppError {
-            code: "EMIT_FAILED".to_string(),
-            message: format!("Failed to emit completion event: {}", e),
-        })?;
-
-    Ok(exit_code)
-}
-
-/// Executes a selection of PowerShell code. Same as execute_script but semantically
-/// indicates it was a partial selection (F8 behaviour).
-#[tauri::command]
-pub async fn execute_selection(
-    window: Window,
-    ps_path: String,
-    selection: String,
-    working_dir: String,
-    exec_policy: String,
-    persist_runspace: Option<bool>,
-) -> Result<i32, AppError> {
-    info!("execute_selection called");
-    execute_script(
-        window,
-        ps_path,
-        selection,
-        working_dir,
-        exec_policy,
-        None,
-        persist_runspace,
+    let effective_working_dir = resolve_terminal_working_dir(&working_dir)?;
+    let user_script_path = write_secure_temp_file(
+        "psforge_terminal_run",
+        ".ps1",
+        script.as_bytes(),
     )
-    .await
+    .map_err(|e| AppError {
+        code: "SCRIPT_WRITE_FAILED".to_string(),
+        message: format!("Failed to write script to temp file: {}", e),
+    })?;
+
+    let ps_path_ps = ps_single_quoted(ps_path.trim().trim_matches('"'));
+    let work_dir_ps = ps_single_quoted(&effective_working_dir);
+    let user_script_path_lossy = user_script_path.to_string_lossy();
+    let user_script_path_ps = ps_single_quoted(user_script_path_lossy.as_ref());
+
+    let mut command = String::new();
+    command.push_str("& { ");
+    command.push_str("Push-Location -LiteralPath '");
+    command.push_str(&work_dir_ps);
+    command.push_str("'; ");
+    command.push_str("try { $__psforge_script_args = @(");
+    if let Some(args) = script_args.as_deref() {
+        for (index, arg) in args.iter().enumerate() {
+            if index > 0 {
+                command.push_str(", ");
+            }
+            command.push('\'');
+            command.push_str(&ps_single_quoted(arg));
+            command.push('\'');
+        }
+    }
+    command.push_str("); & '");
+    command.push_str(&ps_path_ps);
+    command.push_str("' -NoLogo -NoProfile ");
+    if exec_policy != "Default" {
+        command.push_str("-ExecutionPolicy '");
+        command.push_str(&ps_single_quoted(&exec_policy));
+        command.push_str("' ");
+    }
+    command.push_str("-File '");
+    command.push_str(&user_script_path_ps);
+    command.push_str("' @__psforge_script_args } finally { Pop-Location; Remove-Item -LiteralPath '");
+    command.push_str(&user_script_path_ps);
+    command.push_str("' -Force -ErrorAction SilentlyContinue } }");
+
+    Ok(command)
 }
 
 /// Executes a script in debugger mode with line breakpoints.

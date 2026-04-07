@@ -169,9 +169,10 @@ describe("IntelliSense Completions", () => {
     await newBtn.click();
     await browser.pause(500);
 
-    // Switch to output tab to be in Output view (not Terminal).
-    const outputTab = await $('[data-testid="output-tab-output"]');
-    await outputTab.click();
+    // Keep the bottom pane on a non-terminal tab so terminal focus does not
+    // interfere with Monaco keyboard input during completion tests.
+    const variablesTab = await $('[data-testid="bottom-tab-variables"]');
+    await variablesTab.click();
     await browser.pause(200);
 
     // Make sure a PS version is selected.

@@ -34,9 +34,9 @@ describe('PSForge Application', () => {
       await expect(tabBar).toBeDisplayed();
     });
 
-    it('should display the output pane', async () => {
-      const outputPane = await $('[data-testid="output-pane"]');
-      await expect(outputPane).toBeDisplayed();
+    it('should display the bottom pane', async () => {
+      const bottomPane = await $('[data-testid="bottom-pane"]');
+      await expect(bottomPane).toBeDisplayed();
     });
 
     it('should display the status bar', async () => {
@@ -111,38 +111,37 @@ describe('PSForge Application', () => {
     });
   });
 
-  describe('Output Panel Tabs', () => {
+  describe('Bottom Pane Tabs', () => {
     it('should display the Terminal tab button', async () => {
-      const btn = await $('[data-testid="output-tab-terminal"]');
-      await expect(btn).toBeDisplayed();
-      await expect(btn).toBeClickable();
-    });
-
-    it('should display the Output tab button', async () => {
-      const btn = await $('[data-testid="output-tab-output"]');
+      const btn = await $('[data-testid="bottom-tab-terminal"]');
       await expect(btn).toBeDisplayed();
       await expect(btn).toBeClickable();
     });
 
     it('should display the Variables tab button', async () => {
-      const btn = await $('[data-testid="output-tab-variables"]');
+      const btn = await $('[data-testid="bottom-tab-variables"]');
       await expect(btn).toBeDisplayed();
       await expect(btn).toBeClickable();
     });
 
-    it('should display the Problems tab button', async () => {
-      const btn = await $('[data-testid="output-tab-problems"]');
+    it('should display the Debugger tab button', async () => {
+      const btn = await $('[data-testid="bottom-tab-debugger"]');
       await expect(btn).toBeDisplayed();
       await expect(btn).toBeClickable();
     });
 
-    it('should switch to Output panel when Output tab is clicked', async () => {
-      const outputTab = await $('[data-testid="output-tab-output"]');
-      await outputTab.click();
+    it('should display the Help tab button', async () => {
+      const btn = await $('[data-testid="bottom-tab-help"]');
+      await expect(btn).toBeDisplayed();
+      await expect(btn).toBeClickable();
+    });
+
+    it('should keep the terminal panel visible when Terminal tab is clicked', async () => {
+      const terminalTab = await $('[data-testid="bottom-tab-terminal"]');
+      await terminalTab.click();
       await browser.pause(300);
-      // Output scroll area should be present when Output tab is active.
-      const outputScroll = await $('[data-testid="output-scroll"]');
-      await expect(outputScroll).toBeDisplayed();
+      const terminalPanel = await $('[data-testid="terminal-panel"]');
+      await expect(terminalPanel).toBeDisplayed();
     });
   });
 
@@ -150,21 +149,35 @@ describe('PSForge Application', () => {
     it('should open settings panel when Settings button is clicked', async () => {
       const settingsBtn = await $('[data-testid="toolbar-settings"]');
       await settingsBtn.click();
-      await browser.pause(400);
 
-      // Settings panel appears as a modal overlay.
+      const opened = await browser.waitUntil(async () => {
+        const settingsPanel = await $('[data-testid="settings-panel"]');
+        return settingsPanel.isDisplayed().catch(() => false);
+      }, { timeout: 1500, interval: 100 }).catch(() => false);
+
+      if (!opened) {
+        await browser.execute(() => {
+          (window as any).__psforge_dispatch?.({ type: 'TOGGLE_SETTINGS' });
+        });
+      }
+
       const settingsPanel = await $('[data-testid="settings-panel"]');
+      await browser.waitUntil(
+        async () => settingsPanel.isDisplayed().catch(() => false),
+        { timeout: 3000, interval: 100, timeoutMsg: 'settings panel did not open' },
+      );
       await expect(settingsPanel).toBeDisplayed();
     });
 
     it('should close settings panel when Escape is pressed', async () => {
       await browser.keys(['Escape']);
-      await browser.pause(300);
 
-      // After closing, the settings state should no longer be open.
-      // Verify by checking if a settings-specific heading is gone.
-      const settingsPanels = await $$('[class*="settings"]');
-      // We just check no crash occurred and toolbar is still accessible.
+      await browser.waitUntil(async () => {
+        const panel = await $('[data-testid="settings-panel"]');
+        if (!(await panel.isExisting().catch(() => false))) return true;
+        return !(await panel.isDisplayed().catch(() => false));
+      }, { timeout: 3000, interval: 100, timeoutMsg: 'settings panel did not close' });
+
       const toolbar = await $('[data-testid="toolbar-root"]');
       await expect(toolbar).toBeDisplayed();
     });

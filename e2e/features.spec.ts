@@ -26,6 +26,16 @@ const POLL_MS = 100;
 
 /** TypeWriter helper: click target, clear, type content character by character. */
 async function typeIntoEditor(content: string): Promise<void> {
+  const updatedViaHelper = await browser.execute((nextText: string) => {
+    const fn = (window as unknown as Record<string, unknown>)
+      .__psforge_setEditorText;
+    return typeof fn === 'function' && (fn as (text: string) => boolean)(nextText);
+  }, content);
+  if (updatedViaHelper) {
+    await browser.pause(150);
+    return;
+  }
+
   const editor = await $('[data-testid="editor-container"]');
   await editor.click();
   await browser.keys(["Control", "a"]);
@@ -36,12 +46,27 @@ async function typeIntoEditor(content: string): Promise<void> {
   }
 }
 
+async function showTerminalTab(): Promise<void> {
+  const terminalTab = await $('[data-testid="bottom-tab-terminal"]');
+  await terminalTab.click();
+  await browser.pause(150);
+}
+
+async function getTerminalText(lineCount = 200): Promise<string> {
+  await showTerminalTab();
+  return browser.execute((n: number): string => {
+    const fn = (window as unknown as Record<string, unknown>)
+      .__psforge_terminal_get_content;
+    if (typeof fn !== "function") return "";
+    return (fn as (lineCount?: number) => string)(n);
+  }, lineCount);
+}
+
 async function clickRunAndShowOutput(): Promise<void> {
   const runBtn = await $('[data-testid="toolbar-run"]');
   await runBtn.click();
   await browser.pause(200);
-  const outputTab = await $('[data-testid="output-tab-output"]');
-  await outputTab.click();
+  await showTerminalTab();
 }
 
 async function waitForOutputText(
@@ -50,32 +75,13 @@ async function waitForOutputText(
 ): Promise<void> {
   await browser.waitUntil(
     async () => {
-      const scroll = await $('[data-testid="output-scroll"]');
-      const text = await scroll.getText();
+      const text = await getTerminalText();
       return text.includes(substring);
     },
     {
       timeout: timeoutMs,
       interval: POLL_MS,
       timeoutMsg: `Output never contained ${substring}`,
-    },
-  );
-}
-
-async function waitForProblemsText(
-  substring: string,
-  timeoutMs = 20_000,
-): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      const pane = await $('[data-testid="output-pane"]');
-      const text = await pane.getText();
-      return text.includes(substring);
-    },
-    {
-      timeout: timeoutMs,
-      interval: POLL_MS,
-      timeoutMsg: `Problems pane never contained ${substring}`,
     },
   );
 }
@@ -669,17 +675,25 @@ describe("Feature: Sidebar Outline", () => {
   });
 });
 
-// ── 9. Bottom Pane Text Mode + Clear Isolation ─────────────────────────────
-describe("Feature: Bottom Pane Text Mode", () => {
-  it("only output and problems expose text mode, and output text mode supports undo", async () => {
-    const helpTab = await $('[data-testid="output-tab-help"]');
-    await helpTab.click();
-    await browser.pause(200);
+// ── 9. Terminal-First Bottom Pane ──────────────────────────────────────────
+describe("Feature: Terminal-First Bottom Pane", () => {
+  it("does not expose legacy text-mode controls on current bottom tabs", async () => {
+    for (const tabId of [
+      'bottom-tab-terminal',
+      'bottom-tab-variables',
+      'bottom-tab-help',
+    ]) {
+      const tab = await $(`[data-testid="${tabId}"]`);
+      await tab.click();
+      await browser.pause(150);
+      expect(
+        await $('[data-testid="bottom-pane-text-mode-toggle"]').isExisting(),
+      ).toBe(false);
+    }
+  });
 
-    const helpToggle = await $('[data-testid="bottom-pane-text-mode-toggle"]');
-    expect(await helpToggle.isExisting()).toBe(false);
-
-    const outputMarker = `TEXT_MODE_OUTPUT_${Date.now()}`;
+  it("terminal clear removes prior run output from the buffer", async () => {
+    const outputMarker = `TERMINAL_CLEAR_${Date.now()}`;
 
     await openNewCodeTab();
     await browser.waitUntil(
@@ -687,7 +701,7 @@ describe("Feature: Bottom Pane Text Mode", () => {
       {
         timeout: TAB_TIMEOUT,
         interval: POLL_MS,
-        timeoutMsg: "Editor did not appear for output text-mode test",
+        timeoutMsg: "Editor did not appear for terminal clear test",
       },
     );
 
@@ -695,61 +709,21 @@ describe("Feature: Bottom Pane Text Mode", () => {
     await clickRunAndShowOutput();
     await waitForOutputText(outputMarker);
 
-    const toggle = await $('[data-testid="bottom-pane-text-mode-toggle"]');
-    await toggle.click();
-
-    const editor = await $('[data-testid="bottom-pane-text-editor-output"]');
-    await expect(editor).toBeDisplayed();
-
-    const original = await editor.getValue();
-    await editor.click();
-    await browser.keys(["End"]);
-    await browser.keys("X");
+    const clearTerminal = await $('[data-testid="terminal-clear-button"]');
+    await clearTerminal.click();
 
     await browser.waitUntil(
-      async () => (await editor.getValue()) !== original,
+      async () => !(await getTerminalText(80)).includes(outputMarker),
       {
         timeout: DIALOG_TIMEOUT,
         interval: POLL_MS,
-        timeoutMsg: "Output text mode did not accept text edits",
+        timeoutMsg: "Terminal clear did not remove buffered run output",
       },
     );
-
-    const edited = await editor.getValue();
-    const clearBtn = await $('[data-testid="bottom-pane-text-clear"]');
-    await clearBtn.click();
-
-    await browser.waitUntil(async () => (await editor.getValue()) === "", {
-      timeout: DIALOG_TIMEOUT,
-      interval: POLL_MS,
-      timeoutMsg: "Output text mode clear did not empty the editor",
-    });
-
-    const undoBtn = await $('[data-testid="bottom-pane-text-undo"]');
-    await undoBtn.click();
-
-    await browser.waitUntil(async () => (await editor.getValue()) === edited, {
-      timeout: DIALOG_TIMEOUT,
-      interval: POLL_MS,
-      timeoutMsg: "Output text mode undo did not restore the previous text",
-    });
-
-    await toggle.click();
-    await browser.pause(200);
-
-    const problemsTab = await $('[data-testid="output-tab-problems"]');
-    await problemsTab.click();
-    await browser.pause(200);
-    await expect(
-      await $('[data-testid="bottom-pane-text-mode-toggle"]'),
-    ).toBeDisplayed();
   });
-});
 
-describe("Feature: Bottom Pane Clear Isolation", () => {
-  it("clearing Problems leaves Output intact", async () => {
-    const outputMarker = `PANE_OUTPUT_${Date.now()}`;
-    const errorMarker = `PANE_ERROR_${Date.now()}`;
+  it("terminal restart restores a fresh prompt after a run", async () => {
+    const outputMarker = `TERMINAL_RESTART_${Date.now()}`;
 
     await openNewCodeTab();
     await browser.waitUntil(
@@ -757,84 +731,28 @@ describe("Feature: Bottom Pane Clear Isolation", () => {
       {
         timeout: TAB_TIMEOUT,
         interval: POLL_MS,
-        timeoutMsg: "Editor did not appear for clear-isolation test",
+        timeoutMsg: "Editor did not appear for terminal restart test",
       },
     );
 
-    await typeIntoEditor(
-      `Write-Host \"${outputMarker}\"\nWrite-Error \"${errorMarker}\"`,
-    );
+    await typeIntoEditor(`Write-Host \"${outputMarker}\"`);
     await clickRunAndShowOutput();
     await waitForOutputText(outputMarker);
 
-    const problemsTab = await $('[data-testid="output-tab-problems"]');
-    await problemsTab.click();
-    await waitForProblemsText(errorMarker);
+    const restartTerminal = await $('[data-testid="terminal-restart-button"]');
+    await restartTerminal.click();
 
-    const clearProblems = await $('[data-testid="problems-clear-button"]');
-    await clearProblems.click();
     await browser.waitUntil(
       async () => {
-        const pane = await $('[data-testid="output-pane"]');
-        const text = await pane.getText();
-        return !text.includes(errorMarker);
+        const text = await getTerminalText(80);
+        return text.includes('PSForge Terminal') && text.includes('PS') && text.includes('>');
       },
       {
-        timeout: DIALOG_TIMEOUT,
+        timeout: 20_000,
         interval: POLL_MS,
-        timeoutMsg: "Problems clear did not remove the problem entry",
+        timeoutMsg: 'Terminal session did not restart to a fresh prompt',
       },
     );
-
-    await expect(await $('[data-testid="output-tab-output"]')).toBeDisplayed();
-    const outputTab = await $('[data-testid="output-tab-output"]');
-    await outputTab.click();
-    await waitForOutputText(outputMarker);
-  });
-
-  it("clearing Output leaves Problems intact", async () => {
-    const outputMarker = `PANE_OUTPUT_KEEP_${Date.now()}`;
-    const errorMarker = `PANE_ERROR_KEEP_${Date.now()}`;
-
-    await openNewCodeTab();
-    await browser.waitUntil(
-      async () => (await $('[data-testid="editor-container"]')).isDisplayed(),
-      {
-        timeout: TAB_TIMEOUT,
-        interval: POLL_MS,
-        timeoutMsg: "Editor did not appear for output-clear isolation test",
-      },
-    );
-
-    await typeIntoEditor(
-      `Write-Host \"${outputMarker}\"\nWrite-Error \"${errorMarker}\"`,
-    );
-    await clickRunAndShowOutput();
-    await waitForOutputText(outputMarker);
-
-    const problemsTab = await $('[data-testid="output-tab-problems"]');
-    await problemsTab.click();
-    await waitForProblemsText(errorMarker);
-
-    const outputTab = await $('[data-testid="output-tab-output"]');
-    await outputTab.click();
-    const clearOutput = await $('[data-testid="output-clear-button"]');
-    await clearOutput.click();
-    await browser.waitUntil(
-      async () => {
-        const scroll = await $('[data-testid="output-scroll"]');
-        const text = await scroll.getText();
-        return !text.includes(outputMarker);
-      },
-      {
-        timeout: DIALOG_TIMEOUT,
-        interval: POLL_MS,
-        timeoutMsg: "Output clear did not remove the output entry",
-      },
-    );
-
-    await problemsTab.click();
-    await waitForProblemsText(errorMarker);
   });
 });
 

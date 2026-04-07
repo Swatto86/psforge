@@ -175,11 +175,13 @@ export function CommandPalette() {
 
       result.push({
         id: "cmd-clear-output",
-        label: "Clear Output",
+        label: "Clear Terminal",
         category: "Command",
-        description: "Clear only the output pane",
+        description: "Clear the integrated terminal buffer",
         action: () => {
-          dispatch({ type: "CLEAR_OUTPUT" });
+          (
+            window as unknown as Record<string, (() => void) | undefined>
+          ).__psforge_terminal_clear?.();
           close();
         },
       });

@@ -89,7 +89,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub auto_save_on_run: bool,
 
-    /// Clear the output pane before each run.
+    /// Clear the integrated terminal before each run.
     #[serde(default = "default_true")]
     pub clear_output_on_run: bool,
 
@@ -121,7 +121,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub terminal_load_profile: bool,
 
-    /// Whether timestamps are shown in the output pane.
+    /// Whether timestamps are shown on captured script output.
     #[serde(default)]
     pub show_timestamps: bool,
 
@@ -149,7 +149,7 @@ pub struct AppSettings {
     #[serde(default = "default_sidebar_font_size")]
     pub sidebar_font_size: u32,
 
-    /// Wrap long lines in the output pane.
+    /// Wrap long lines in bottom-pane text views.
     #[serde(default)]
     pub output_word_wrap: bool,
 

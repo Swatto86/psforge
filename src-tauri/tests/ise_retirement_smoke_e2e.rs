@@ -407,10 +407,16 @@ async fn ise_retirement_smoke_debug_break_marker_and_completion_across_detected_
                 output
             );
             assert!(
-                output.contains("debug-finished")
-                    || output.to_lowercase().contains("console output buffer")
-                    || output.to_lowercase().contains("the handle is invalid"),
-                "debug run completed with unexpected output on {} (exit={}). Output:\n{}",
+                output.contains("debug-finished"),
+                "debug run did not complete cleanly on {} (exit={}). Output:\n{}",
+                ps,
+                exit_code,
+                output
+            );
+            assert!(
+                !output.to_lowercase().contains("console output buffer")
+                    && !output.to_lowercase().contains("the handle is invalid"),
+                "debug run surfaced a console-handle regression on {} (exit={}). Output:\n{}",
                 ps,
                 exit_code,
                 output

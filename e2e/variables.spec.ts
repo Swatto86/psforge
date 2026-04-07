@@ -128,14 +128,14 @@ async function setEditorContent(text: string): Promise<void> {
   await dismissSuggestWidget();
 }
 
-/** Click Run and immediately switch to the Output tab to watch for completion. */
+/** Click Run and switch to the Terminal tab to watch for completion. */
 async function clickRunAndSwitchToOutput(): Promise<void> {
   await dismissSuggestWidget();
   const runBtn = await $('[data-testid="toolbar-run"]');
   await runBtn.click();
   await browser.pause(200);
-  const outputTab = await $('[data-testid="output-tab-output"]');
-  await outputTab.click();
+  const terminalTab = await $('[data-testid="bottom-tab-terminal"]');
+  await terminalTab.click();
 }
 
 async function openNewCodeTab(): Promise<void> {
@@ -230,7 +230,7 @@ async function runScriptAndWaitForVariable(
       await setEditorContent(scriptText);
       await clickRunAndSwitchToOutput();
 
-      const varTab = await $('[data-testid="output-tab-variables"]');
+      const varTab = await $('[data-testid="bottom-tab-variables"]');
       await varTab.click();
       await browser.pause(250);
       await waitForVariableRow(variableName, timeoutMs);
@@ -303,13 +303,13 @@ describe("Variables Tab", () => {
           (w.__psforge_reset_variables as () => void)();
         }
       });
-      const varTab = await $('[data-testid="output-tab-variables"]');
+      const varTab = await $('[data-testid="bottom-tab-variables"]');
       await varTab.click();
       await browser.pause(200);
     });
 
     it("Variables tab button is present in the panel tab strip", async () => {
-      const varTab = await $('[data-testid="output-tab-variables"]');
+      const varTab = await $('[data-testid="bottom-tab-variables"]');
       expect(await varTab.isExisting()).toBe(true);
     });
 
@@ -427,7 +427,7 @@ describe("Variables Tab", () => {
      * filter assertions depend on, so re-running here only adds flake.
      */
     before(async () => {
-      const varTab = await $('[data-testid="output-tab-variables"]');
+      const varTab = await $('[data-testid="bottom-tab-variables"]');
       await varTab.click();
       await browser.pause(250);
       await waitForVariableRow("E2EStr");

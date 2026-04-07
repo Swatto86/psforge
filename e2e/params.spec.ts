@@ -32,6 +32,16 @@ const SCRIPT_IDLE_TIMEOUT = 20_000; // ms to wait for the running indicator to c
 // ---------------------------------------------------------------------------
 
 async function setEditorContent(text: string): Promise<void> {
+  const updatedViaHelper = await browser.execute((nextText: string) => {
+    const fn = (window as unknown as Record<string, unknown>)
+      .__psforge_setEditorText;
+    return typeof fn === 'function' && (fn as (text: string) => boolean)(nextText);
+  }, text);
+  if (updatedViaHelper) {
+    await browser.pause(150);
+    return;
+  }
+
   const editorArea = await $(".monaco-editor");
   await editorArea.click();
   await browser.pause(200);
@@ -92,21 +102,25 @@ async function waitForDialogGone(
   }
 }
 
-/** Return visible text from the output scroll pane. */
-async function showOutputTab(): Promise<void> {
-  const outputTab = await $('[data-testid="output-tab-output"]');
-  await outputTab.click().catch(() => {});
+/** Activate the terminal tab so run output is visible. */
+async function showTerminalTab(): Promise<void> {
+  const terminalTab = await $('[data-testid="bottom-tab-terminal"]');
+  await terminalTab.click().catch(() => {});
   await browser.pause(150);
 }
 
-/** Return visible text from the output scroll pane. */
+/** Return visible text from the terminal buffer. */
 async function getOutputText(): Promise<string> {
-  await showOutputTab();
-  const scroll = await $('[data-testid="output-scroll"]');
-  return scroll.getText();
+  await showTerminalTab();
+  return browser.execute((): string => {
+    const fn = (window as unknown as Record<string, unknown>)
+      .__psforge_terminal_get_content;
+    if (typeof fn !== 'function') return '';
+    return (fn as (lineCount?: number) => string)(200);
+  });
 }
 
-/** Wait for `substring` to appear in the output scroll pane. */
+/** Wait for `substring` to appear in the terminal buffer. */
 async function waitForOutput(
   substring: string,
   timeoutMs = SCRIPT_OUTPUT_TIMEOUT,
@@ -142,7 +156,7 @@ async function waitForIdle(timeoutMs = SCRIPT_IDLE_TIMEOUT): Promise<void> {
   );
 }
 
-/** Click the Run toolbar button and switch to the Output bottom tab. */
+/** Click the Run toolbar button and switch to the Terminal bottom tab. */
 async function clickRun(): Promise<void> {
   const runBtn = await $('[data-testid="toolbar-run"]');
   await runBtn.click();
@@ -158,8 +172,7 @@ async function clickRun(): Promise<void> {
     return;
   }
 
-  const outputTab = await $('[data-testid="output-tab-output"]');
-  await outputTab.click().catch(() => {});
+  await showTerminalTab();
 }
 
 // ---------------------------------------------------------------------------

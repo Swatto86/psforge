@@ -2,6 +2,7 @@
 
 import React, {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -229,12 +230,14 @@ function validateRemoteTarget(raw: string): string | null {
 
 interface TerminalSessionHandle {
   clear: () => void;
+  exec: (command: string) => Promise<number | null>;
   focus: () => void;
   restart: () => void;
   getContent: (lineCount?: number) => string;
   isReady: () => boolean;
   submitCurrentInput: () => void;
   resetInput: () => void;
+  writeLocal: (text: string) => void;
 }
 
 interface TerminalSessionProps {
@@ -276,6 +279,12 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
     const suggestedCommandsRef = useRef<Set<string>>(new Set());
     const suggestInFlightRef = useRef<Set<string>>(new Set());
     const startupSentForSessionRef = useRef(0);
+    const pendingCommandExecutionsRef = useRef<
+      Array<{
+        resolve: (exitCode: number | null) => void;
+        reject: (error: Error) => void;
+      }>
+    >([]);
 
     const shellPathRef = useRef(shellPath);
     const loadProfileRef = useRef(loadProfile);
@@ -293,11 +302,18 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
     const focusFnRef = useRef<(() => void) | null>(null);
     const clearFnRef = useRef<(() => void) | null>(null);
     const contentFnRef = useRef<((lineCount?: number) => string) | null>(null);
+    const execFnRef = useRef<
+      ((command: string) => Promise<number | null>) | null
+    >(null);
+    const writeLocalFnRef = useRef<((text: string) => void) | null>(null);
 
     useImperativeHandle(
       ref,
       () => ({
         clear: () => clearFnRef.current?.(),
+        exec: (command: string) =>
+          execFnRef.current?.(command) ??
+          Promise.reject(new Error("Terminal session is unavailable.")),
         focus: () => focusFnRef.current?.(),
         restart: () => startSessionFnRef.current?.(false),
         getContent: (lineCount?: number) =>
@@ -305,6 +321,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         isReady: () => isReadyRef.current,
         submitCurrentInput: () => queueInputFnRef.current?.("\r", true),
         resetInput: () => queueInputFnRef.current?.("\u0003", true),
+        writeLocal: (text: string) => writeLocalFnRef.current?.(text),
       }),
       [],
     );
@@ -348,6 +365,13 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           fitRafRef.current = null;
           safeFit();
         });
+      };
+
+      const rejectPendingCommands = (message: string) => {
+        const pending = pendingCommandExecutionsRef.current.splice(0);
+        for (const entry of pending) {
+          entry.reject(new Error(message));
+        }
       };
 
       const syncSizeToBackend = () => {
@@ -403,6 +427,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         outputTailRef.current = "";
         suggestedCommandsRef.current.clear();
         suggestInFlightRef.current.clear();
+        rejectPendingCommands("Terminal session restarted before command completion.");
 
         const existing = sessionIdRef.current;
         if (existing > 0) {
@@ -444,6 +469,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           syncSizeToBackend();
           if (active) focusTerminal();
         } catch (err: unknown) {
+          rejectPendingCommands(
+            `Failed to start terminal session: ${String(err)}`,
+          );
           if (!cancelled) {
             term.write(
               `\r\n\x1b[1;31m[Failed to start terminal: ${String(err)}]\x1b[0m\r\n`,
@@ -460,6 +488,10 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       };
       focusFnRef.current = focusTerminal;
       clearFnRef.current = () => term.clear();
+      writeLocalFnRef.current = (text: string) => {
+        if (!text) return;
+        term.write(text.replace(/\r?\n/g, "\r\n"));
+      };
       contentFnRef.current = (lineCount?: number) => {
         const count = lineCount ?? 80;
         const buf = term.buffer.active;
@@ -470,6 +502,30 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           lines.push(line ? line.translateToString(true) : "");
         }
         return lines.join("\n");
+      };
+      execFnRef.current = async (command: string) => {
+        if (cancelled || isStoppingRef.current) {
+          throw new Error("Terminal session is unavailable.");
+        }
+        const trimmed = command.trim();
+        if (!trimmed) return 0;
+
+        const sid = sessionIdRef.current;
+        if (!isReadyRef.current || sid <= 0) {
+          throw new Error("Terminal session is not ready.");
+        }
+
+        return new Promise<number | null>((resolve, reject) => {
+          const pending = { resolve, reject };
+          pendingCommandExecutionsRef.current.push(pending);
+          void cmd.terminalExec(sid, trimmed).catch((err: unknown) => {
+            pendingCommandExecutionsRef.current =
+              pendingCommandExecutionsRef.current.filter(
+                (candidate) => candidate !== pending,
+              );
+            reject(new Error(`Failed to execute in terminal: ${String(err)}`));
+          });
+        });
       };
 
       const dataDisposable = term.onData((data) => queueInput(data));
@@ -495,6 +551,14 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         if (event.payload.sessionId !== sessionIdRef.current) return;
         const chunk = event.payload.data;
         term.write(chunk);
+
+        for (const match of chunk.matchAll(/\x1b]633;D;(-?\d+)(?:\x07|\x1b\\)/g)) {
+          const exitCode = Number.parseInt(match[1] ?? "", 10);
+          const pending = pendingCommandExecutionsRef.current.shift();
+          if (pending) {
+            pending.resolve(Number.isFinite(exitCode) ? exitCode : null);
+          }
+        }
 
         const psPath = shellPathRef.current;
         if (psPath) {
@@ -558,6 +622,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       const onTerminalExit = (event: { payload: TerminalExitEvent }) => {
         if (event.payload.sessionId !== sessionIdRef.current) return;
         isReadyRef.current = false;
+        rejectPendingCommands("Terminal session ended before command completion.");
         if (isStoppingRef.current) return;
         term.write(
           "\r\n\x1b[33m[Terminal session ended. Use Restart to start a new shell.]\x1b[0m\r\n",
@@ -610,6 +675,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         focusFnRef.current = null;
         clearFnRef.current = null;
         contentFnRef.current = null;
+        execFnRef.current = null;
+        writeLocalFnRef.current = null;
+        rejectPendingCommands("Terminal session was disposed.");
 
         const sid = sessionIdRef.current;
         sessionIdRef.current = 0;
@@ -688,7 +756,7 @@ interface ConsoleTabModel {
 }
 
 export function TerminalPane() {
-  const { state } = useAppState();
+  const { state, dispatch } = useAppState();
   const tabCounterRef = useRef(1);
   const sessionRefs = useRef<Record<string, TerminalSessionHandle | null>>({});
   const remoteTargetInputRef = useRef<HTMLInputElement>(null);
@@ -790,29 +858,135 @@ export function TerminalPane() {
     });
   };
 
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+  const getHandleForTab = (tabId: string) => sessionRefs.current[tabId] ?? null;
+
+  const ensureLocalExecutionTab = useCallback(() => {
+    const active = tabs.find((tab) => tab.id === activeTabId) ?? null;
+    if (active && !active.startupCommand) {
+      return active.id;
+    }
+
+    const existingLocal = tabs.find((tab) => !tab.startupCommand) ?? null;
+    if (existingLocal) {
+      return existingLocal.id;
+    }
+
+    tabCounterRef.current += 1;
+    const id = `console-${tabCounterRef.current}`;
+    const tab: ConsoleTabModel = {
+      id,
+      title: `Console ${tabCounterRef.current}`,
+      shellPath: state.selectedPsPath || "",
+      loadProfile: state.settings.terminalLoadProfile === true,
+    };
+    setTabs((prev) => [...prev, tab]);
+    return id;
+  }, [activeTabId, state.selectedPsPath, state.settings.terminalLoadProfile, tabs]);
+
+  const waitForReadyHandle = useCallback(async (tabId: string) => {
+    const timeoutAt = Date.now() + 30000;
+    let restartRequested = false;
+
+    while (Date.now() < timeoutAt) {
+      const handle = getHandleForTab(tabId);
+      if (handle?.isReady()) {
+        return handle;
+      }
+      if (handle && !restartRequested) {
+        handle.restart();
+        restartRequested = true;
+      }
+      await sleep(100);
+    }
+
+    throw new Error("Integrated terminal did not become ready.");
+  }, []);
+
+  const runCommandInLocalTerminal = useCallback(
+    async (
+      command: string,
+      options?: { clearBeforeRun?: boolean; reveal?: boolean },
+    ) => {
+      const tabId = ensureLocalExecutionTab();
+      const reveal = options?.reveal !== false;
+
+      if (reveal) {
+        dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
+        setActiveTabId(tabId);
+      }
+
+      await sleep(0);
+      const handle = await waitForReadyHandle(tabId);
+      if (options?.clearBeforeRun) {
+        handle.clear();
+      }
+      if (reveal) {
+        handle.focus();
+      }
+      return handle.exec(command);
+    },
+    [dispatch, ensureLocalExecutionTab, waitForReadyHandle],
+  );
+
+  const writeNoticeToLocalTerminal = useCallback(
+    async (text: string, options?: { reveal?: boolean }) => {
+      if (!text) return;
+
+      const tabId = ensureLocalExecutionTab();
+      const reveal = options?.reveal === true;
+      if (reveal) {
+        dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
+        setActiveTabId(tabId);
+      }
+
+      await sleep(0);
+      const handle = await waitForReadyHandle(tabId);
+      handle.writeLocal(text);
+      if (reveal) {
+        handle.focus();
+      }
+    },
+    [dispatch, ensureLocalExecutionTab, waitForReadyHandle],
+  );
+
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__psforge_terminal_clear = () => getActiveHandle()?.clear();
     w.__psforge_terminal_focus = () => getActiveHandle()?.focus();
+    w.__psforge_terminal_run_command = (
+      command: string,
+      options?: { clearBeforeRun?: boolean; reveal?: boolean },
+    ) => runCommandInLocalTerminal(command, options);
     w.__psforge_terminal_restart = () => getActiveHandle()?.restart();
     w.__psforge_terminal_get_content = (lineCount?: number) =>
       getActiveHandle()?.getContent(lineCount as number | undefined) ?? "";
     w.__psforge_terminal_is_ready = () => getActiveHandle()?.isReady() ?? false;
     w.__psforge_terminal_submit_current_input = () =>
       getActiveHandle()?.submitCurrentInput();
+    w.__psforge_terminal_write_notice = (
+      text: string,
+      options?: { reveal?: boolean },
+    ) => writeNoticeToLocalTerminal(text, options);
+    w.__psforge_terminal_interrupt = () => getActiveHandle()?.resetInput();
     w.__psforge_terminal_reset_input = () => getActiveHandle()?.resetInput();
     w.__psforge_highlight_ps = highlightPs;
     return () => {
       delete w.__psforge_terminal_clear;
       delete w.__psforge_terminal_focus;
+      delete w.__psforge_terminal_run_command;
       delete w.__psforge_terminal_restart;
       delete w.__psforge_terminal_get_content;
       delete w.__psforge_terminal_is_ready;
       delete w.__psforge_terminal_submit_current_input;
+      delete w.__psforge_terminal_write_notice;
+      delete w.__psforge_terminal_interrupt;
       delete w.__psforge_terminal_reset_input;
       delete w.__psforge_highlight_ps;
     };
-  }, [activeTabId]);
+  }, [activeTabId, runCommandInLocalTerminal, writeNoticeToLocalTerminal]);
 
   useEffect(() => {
     if (state.bottomPanelTab !== "terminal") return;

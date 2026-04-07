@@ -21,25 +21,6 @@ import type {
   VariableInfo,
 } from "./types";
 
-/** Execute a complete PowerShell script. Output streamed via 'ps-output' events. */
-export async function executeScript(
-  psPath: string,
-  script: string,
-  workingDir: string,
-  execPolicy: string,
-  scriptArgs: string[] = [],
-  persistRunspace = true,
-): Promise<number> {
-  return invoke<number>("execute_script", {
-    psPath,
-    script,
-    workingDir,
-    execPolicy,
-    scriptArgs,
-    persistRunspace,
-  });
-}
-
 /** Execute a script under the debugger with optional line breakpoints. */
 export async function executeScriptDebug(
   psPath: string,
@@ -61,20 +42,22 @@ export async function executeScriptDebug(
   });
 }
 
-/** Execute selected text (F8 behaviour). */
-export async function executeSelection(
+/** Build a terminal-safe command string that runs the given script via the
+ * selected PowerShell executable inside the integrated terminal.
+ */
+export async function prepareTerminalScriptCommand(
   psPath: string,
-  selection: string,
+  script: string,
   workingDir: string,
   execPolicy: string,
-  persistRunspace = true,
-): Promise<number> {
-  return invoke<number>("execute_selection", {
+  scriptArgs: string[] = [],
+): Promise<string> {
+  return invoke<string>("prepare_terminal_script_command", {
     psPath,
-    selection,
+    script,
     workingDir,
     execPolicy,
-    persistRunspace,
+    scriptArgs,
   });
 }
 

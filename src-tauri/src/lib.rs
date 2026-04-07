@@ -36,9 +36,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
-            commands::execute_script,
             commands::execute_script_debug,
-            commands::execute_selection,
+            commands::prepare_terminal_script_command,
             commands::stop_script,
             commands::send_stdin,
             commands::debug_continue,
