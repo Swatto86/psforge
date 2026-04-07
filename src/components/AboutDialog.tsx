@@ -22,7 +22,7 @@ export function AboutDialog() {
   useEffect(() => {
     getVersion()
       .then((v) => setVersion(v))
-      .catch(() => setVersion("1.2.1"));
+      .catch(() => setVersion("1.2.2"));
   }, []);
 
   // Close on Escape key.
