@@ -15,10 +15,11 @@ use std::sync::{
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, timeout, Duration};
 use uuid::Uuid;
 
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+const SESSION_GRACEFUL_EXIT_MS: u64 = 1_500;
 
 /// Maximum number of output lines to buffer per process (memory bound).
 const MAX_OUTPUT_LINES: usize = 100_000;
@@ -281,7 +282,36 @@ impl ProcessManager {
         guard.clone()
     }
 
-    async fn shutdown_session(session: Arc<PersistentSession>) {
+    async fn shutdown_session(session: Arc<PersistentSession>, graceful: bool) {
+        if graceful {
+            let graceful_timeout = Duration::from_millis(SESSION_GRACEFUL_EXIT_MS);
+            let exited_cleanly = {
+                let mut child_guard = session.child.lock().await;
+                match child_guard.as_mut() {
+                    Some(child) => match timeout(graceful_timeout, child.wait()).await {
+                        Ok(Ok(_)) => {
+                            *child_guard = None;
+                            true
+                        }
+                        Ok(Err(e)) => {
+                            debug!("Failed while waiting for persistent session exit: {}", e);
+                            *child_guard = None;
+                            true
+                        }
+                        Err(_) => false,
+                    },
+                    None => true,
+                }
+            };
+
+            if exited_cleanly {
+                let mut stdin_guard = session.stdin_writer.lock().await;
+                *stdin_guard = None;
+                let _ = std::fs::remove_file(&session.bootstrap_script_path);
+                return;
+            }
+        }
+
         {
             let mut stdin_guard = session.stdin_writer.lock().await;
             *stdin_guard = None;
@@ -292,6 +322,7 @@ impl ProcessManager {
                 if let Err(e) = child.kill().await {
                     debug!("Failed to kill persistent session process: {}", e);
                 }
+                let _ = child.wait().await;
             }
             *child_guard = None;
         }
@@ -579,6 +610,10 @@ impl ProcessManager {
 
     /// Stops the active command/session and tears down the persistent process.
     pub async fn stop(&self) -> Result<(), AppError> {
+        let was_running = {
+            let active = self.active_command.lock().await;
+            active.is_some()
+        };
         {
             let mut ks = self.kill_sender.lock().await;
             if let Some(tx) = ks.take() {
@@ -596,7 +631,7 @@ impl ProcessManager {
         if let Some(session) = session {
             info!("Stopping persistent PowerShell session");
             let _ = Self::write_session_line(&session, HOST_EXIT_MARKER).await;
-            Self::shutdown_session(session).await;
+            Self::shutdown_session(session, !was_running).await;
         }
         Ok(())
     }
@@ -1011,7 +1046,8 @@ function __psforge_invoke_user_script {
                 }
             };
             if let Some(s) = session_to_stop {
-                Self::shutdown_session(s).await;
+                let _ = Self::write_session_line(&s, HOST_EXIT_MARKER).await;
+                Self::shutdown_session(s, true).await;
             }
         }
 
