@@ -170,6 +170,36 @@ describe('Script Execution', () => {
       expect(found).toBe(true);
     });
 
+    it('should switch from Problems back to Terminal when a script is run', async () => {
+      const marker = `ProblemsToTerminal_${Date.now()}`;
+      await setEditorContent(`Write-Host "${marker}"`);
+
+      await browser.execute(() => {
+        (window as unknown as Record<string, unknown>).__psforge_dispatch &&
+          ((window as unknown as Record<string, unknown>).__psforge_dispatch as (
+            action: { type: string; tab: string },
+          ) => void)({ type: 'SET_BOTTOM_TAB', tab: 'problems' });
+      });
+
+      const terminalPanel = await $('[data-testid="terminal-panel"]');
+      expect(await terminalPanel.isDisplayed()).toBe(false);
+
+      const runBtn = await $('[data-testid="toolbar-run"]');
+      await runBtn.click();
+
+      await browser.waitUntil(
+        async () => terminalPanel.isDisplayed().catch(() => false),
+        {
+          timeout: 5000,
+          interval: 100,
+          timeoutMsg: 'Running from Problems did not switch back to Terminal',
+        },
+      );
+
+      const found = await waitForOutputText(marker, SCRIPT_OUTPUT_TIMEOUT);
+      expect(found).toBe(true);
+    });
+
     it('should display multiline Write-Host output', async () => {
       await setEditorContent(
         'Write-Host "Line_A_E2E"\nWrite-Host "Line_B_E2E"'

@@ -680,6 +680,7 @@ describe("Feature: Terminal-First Bottom Pane", () => {
   it("does not expose legacy text-mode controls on current bottom tabs", async () => {
     for (const tabId of [
       'bottom-tab-terminal',
+      'bottom-tab-problems',
       'bottom-tab-variables',
       'bottom-tab-help',
     ]) {

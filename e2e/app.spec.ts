@@ -118,6 +118,12 @@ describe('PSForge Application', () => {
       await expect(btn).toBeClickable();
     });
 
+    it('should display the Problems tab button', async () => {
+      const btn = await $('[data-testid="bottom-tab-problems"]');
+      await expect(btn).toBeDisplayed();
+      await expect(btn).toBeClickable();
+    });
+
     it('should display the Variables tab button', async () => {
       const btn = await $('[data-testid="bottom-tab-variables"]');
       await expect(btn).toBeDisplayed();

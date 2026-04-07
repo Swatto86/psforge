@@ -21,6 +21,7 @@ import type {
   DebugLocal,
   DebugStackFrame,
   DebugWatch,
+  PssaDiagnostic,
 } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import * as cmd from "./commands";
@@ -34,6 +35,7 @@ const SESSION_STORAGE_KEY = "psforge.session.v1";
 type BottomPanelTab =
   | "variables"
   | "terminal"
+  | "problems"
   | "debugger"
   | "show-command"
   | "help";
@@ -54,6 +56,7 @@ function isBottomPanelTab(value: unknown): value is BottomPanelTab {
   return (
     value === "variables" ||
     value === "terminal" ||
+    value === "problems" ||
     value === "debugger" ||
     value === "show-command" ||
     value === "help"
@@ -291,6 +294,8 @@ export interface AppState {
   /** Which side of the editor the module browser panel is docked to. */
   sidebarPosition: "left" | "right";
   bottomPanelTab: BottomPanelTab;
+  /** Per-tab pre-run diagnostics sourced from PSScriptAnalyzer. */
+  problems: Record<string, PssaDiagnostic[]>;
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
   /** Command palette mode: full command list or snippets-only picker. */
@@ -369,6 +374,7 @@ const initialState: AppState = {
   sidebarVisible: true,
   sidebarPosition: "left" as const,
   bottomPanelTab: "terminal",
+  problems: {},
   settingsOpen: false,
   commandPaletteOpen: false,
   commandPaletteMode: "all",
@@ -412,6 +418,7 @@ type Action =
   | { type: "TOGGLE_SIDEBAR" }
   | { type: "SET_SIDEBAR_POSITION"; position: "left" | "right" }
   | { type: "REMOVE_RECENT_FILE"; path: string }
+  | { type: "SET_PROBLEMS"; tabId: string; diagnostics: PssaDiagnostic[] }
   | {
       type: "SET_BOTTOM_TAB";
       tab: BottomPanelTab;
@@ -473,6 +480,7 @@ function reducer(state: AppState, action: Action): AppState {
         newActive = next?.id ?? "";
       }
       const { [action.id]: _removed, ...restBreakpoints } = state.breakpoints;
+      const { [action.id]: _removedProblems, ...restProblems } = state.problems;
       const { [action.id]: _removedBookmarks, ...restBookmarks } =
         state.bookmarks;
       return {
@@ -480,6 +488,7 @@ function reducer(state: AppState, action: Action): AppState {
         tabs: remaining,
         activeTabId: newActive,
         breakpoints: restBreakpoints,
+        problems: restProblems,
         bookmarks: restBookmarks,
       };
     }
@@ -546,6 +555,17 @@ function reducer(state: AppState, action: Action): AppState {
           ),
         },
       };
+
+    case "SET_PROBLEMS": {
+      if (!state.tabs.some((tab) => tab.id === action.tabId)) return state;
+      const next = { ...state.problems };
+      if (action.diagnostics.length === 0) {
+        delete next[action.tabId];
+      } else {
+        next[action.tabId] = action.diagnostics;
+      }
+      return { ...state, problems: next };
+    }
 
     case "SET_BOTTOM_TAB":
       return { ...state, bottomPanelTab: action.tab };
