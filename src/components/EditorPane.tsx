@@ -847,17 +847,26 @@ export function EditorPane() {
         changes: { content: value, isDirty },
       });
 
+      const clearPssaState = (
+        monacoInstance = monacoRef.current,
+        modelInstance = editorRef.current?.getModel() ?? null,
+      ) => {
+        if (monacoInstance && modelInstance) {
+          monacoInstance.editor.setModelMarkers(modelInstance, "pssa", []);
+        }
+        dispatch({
+          type: "SET_PROBLEMS",
+          tabId: activeTab.id,
+          diagnostics: [],
+        });
+      };
+
       // --- Feature 2: PSScriptAnalyzer squiggles (debounced 800 ms) ---
       if (pssaTimerRef.current !== null) clearTimeout(pssaTimerRef.current);
 
       // Clear any existing markers immediately when PSSA is disabled.
       if (!state.settings.enablePssa) {
-        const ed = editorRef.current;
-        const mon = monacoRef.current;
-        if (ed && mon) {
-          const model = ed.getModel();
-          if (model) mon.editor.setModelMarkers(model, "pssa", []);
-        }
+        clearPssaState();
         return;
       }
 
@@ -870,9 +879,15 @@ export function EditorPane() {
       const ed = editorRef.current;
       const mon = monacoRef.current;
       const psPath = psPathRef.current;
-      if (!ed || !mon || !psPath) return;
+      if (!ed || !mon || !psPath) {
+        clearPssaState(mon, ed?.getModel() ?? null);
+        return;
+      }
       const model = ed.getModel();
-      if (!model) return;
+      if (!model) {
+        clearPssaState(mon, null);
+        return;
+      }
 
       pssaTimerRef.current = setTimeout(() => {
         analyzeScript(psPath, value)
@@ -887,9 +902,14 @@ export function EditorPane() {
               endColumn: d.endColumn > 0 ? d.endColumn : d.column + 1,
             }));
             mon.editor.setModelMarkers(model, "pssa", markers);
+            dispatch({
+              type: "SET_PROBLEMS",
+              tabId: activeTab.id,
+              diagnostics: diags,
+            });
           })
           .catch(() => {
-            /* PSSA unavailable or script too complex -- ignore silently */
+            clearPssaState(mon, model);
           });
       }, 800);
     },

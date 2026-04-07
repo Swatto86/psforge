@@ -573,6 +573,99 @@ textarea:focus {
   font-weight: 600;
 }
 
+.bottom-pane-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.bottom-pane-problem {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-secondary) 70%, var(--bg-panel));
+  color: var(--text-primary);
+  text-align: left;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.bottom-pane-problem:hover {
+  background: color-mix(in srgb, var(--bg-hover) 78%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-primary));
+  transform: translateY(-1px);
+}
+
+.bottom-pane-problem-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bottom-pane-problem-severity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-primary);
+  font-size: var(--ui-font-size-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.bottom-pane-problem-severity-error {
+  border-color: color-mix(
+    in srgb,
+    var(--stream-stderr) 32%,
+    var(--border-primary)
+  );
+  background: color-mix(in srgb, var(--stream-stderr) 14%, transparent);
+  color: var(--stream-stderr);
+}
+
+.bottom-pane-problem-severity-warning {
+  border-color: color-mix(
+    in srgb,
+    var(--stream-warning) 32%,
+    var(--border-primary)
+  );
+  background: color-mix(in srgb, var(--stream-warning) 14%, transparent);
+  color: var(--stream-warning);
+}
+
+.bottom-pane-problem-severity-info {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-primary));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-accent);
+}
+
+.bottom-pane-problem-location {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.bottom-pane-problem-rule {
+  color: var(--text-secondary);
+}
+
+.bottom-pane-problem-message {
+  color: var(--text-primary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .bottom-pane-log-line:hover {
   background: color-mix(in srgb, var(--bg-hover) 56%, transparent);
 }

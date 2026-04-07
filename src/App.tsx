@@ -1246,6 +1246,8 @@ function AppInner() {
       return;
     }
 
+    dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
+
     if (!state.selectedPsPath) {
       await writeTerminalNotice(
         "[PSForge] Run failed: no PowerShell executable is selected.",
@@ -1692,6 +1694,8 @@ function AppInner() {
     // prior tab must not be submitted (mirrors the runScript guard).
     if (!activeTab || activeTab.tabType === "welcome" || state.isRunning)
       return;
+
+    dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
 
     if (!state.selectedPsPath) {
       await writeTerminalNotice(

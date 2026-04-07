@@ -11,6 +11,7 @@ import type {
   DebugLocal,
   DebugStackFrame,
   DebugWatch,
+  PssaDiagnostic,
 } from "../types";
 import { TerminalPane } from "./TerminalPane";
 import { ShowCommandPane } from "./ShowCommandPane";
@@ -41,8 +42,38 @@ function formatCount(value: number, noun: string): string {
   return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 }
 
+function problemSeverity(
+  severity: PssaDiagnostic["severity"],
+): "error" | "warning" | "info" {
+  switch (severity) {
+    case "Error":
+    case "ParseError":
+      return "error";
+    case "Warning":
+      return "warning";
+    default:
+      return "info";
+  }
+}
+
+function problemSeverityRank(severity: PssaDiagnostic["severity"]): number {
+  switch (problemSeverity(severity)) {
+    case "error":
+      return 0;
+    case "warning":
+      return 1;
+    default:
+      return 2;
+  }
+}
+
+function formatProblemLocation(problem: PssaDiagnostic): string {
+  return `Ln ${problem.line}, Col ${problem.column}`;
+}
+
 type BottomTabId =
   | "terminal"
+  | "problems"
   | "debugger"
   | "variables"
   | "show-command"
@@ -121,6 +152,25 @@ export function OutputPane({
       v.name.toLowerCase().includes(varFilter.toLowerCase()) ||
       v.value.toLowerCase().includes(varFilter.toLowerCase()),
   );
+  const pssaEnabled = state.settings.enablePssa !== false;
+  const activeProblems =
+    activeTab && activeTab.tabType !== "welcome"
+      ? [...(state.problems[activeTab.id] ?? [])].sort((a, b) => {
+          const severityDelta =
+            problemSeverityRank(a.severity) - problemSeverityRank(b.severity);
+          if (severityDelta !== 0) return severityDelta;
+          if (a.line !== b.line) return a.line - b.line;
+          if (a.column !== b.column) return a.column - b.column;
+          return a.message.localeCompare(b.message);
+        })
+      : [];
+  const problemCountText = formatCount(activeProblems.length, "problem");
+  const hasProblemErrors = activeProblems.some(
+    (problem) => problemSeverity(problem.severity) === "error",
+  );
+  const hasProblemWarnings = activeProblems.some(
+    (problem) => problemSeverity(problem.severity) === "warning",
+  );
 
   const handleAddDebugWatch = useCallback(
     (expression: string) => {
@@ -178,6 +228,7 @@ export function OutputPane({
 
   const primaryBottomTabs: BottomTabDescriptor[] = [
     { id: "terminal", label: "Terminal" },
+    { id: "problems", label: "Problems" },
   ];
 
   const utilityBottomTabs: BottomTabDescriptor[] = [
@@ -198,6 +249,34 @@ export function OutputPane({
             "Run scripts, inspect errors, and use ad-hoc PowerShell commands in the same terminal session.",
           chipLabel: state.isRunning ? "Running" : "Terminal-first",
           chipTone: "accent",
+        };
+      case "problems":
+        return {
+          title: "Problems",
+          subtitle:
+            !activeTab || activeTab.tabType === "welcome"
+              ? "Open a PowerShell script to review pre-run diagnostics."
+              : !pssaEnabled
+                ? "Enable PSScriptAnalyzer in Settings to populate pre-run diagnostics."
+                : activeProblems.length === 0
+                  ? `No pre-run problems detected for ${activeTab.title}.`
+                  : `${problemCountText} reported for ${activeTab.title} before execution.`,
+          chipLabel:
+            !activeTab || activeTab.tabType === "welcome"
+              ? "No script"
+              : !pssaEnabled
+                ? "Disabled"
+                : activeProblems.length === 0
+                  ? "Clear"
+                  : problemCountText,
+          chipTone:
+            !pssaEnabled || activeProblems.length === 0
+              ? "default"
+              : hasProblemErrors
+                ? "danger"
+                : hasProblemWarnings
+                  ? "warn"
+                  : "accent",
         };
       case "variables":
         return {
@@ -251,6 +330,14 @@ export function OutputPane({
         return state.isRunning
           ? "Script execution is streaming directly into the integrated terminal."
           : "Use the terminal for both script execution and ad-hoc PowerShell commands.";
+      case "problems":
+        return !activeTab || activeTab.tabType === "welcome"
+          ? "Open or focus a PowerShell script to review pre-run diagnostics here."
+          : !pssaEnabled
+            ? "Enable PSScriptAnalyzer in Settings to populate the Problems pane."
+            : activeProblems.length === 0
+              ? "The active editor content is clear of pre-run diagnostics."
+              : "These diagnostics are pre-run only; runtime output and failures stay in Terminal.";
       case "variables":
         return state.variables.length === 0
           ? "Run a script to capture variables here."
@@ -294,6 +381,14 @@ export function OutputPane({
     if (tab.id === "variables" && state.variables.length > 0) {
       badgeText = state.variables.length.toLocaleString();
       badgeClassName = "bottom-pane-badge bottom-pane-badge-accent";
+    }
+    if (tab.id === "problems" && activeProblems.length > 0) {
+      badgeText = activeProblems.length.toLocaleString();
+      badgeClassName = hasProblemErrors
+        ? "bottom-pane-badge bottom-pane-badge-danger"
+        : hasProblemWarnings
+          ? "bottom-pane-badge bottom-pane-badge-warn"
+          : "bottom-pane-badge bottom-pane-badge-accent";
     }
     if (tab.id === "debugger" && state.isDebugging) {
       badgeText = state.debugPaused ? "Paused" : "Active";
@@ -487,6 +582,27 @@ export function OutputPane({
           WebkitUserSelect: "text",
         }}
       >
+        {state.bottomPanelTab === "problems" && (
+          <div
+            data-testid="problems-panel"
+            className="flex-1 min-h-0 overflow-auto"
+          >
+            <ProblemsPane
+              diagnostics={activeProblems}
+              activeTabName={
+                activeTab?.tabType === "code" ? activeTab.title : undefined
+              }
+              pssaEnabled={pssaEnabled}
+              onNavigate={navigateTo}
+              fontSize={state.settings.outputFontSize ?? 13}
+              fontFamily={
+                state.settings.outputFontFamily ??
+                "Cascadia Code, Consolas, monospace"
+              }
+            />
+          </div>
+        )}
+
         {state.bottomPanelTab === "variables" && (
           <div className="flex-1 min-h-0 overflow-auto">
             <VariableTable
@@ -622,6 +738,98 @@ function AnsiText({ text, color }: { text: string; color: string }) {
   const cleaned = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 
   return <span style={{ color }}>{cleaned}</span>;
+}
+
+function ProblemsPane({
+  diagnostics,
+  activeTabName,
+  pssaEnabled,
+  onNavigate,
+  fontSize,
+  fontFamily,
+}: {
+  diagnostics: PssaDiagnostic[];
+  activeTabName?: string;
+  pssaEnabled: boolean;
+  onNavigate: (line: number, column: number) => void;
+  fontSize: number;
+  fontFamily: string;
+}) {
+  const monoStyle: React.CSSProperties = {
+    fontSize: `${fontSize}px`,
+    fontFamily,
+  };
+
+  if (!activeTabName) {
+    return (
+      <div className="bottom-pane-empty" data-testid="problems-empty">
+        <strong>No active script</strong>
+        <span>Open a PowerShell editor tab to review pre-run diagnostics.</span>
+      </div>
+    );
+  }
+
+  if (!pssaEnabled) {
+    return (
+      <div className="bottom-pane-empty" data-testid="problems-empty">
+        <strong>Problems pane is disabled</strong>
+        <span>
+          Enable PSScriptAnalyzer squiggles in Settings to populate
+          diagnostics for {activeTabName}.
+        </span>
+      </div>
+    );
+  }
+
+  if (diagnostics.length === 0) {
+    return (
+      <div className="bottom-pane-empty" data-testid="problems-empty">
+        <strong>No pre-run problems</strong>
+        <span>{activeTabName} currently has no reported diagnostics.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bottom-pane-problems" style={monoStyle}>
+      {diagnostics.map((problem, index) => {
+        const severity = problemSeverity(problem.severity);
+        const severityLabel =
+          severity === "error"
+            ? "Error"
+            : severity === "warning"
+              ? "Warning"
+              : "Info";
+        const location = formatProblemLocation(problem);
+        return (
+          <button
+            key={`${problem.ruleName}-${problem.line}-${problem.column}-${index}`}
+            type="button"
+            data-testid={`problem-item-${index}`}
+            className="bottom-pane-problem"
+            onClick={() => onNavigate(problem.line, problem.column)}
+            title={`Go to ${location}`}
+          >
+            <div className="bottom-pane-problem-header">
+              <span
+                className={[
+                  "bottom-pane-problem-severity",
+                  `bottom-pane-problem-severity-${severity}`,
+                ].join(" ")}
+              >
+                {severityLabel}
+              </span>
+              <span className="bottom-pane-problem-location">{location}</span>
+              <span className="bottom-pane-problem-rule">
+                {problem.ruleName || "PSScriptAnalyzer"}
+              </span>
+            </div>
+            <div className="bottom-pane-problem-message">{problem.message}</div>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function DebuggerPane({
