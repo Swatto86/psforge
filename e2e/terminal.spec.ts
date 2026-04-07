@@ -137,7 +137,7 @@ async function getLastInputLine(): Promise<string> {
 
 describe("Integrated Terminal", () => {
   before(async () => {
-    const termTab = await $('[data-testid="output-tab-terminal"]');
+    const termTab = await $('[data-testid="bottom-tab-terminal"]');
     await termTab.click();
     await browser.pause(400);
     await waitForPrompt(TERMINAL_READY_TIMEOUT);
@@ -157,7 +157,7 @@ describe("Integrated Terminal", () => {
     });
 
     it("terminal panel has display:none when a different tab is active", async () => {
-      await (await $('[data-testid="output-tab-output"]')).click();
+      await (await $('[data-testid="bottom-tab-variables"]')).click();
       await browser.pause(200);
 
       const display = await (
@@ -165,7 +165,7 @@ describe("Integrated Terminal", () => {
       ).getCSSProperty("display");
       expect(display.value).toBe("none");
 
-      await (await $('[data-testid="output-tab-terminal"]')).click();
+      await (await $('[data-testid="bottom-tab-terminal"]')).click();
       await browser.pause(200);
       await waitForPrompt(PROMPT_TIMEOUT);
     });

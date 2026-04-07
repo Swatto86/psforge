@@ -2,7 +2,7 @@
 
 ## System Purpose
 
-PSForge is a modern, fast PowerShell ISE replacement for Windows, built with Tauri v2 (Rust backend + WebView2 frontend). It provides a professional script editing environment with Monaco Editor, integrated PowerShell execution, module browsing, variable inspection, snippet management, and theming.
+PSForge is a modern, fast PowerShell ISE replacement for Windows, built with Tauri v2 (Rust backend + WebView2 frontend). It provides a professional script editing environment with Monaco Editor, terminal-first PowerShell execution, module browsing, variable inspection, snippet management, and theming.
 
 ## Domain Concepts
 
@@ -10,7 +10,7 @@ PSForge is a modern, fast PowerShell ISE replacement for Windows, built with Tau
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Editor Tab**         | An open file or untitled script buffer with dirty-tracking                                                                                 |
 | **PowerShell Process** | A managed child process for script execution with stdin/stdout/stderr streaming                                                            |
-| **Output Pane**        | Tabbed area showing execution output, variables, problems, debugger tools, with editable text mode limited to the Output and Problems tabs |
+| **Bottom Pane**        | Tabbed area hosting the integrated terminal plus Variables, Debugger, Show Command, and Help panes                                         |
 | **Module Browser**     | Sidebar listing installed PowerShell modules and their exported commands                                                                   |
 | **Snippet**            | Reusable code template (built-in or user-defined) insertable via Command Palette                                                           |
 | **File Association**   | Per-user HKCU registry mapping of PS extensions to PSForge (no admin required)                                                             |
@@ -48,7 +48,8 @@ PSForge is a modern, fast PowerShell ISE replacement for Windows, built with Tau
 - **No Redux/Zustand**: State managed via React Context + useReducer for simplicity
 - **CSS Variables for theming**: Themes defined as CSS custom properties, not Monaco-only
 - **Global ProcessManager**: Single `OnceLock<ProcessManager>` shared across Tauri commands
-- **Event-based execution streaming**: Rust emits `ps-output`, `ps-variables`, and `ps-complete` events; frontend listens
+- **Terminal-first execution**: F5/F8 runs are prepared in Rust and executed inside the integrated terminal
+- **Event-based debug streaming**: Rust emits `ps-output`, `ps-variables`, `ps-debug-break`, and `ps-complete` events for debugger-host runs; frontend mirrors that output into the terminal
 
 ## Repository Structure
 
@@ -62,9 +63,9 @@ PSForge/
 
   src/                    # Frontend source (React + TypeScript)
     main.tsx              # React entry point (renders App into #root)
-    App.tsx               # Main layout: toolbar, tabs, editor, output, sidebar
+    App.tsx               # Main layout: toolbar, tabs, editor, bottom pane, sidebar
     types.ts              # Shared TypeScript interfaces and constants
-    commands.ts           # Typed Tauri invoke() IPC wrappers (33 commands)
+    commands.ts           # Typed Tauri invoke() IPC wrappers
     store.tsx             # React Context + useReducer state management
     themes.ts             # Monaco theme definitions synced with CSS themes
     styles.css            # Tailwind import + CSS variable themes + global styles
@@ -73,11 +74,11 @@ PSForge/
       Toolbar.tsx         # Top bar: file ops, run/stop, PS version, theme
       TabBar.tsx          # Editor tabs with dirty indicators, context menu
       EditorPane.tsx      # Monaco Editor wrapper with settings sync
-      OutputPane.tsx      # Bottom pane tabs; virtualised output list, pane-local clear actions, and toggleable text mode for the Output and Problems tabs
+      OutputPane.tsx      # Bottom pane tabs for Terminal, Variables, Debugger, Show Command, and Help
       TerminalPane.tsx    # xterm.js integrated terminal (PS session via piped I/O)
       Sidebar.tsx         # Left/right sidebar with Modules browser and script Outline navigator
       StatusBar.tsx       # Bottom bar: encoding, path, running state, version, and GitHub-release updater state/actions
-      SettingsPanel.tsx   # Modal settings dialog (6 sections: Editor, IntelliSense, Execution, Output, Appearance, File Associations) including startup update-check toggle
+      SettingsPanel.tsx   # Modal settings dialog (6 sections: Editor, IntelliSense, Execution, Output/terminal, Appearance, File Associations) including startup update-check toggle
       CommandPalette.tsx  # Ctrl+Shift+P command palette with snippets
       KeyboardShortcutPanel.tsx  # F1 shortcut reference; searchable, grouped, kbd-tagged
       AboutDialog.tsx     # About modal: app name, version, description, author, GitHub link, tech stack
@@ -97,7 +98,7 @@ PSForge/
       errors.rs           # AppError type + BatchResult<T> / BatchError for batch ops (Rule 11)
       powershell.rs       # ProcessManager: execute, stop, stdin, discover versions
       settings.rs         # AppSettings: load/save %APPDATA%/PSForge/settings.json; load_from/save_to for test injection, including startup updater preference
-      commands.rs         # 33 Tauri command handlers (all #[tauri::command])
+      commands.rs         # Tauri command handlers for execution, debugging, settings, file ops, and analysis
       terminal.rs         # Integrated terminal: start_terminal, terminal_exec, stop_terminal
       utils.rs            # with_retry: transient-error retry helper (Rule 11)
 
@@ -117,14 +118,14 @@ PSForge/
 
 ### Backend Entry
 - `src-tauri/src/main.rs` -> calls `psforge_lib::run()`
-- `src-tauri/src/lib.rs` -> builds Tauri app with plugins + 33 command handlers
+- `src-tauri/src/lib.rs` -> builds Tauri app with plugins + command handlers
 
-### Tauri IPC Commands (29 total)
+### Tauri IPC Commands
 
 | Command | Module | Description |
 |---------|--------|-------------|
-| `execute_script` | commands | Run a PS script file, stream output events; optional script args are passed natively after `-File` for PowerShell parameter binding |
-| `execute_selection` | commands | Run selected text (or current line when no selection) as PS code |
+| `prepare_terminal_script_command` | commands | Build a terminal-safe PowerShell command string for F5/F8 runs; writes the user script to a secure temp `.ps1` wrapper and cleans it up afterwards |
+| `execute_script_debug` | commands | Run a script under the debugger host with optional breakpoints; output/events are mirrored into the integrated terminal |
 | `stop_script` | commands | Kill the running PS process |
 | `send_stdin` | commands | Write to running process stdin |
 | `get_ps_versions` | commands | Discover installed PowerShell versions |
@@ -154,6 +155,7 @@ PSForge/
 | `get_signing_certificates` | commands | Enumerate `Cert:\CurrentUser\My` for code-signing certificates; returns empty vec (not error) when none found (`CERT_ENUM_TIMEOUT_SECS=10`) |
 | `sign_script` | commands | Sign a saved `.ps1` file with `Set-AuthenticodeSignature`; validates thumbprint (40-char hex) and file path before invoking PS (`SIGN_TIMEOUT_SECS=30`) |
 | `start_terminal` | terminal | Start interactive PS session with piped I/O |
+| `terminal_write` | terminal | Send raw keystroke/input data to the active terminal session |
 | `terminal_exec` | terminal | Execute a command in the active terminal session |
 | `stop_terminal` | terminal | Stop and clean up the terminal session |
 
@@ -161,12 +163,13 @@ PSForge/
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `ps-output` | `OutputLine` | Stdout/stderr line from running script |
-| `ps-variables` | `VariableInfo[]` | Variable snapshot captured from the completed run/debug session |
-| `ps-complete` | `{ exit_code }` | Script execution completed |
+| `ps-output` | `OutputLine` | Stdout/stderr line emitted by the debugger host; frontend mirrors it into the integrated terminal |
+| `ps-variables` | `VariableInfo[]` | Variable snapshot captured from the completed debugger-host session |
+| `ps-debug-break` | `number` | 1-based source line where the debugger host paused |
+| `ps-complete` | `{ exit_code }` | Debugger-host execution completed |
 | `terminal-output` | `string` | A stdout line from the interactive terminal session |
-| `terminal-stderr` | `string` | A stderr line from the interactive terminal session (displayed in red) |
-| `terminal-done` | `null` | The REPL sentinel was seen; command completed |
+| `terminal-stderr` | `string` | A stderr line from the interactive terminal session, including terminal-first F5/F8 runs |
+| `terminal-done` | `null` | The REPL sentinel was seen; the active terminal command completed |
 | `terminal-exit` | `null` | The terminal child process has exited |
 
 ### Keyboard Shortcuts
@@ -295,9 +298,9 @@ npx prettier --write "src/**/*.{ts,tsx,css}"  # Format
   - _Core_: `defaultPsVersion`, `theme`, `fontSize`, `fontFamily`, `wordWrap`, `showTimestamps`, `splitPosition`, `recentFiles`, `fileAssociations`
   - _Editor_: `tabSize`, `insertSpaces`, `showMinimap`, `lineNumbers`, `renderWhitespace`, `showIndentGuides`, `stickyScroll`, `enablePssa`, `enableIntelliSense`
   - _Execution_: `autoSaveOnRun`, `clearOutputOnRun`, `executionPolicy`, `workingDirMode` (`"file"` | `"custom"`), `customWorkingDir`
-  - _Output_: `terminalLoadProfile`, `outputFontSize`, `outputFontFamily`, `outputWordWrap`, `maxRecentFiles`
+  - _Output/terminal_: `terminalLoadProfile`, `outputFontSize`, `outputFontFamily`, `outputWordWrap`, `maxRecentFiles`
 - **Defaults**: Auto PS version, dark theme, 14px, Cascadia Code, no wrap, no timestamps, 65% split, tab size 4, spaces, PSSA on, IntelliSense on, clear output on run, max 20 recent files
-- **Font note**: `fontSize`/`fontFamily` apply to the entire UI via `--ui-font-size` / `--ui-font-family` CSS custom properties; `outputFontSize`/`outputFontFamily` apply only to the Output pane
+- **Font note**: `fontSize`/`fontFamily` apply to the entire UI via `--ui-font-size` / `--ui-font-family` CSS custom properties; `outputFontSize`/`outputFontFamily` apply to the terminal and the auxiliary bottom-pane views
 
 ### User Snippets
 
@@ -342,11 +345,11 @@ npx prettier --write "src/**/*.{ts,tsx,css}"  # Format
 | ------------------------- | ------------------------------------------------------------------ |
 | react / react-dom         | UI framework                                                       |
 | @monaco-editor/react      | Code editor component                                              |
-| @tanstack/react-virtual   | Output pane virtual list — only renders visible rows (performance) |
 | @tauri-apps/api           | Tauri IPC bridge                                                   |
 | @tauri-apps/plugin-dialog | Dialog API                                                         |
 | @tauri-apps/plugin-fs     | FS API                                                             |
 | xterm + xterm-addon-fit   | Integrated terminal renderer                                       |
+| xterm-addon-web-links     | Auto-link URLs and file-like paths inside terminal output          |
 | @tailwindcss/vite         | Tailwind CSS v4                                                    |
 | @vitejs/plugin-react      | Vite React support                                                 |
 | typescript ~5.6           | Type system                                                        |
@@ -398,7 +401,7 @@ Registered by `TerminalPane.tsx`'s mount effect and cleaned up on unmount. Expos
 2. **Settings auto-persist**: Settings changes are debounced (1s) and auto-saved to disk
 3. **Theme sync**: CSS variable theme and Monaco theme must always match (both set on theme change)
 4. **No admin required**: File associations use HKCU only, never HKLM
-5. **Output bounded**: Max 100,000 lines retained in output buffer (`MAX_OUTPUT_LINES`)
+5. **Hidden-host output bounded**: Max 100,000 lines retained per backend PowerShell process (`MAX_OUTPUT_LINES`)
 6. **Encoding preservation**: Files are read with encoding detection and saved with the same encoding
 7. **Event-based streaming**: Script output is never polled; Rust pushes events as lines arrive
 8. **TerminalPane always mounted**: The integrated terminal is rendered unconditionally with CSS `display: none`/`"flex"` to prevent the PS session from being killed on tab switch

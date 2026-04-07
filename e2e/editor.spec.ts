@@ -142,9 +142,9 @@ describe('Editor and Tab Management', () => {
 
   describe('Monaco Editor Interaction', () => {
     before(async () => {
-      // Ensure we are on the Output tab so the editor is not obscured.
-      const outputTab = await $('[data-testid="output-tab-output"]');
-      await outputTab.click();
+      // Ensure we are on a non-terminal bottom tab so the editor is not obscured.
+      const variablesTab = await $('[data-testid="bottom-tab-variables"]');
+      await variablesTab.click();
       await browser.pause(200);
     });
 

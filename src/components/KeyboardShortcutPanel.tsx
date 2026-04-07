@@ -124,11 +124,11 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
-    category: "Output Pane",
+    category: "Terminal",
     shortcuts: [
       {
-        keys: "Stdin input box + Enter",
-        description: "Send input to Read-Host prompt",
+        keys: "Terminal input + Enter",
+        description: "Send input to interactive script prompts or the shell",
       },
     ],
   },

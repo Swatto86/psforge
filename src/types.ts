@@ -39,20 +39,6 @@ export interface OutputLine {
   timestamp: string;
 }
 
-/** A diagnostic problem item parsed from script output or static analysis. */
-export interface ProblemItem {
-  /** Severity level. */
-  severity: "error" | "warning" | "info";
-  /** Human-readable problem description. */
-  message: string;
-  /** Source that produced this diagnostic (e.g. "PowerShell"). */
-  source: string;
-  /** Line number (1-indexed) where the problem occurred, if known. */
-  line?: number;
-  /** Column number (1-indexed) where the problem occurred, if known. */
-  column?: number;
-}
-
 /** An installed PowerShell module. */
 export interface ModuleInfo {
   name: string;
@@ -225,7 +211,7 @@ export interface AppSettings {
   // ---- Execution ----
   /** Save the active file automatically before running (F5). */
   autoSaveOnRun: boolean;
-  /** Clear the output pane before each run. */
+  /** Clear the integrated terminal before each run. */
   clearOutputOnRun: boolean;
   /** Keep script/debug runspace state between runs in the backend host process. */
   persistRunspaceBetweenRuns: boolean;
@@ -244,11 +230,11 @@ export interface AppSettings {
   /** Load PowerShell profiles when starting the integrated terminal. */
   terminalLoadProfile: boolean;
   showTimestamps: boolean;
-  /** Font size for the output/terminal pane (may differ from editor). */
+  /** Font size for the bottom pane and terminal (may differ from editor). */
   outputFontSize: number;
-  /** Font family for the output/terminal pane. */
+  /** Font family for the bottom pane and terminal. */
   outputFontFamily: string;
-  /** Wrap long lines in the output pane. */
+  /** Wrap long lines in bottom-pane text views. */
   outputWordWrap: boolean;
   /** Font family for the UI chrome (buttons, labels, status bar, etc.). */
   uiFontFamily: string;

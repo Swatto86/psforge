@@ -3,13 +3,13 @@
  *
  * Verifies that a PowerShell script can be written in the Monaco editor and
  * executed via the Run toolbar button (or F5), with output appearing in the
- * Output pane.
+ * integrated terminal.
  *
  * Tests cover:
  *  - Run button enabled/disabled state
  *  - Stop button enabled/disabled state
- *  - Write-Host output appearing in the output scroll area
- *  - Write-Error output appearing in the output scroll area
+ *  - Write-Host output appearing in the terminal buffer
+ *  - Write-Error output appearing in the terminal buffer
  *  - Running script with no output does not crash
  *
  * Run: npm run test:e2e -- --spec e2e/script-run.spec.ts
@@ -22,6 +22,16 @@ const SCRIPT_IDLE_TIMEOUT   = 45000; // ms to wait for script to finish
 
 /** Type text into the Monaco editor, replacing any existing content. */
 async function setEditorContent(text: string): Promise<void> {
+  const updatedViaHelper = await browser.execute((nextText: string) => {
+    const fn = (window as unknown as Record<string, unknown>)
+      .__psforge_setEditorText;
+    return typeof fn === 'function' && (fn as (text: string) => boolean)(nextText);
+  }, text);
+  if (updatedViaHelper) {
+    await browser.pause(150);
+    return;
+  }
+
   const editorArea = await $('.monaco-editor');
   await editorArea.click();
   await browser.pause(200);
@@ -58,15 +68,30 @@ async function runAndExpectOutput(
   return false;
 }
 
-/** Wait for visible text to appear inside [data-testid="output-scroll"]. */
+async function showTerminalTab(): Promise<void> {
+  const terminalTab = await $('[data-testid="bottom-tab-terminal"]');
+  await terminalTab.click();
+  await browser.pause(150);
+}
+
+async function getTerminalText(lineCount = 200): Promise<string> {
+  await showTerminalTab();
+  return browser.execute((n: number): string => {
+    const fn = (window as unknown as Record<string, unknown>)
+      .__psforge_terminal_get_content;
+    if (typeof fn !== 'function') return '';
+    return (fn as (lineCount?: number) => string)(n);
+  }, lineCount);
+}
+
+/** Wait for visible text to appear inside the integrated terminal buffer. */
 async function waitForOutputText(
   substring: string,
   timeoutMs = SCRIPT_OUTPUT_TIMEOUT
 ): Promise<boolean> {
   try {
     await browser.waitUntil(async () => {
-      const scroll = await $('[data-testid="output-scroll"]');
-      const text = await scroll.getText();
+      const text = await getTerminalText();
       return text.includes(substring);
     }, { timeout: timeoutMs, interval: 300 });
     return true;
@@ -75,20 +100,17 @@ async function waitForOutputText(
   }
 }
 
-/** Get the current text content of the output scroll pane. */
+/** Get the current text content of the terminal buffer. */
 async function getOutputText(): Promise<string> {
-  const scroll = await $('[data-testid="output-scroll"]');
-  return scroll.getText();
+  return getTerminalText();
 }
 
-/** Click the Run button and switch to the Output tab. */
+/** Click the Run button and switch to the Terminal tab. */
 async function clickRun(): Promise<void> {
   const runBtn = await $('[data-testid="toolbar-run"]');
   await runBtn.click();
   await browser.pause(200);
-  // Switch to Output tab so we can read output.
-  const outputTab = await $('[data-testid="output-tab-output"]');
-  await outputTab.click();
+  await showTerminalTab();
 }
 
 describe('Script Execution', () => {
@@ -112,9 +134,7 @@ describe('Script Execution', () => {
       return typeof val === 'string' && (val.includes('\\') || val.includes('/'));
     }, { timeout: 10000, timeoutMsg: 'PS version selector never got a value' });
 
-    // Switch to Output tab.
-    const outputTab = await $('[data-testid="output-tab-output"]');
-    await outputTab.click();
+    await showTerminalTab();
     await browser.pause(300);
 
     // Warm up the execution path so first assertions are not penalised by
@@ -143,7 +163,7 @@ describe('Script Execution', () => {
   });
 
   describe('Write-Host Output', () => {
-    it('should display Write-Host output in the Output pane', async () => {
+    it('should display Write-Host output in the terminal', async () => {
       const testMarker = 'E2ETestOutput_WriteHost';
       await setEditorContent(`Write-Host "${testMarker}"`);
       const found = await runAndExpectOutput(testMarker, SCRIPT_OUTPUT_TIMEOUT, 2);
@@ -205,24 +225,10 @@ describe('Script Execution', () => {
   });
 
   describe('Error Output', () => {
-    it('should show error output in the output pane', async () => {
+    it('should show error output in the terminal', async () => {
       await setEditorContent('Write-Error "E2EError_Marker"');
       await clickRun();
-      // Errors may be shown in output, switch to Output or check output-scroll.
-      const outputTab = await $('[data-testid="output-tab-output"]');
-      await outputTab.click();
-
-      // Give time for error to appear (write-error may print to stderr).
       const found = await waitForOutputText('E2EError_Marker', SCRIPT_OUTPUT_TIMEOUT);
-      if (!found) {
-        // Check problems panel as well.
-        const problemsTab = await $('[data-testid="output-tab-problems"]');
-        await problemsTab.click();
-        await browser.pause(500);
-        const problemsText = await getOutputText().catch(() => '');
-        console.warn('[INFO] Problems tab text:', problemsText);
-      }
-      // We assert the output pane received something (error output should surface somewhere).
       expect(found).toBe(true);
     });
 
@@ -262,9 +268,6 @@ describe('Script Execution', () => {
       await runBtn.click();
       await browser.pause(600);
 
-      const outputTab = await $('[data-testid="output-tab-output"]');
-      await outputTab.click();
-
       // While running, Stop should be enabled (or at minimum not throw when clicked).
       // We check within the first 2 seconds.
       await browser.pause(1000);
@@ -293,9 +296,8 @@ describe('Script Execution', () => {
         return disabled === null;
       }, { timeout: 10000, timeoutMsg: 'Run button did not re-enable after stopping script' });
 
-      // "NeverReached_E2E" should NOT be in the output.
-      const outputTab = await $('[data-testid="output-tab-output"]');
-      await outputTab.click();
+      // "NeverReached_E2E" should NOT be in the terminal buffer.
+      await showTerminalTab();
       await browser.pause(500);
       const text = await getOutputText();
       expect(text).not.toContain('NeverReached_E2E');
@@ -313,9 +315,6 @@ describe('Script Execution', () => {
 
       await browser.keys(['F8']);
       await browser.pause(250);
-
-      const outputTab = await $('[data-testid="output-tab-output"]');
-      await outputTab.click();
 
       const found = await waitForOutputText(marker, SCRIPT_OUTPUT_TIMEOUT);
       expect(found).toBe(true);

@@ -7,6 +7,7 @@
  *  - window.__psforge_triggerGoToLine()     -- opens Monaco Go To Line widget
  *  - window.__psforge_getRunText()          -- returns selection, or current line
  *  - window.__psforge_getHelpQuery()        -- returns selection/token for context help
+ *  - window.__psforge_setEditorText()       -- replaces the active editor text
  *
  *  Editor enhancements wired here:
  *  - Cursor position tracking (dispatched to store -> displayed in StatusBar).
@@ -301,8 +302,8 @@ export function EditorPane() {
       editorRef.current.focus();
       editorRef.current.getAction("editor.action.gotoLine")?.run();
     };
-    // Navigate to a specific line/column -- called by the Problems panel when
-    // the user clicks a diagnostic entry to jump to the error location.
+    // Navigate to a specific line/column from diagnostics, debugger state, or
+    // outline/sidebar interactions elsewhere in the UI.
     w.__psforge_navigateTo = (line: number, column: number) => {
       if (!editorRef.current) return;
       editorRef.current.revealLineInCenter(line);
@@ -359,12 +360,37 @@ export function EditorPane() {
       }
       return cleaned;
     };
+    w.__psforge_setEditorText = (text: string) => {
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !model) return false;
+
+      editor.executeEdits("psforge-e2e", [
+        {
+          range: model.getFullModelRange(),
+          text,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.pushUndoStop();
+
+      const lastLine = model.getLineCount();
+      const lastColumn = model.getLineMaxColumn(lastLine);
+      editor.setPosition({ lineNumber: lastLine, column: lastColumn });
+      editor.revealPositionInCenter({
+        lineNumber: lastLine,
+        column: lastColumn,
+      });
+      editor.focus();
+      return true;
+    };
     return () => {
       delete w.__psforge_triggerFindReplace;
       delete w.__psforge_triggerGoToLine;
       delete w.__psforge_navigateTo;
       delete w.__psforge_getRunText;
       delete w.__psforge_getHelpQuery;
+      delete w.__psforge_setEditorText;
     };
   }, []);
 

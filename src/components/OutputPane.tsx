@@ -1,20 +1,12 @@
-/** PSForge Output Pane.
- *  Displays script output, variables, problems, terminal, and debugger controls.
- *
- *  Output rendering uses @tanstack/react-virtual to virtualise the line list:
- *  only the visible rows (plus a small overscan buffer) are in the DOM at any
- *  one time.  This keeps frame time constant regardless of how many lines have
- *  been accumulated (capped server-side at MAX_OUTPUT_LINES = 10 000 in the
- *  store, but visually smooth even at that limit).
+/** PSForge bottom pane.
+ *  Hosts the integrated terminal plus debugger and variable inspector tools.
  */
 
-import React, { useRef, useEffect, useState, useCallback } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import React, { useEffect, useState, useCallback } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type {
   VariableInfo,
-  ProblemItem,
   DebugBreakpoint,
   DebugLocal,
   DebugStackFrame,
@@ -23,58 +15,6 @@ import type {
 import { TerminalPane } from "./TerminalPane";
 import { ShowCommandPane } from "./ShowCommandPane";
 import { HelpPane } from "./HelpPane";
-
-async function saveTextToFile({
-  title,
-  defaultPath,
-  text,
-}: {
-  title: string;
-  defaultPath: string;
-  text: string;
-}): Promise<void> {
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const path = await save({
-    title,
-    defaultPath,
-    filters: [
-      { name: "Log files", extensions: ["log", "txt"] },
-      { name: "All files", extensions: ["*"] },
-    ],
-  });
-  if (!path) return;
-  await cmd.saveFileContent(path, text, "utf8");
-}
-
-async function saveOutputToFile(lines: { text: string }[]): Promise<void> {
-  const text = lines.map((line) => line.text).join("\n");
-  await saveTextToFile({
-    title: "Save Output",
-    defaultPath: "output.log",
-    text,
-  });
-}
-
-function problemsToText(problems: ProblemItem[]): string {
-  return problems
-    .map((problem) => {
-      const severity = problem.severity.toUpperCase();
-      const location =
-        problem.line !== undefined
-          ? ` (Ln ${problem.line}${problem.column !== undefined ? `, Col ${problem.column}` : ""})`
-          : "";
-      return `[${severity}] ${problem.source}${location}: ${problem.message}`;
-    })
-    .join("\n");
-}
-
-async function saveProblemsToFile(problems: ProblemItem[]): Promise<void> {
-  await saveTextToFile({
-    title: "Save Problems",
-    defaultPath: "problems.log",
-    text: problemsToText(problems),
-  });
-}
 
 function breakpointLabel(bp: DebugBreakpoint): string {
   if (typeof bp.line === "number") return `Ln ${bp.line}`;
@@ -97,43 +37,14 @@ function summarizeBreakpointOptions(bp: DebugBreakpoint): string {
   return parts.join(" | ");
 }
 
-type EditableBottomTab = "output" | "problems";
-
-type PaneTextEditorState = {
-  tab: EditableBottomTab;
-  text: string;
-  undoStack: string[];
-  redoStack: string[];
-};
-
-const MAX_TEXT_EDITOR_HISTORY = 200;
-
-function isEditableBottomTab(tab: string): tab is EditableBottomTab {
-  return tab === "output" || tab === "problems";
-}
-
-function outputLinesToText(
-  lines: Array<{ text: string; timestamp: string }>,
-  includeTimestamps: boolean,
-): string {
-  return lines
-    .map((line) => {
-      if (!includeTimestamps) return line.text;
-      return `[${formatTimestamp(line.timestamp)}] ${line.text}`;
-    })
-    .join("\n");
-}
-
 function formatCount(value: number, noun: string): string {
   return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 }
 
 type BottomTabId =
   | "terminal"
-  | "output"
   | "debugger"
   | "variables"
-  | "problems"
   | "show-command"
   | "help";
 
@@ -167,111 +78,28 @@ export function OutputPane({
   onStop,
 }: OutputPaneProps) {
   const { state, dispatch, activeTab } = useAppState();
-  const outputScrollRef = useRef<HTMLDivElement>(null);
   const [stdinInput, setStdinInput] = useState("");
   const [varFilter, setVarFilter] = useState("");
-  const isAtBottomRef = useRef(true);
-
-  const OVERSCAN_COUNT = 10;
-  const ESTIMATED_LINE_HEIGHT_PX = 20;
-
-  const virtualizer = useVirtualizer({
-    count: state.outputLines.length,
-    getScrollElement: () => outputScrollRef.current,
-    estimateSize: () => ESTIMATED_LINE_HEIGHT_PX,
-    overscan: OVERSCAN_COUNT,
-  });
-
-  const handleScroll = useCallback(() => {
-    const el = outputScrollRef.current;
-    if (!el) return;
-    isAtBottomRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 4;
-  }, []);
-
-  useEffect(() => {
-    if (
-      isAtBottomRef.current &&
-      state.outputLines.length > 0 &&
-      state.bottomPanelTab === "output"
-    ) {
-      virtualizer.scrollToIndex(state.outputLines.length - 1, {
-        align: "end",
-        behavior: "auto",
-      });
-    }
-  }, [state.outputLines.length, state.bottomPanelTab, virtualizer]);
 
   const isDebuggerInputTab = state.bottomPanelTab === "debugger";
-  const isStdinEnabled = isDebuggerInputTab
-    ? state.isDebugging
-    : state.isRunning;
-  const inputPrompt = isDebuggerInputTab ? "DBG>" : ">";
-  const inputEchoPrefix = isDebuggerInputTab ? "DBG> " : "> ";
+  const isStdinEnabled = state.isDebugging;
+  const inputPrompt = "DBG>";
 
   const handleStdinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!stdinInput.trim()) return;
+    const value = stdinInput.trim();
+    if (!value) return;
     try {
-      await cmd.sendStdin(stdinInput);
-      dispatch({
-        type: "ADD_OUTPUT",
-        line: {
-          stream: "stdout",
-          text: `${inputEchoPrefix}${stdinInput}`,
-          timestamp: String(Math.floor(Date.now() / 1000)),
-        },
-      });
+      await cmd.sendStdin(value);
+      const writeNotice = (
+        window as unknown as Record<string, unknown>
+      ).__psforge_terminal_write_notice as
+        | ((text: string, options?: { reveal?: boolean }) => Promise<void>)
+        | undefined;
+      void writeNotice?.(`${inputPrompt} ${value}\n`, { reveal: false });
       setStdinInput("");
     } catch {
       // Failed to send stdin.
-    }
-  };
-
-  const copyAll = () => {
-    const text = state.outputLines.map((l) => l.text).join("\n");
-    navigator.clipboard.writeText(text).catch(() => {});
-  };
-
-  const copyProblems = useCallback(() => {
-    navigator.clipboard
-      .writeText(problemsToText(state.problems))
-      .catch(() => {});
-  }, [state.problems]);
-
-  const [isSavingOutput, setIsSavingOutput] = useState(false);
-  const [isSavingProblems, setIsSavingProblems] = useState(false);
-
-  const handleSaveOutput = useCallback(async () => {
-    if (isSavingOutput || state.outputLines.length === 0) return;
-    setIsSavingOutput(true);
-    try {
-      await saveOutputToFile(state.outputLines);
-    } finally {
-      setIsSavingOutput(false);
-    }
-  }, [isSavingOutput, state.outputLines]);
-
-  const handleSaveProblems = useCallback(async () => {
-    if (isSavingProblems || state.problems.length === 0) return;
-    setIsSavingProblems(true);
-    try {
-      await saveProblemsToFile(state.problems);
-    } finally {
-      setIsSavingProblems(false);
-    }
-  }, [isSavingProblems, state.problems]);
-
-  const streamColor = (stream: string): string => {
-    switch (stream) {
-      case "stderr":
-        return "var(--stream-stderr)";
-      case "verbose":
-        return "var(--stream-verbose)";
-      case "warning":
-        return "var(--stream-warning)";
-      default:
-        return "var(--stream-stdout)";
     }
   };
 
@@ -292,125 +120,6 @@ export function OutputPane({
       !varFilter ||
       v.name.toLowerCase().includes(varFilter.toLowerCase()) ||
       v.value.toLowerCase().includes(varFilter.toLowerCase()),
-  );
-  const [textEditorState, setTextEditorState] =
-    useState<PaneTextEditorState | null>(null);
-
-  const activeEditableTab = isEditableBottomTab(state.bottomPanelTab)
-    ? state.bottomPanelTab
-    : null;
-  const isTextEditorActive =
-    activeEditableTab !== null && textEditorState?.tab === activeEditableTab;
-
-  const capturePaneText = useCallback(
-    (tab: EditableBottomTab): string => {
-      if (tab === "output") {
-        return outputLinesToText(
-          state.outputLines,
-          state.settings.showTimestamps === true,
-        );
-      }
-      return problemsToText(state.problems);
-    },
-    [state.outputLines, state.problems, state.settings.showTimestamps],
-  );
-
-  const pushTextEditorChange = useCallback((nextText: string) => {
-    setTextEditorState((prev) => {
-      if (!prev || prev.text === nextText) return prev;
-      const undoStack = [...prev.undoStack, prev.text].slice(
-        -MAX_TEXT_EDITOR_HISTORY,
-      );
-      return {
-        ...prev,
-        text: nextText,
-        undoStack,
-        redoStack: [],
-      };
-    });
-  }, []);
-
-  const toggleTextEditor = useCallback(() => {
-    if (!activeEditableTab) return;
-    if (textEditorState?.tab === activeEditableTab) {
-      setTextEditorState(null);
-      return;
-    }
-    const snapshot = capturePaneText(activeEditableTab);
-    setTextEditorState({
-      tab: activeEditableTab,
-      text: snapshot,
-      undoStack: [],
-      redoStack: [],
-    });
-  }, [activeEditableTab, capturePaneText, textEditorState]);
-
-  const undoTextEditor = useCallback(() => {
-    setTextEditorState((prev) => {
-      if (!prev || prev.undoStack.length === 0) return prev;
-      const previousText = prev.undoStack[prev.undoStack.length - 1];
-      return {
-        ...prev,
-        text: previousText,
-        undoStack: prev.undoStack.slice(0, -1),
-        redoStack: [prev.text, ...prev.redoStack].slice(
-          0,
-          MAX_TEXT_EDITOR_HISTORY,
-        ),
-      };
-    });
-  }, []);
-
-  const redoTextEditor = useCallback(() => {
-    setTextEditorState((prev) => {
-      if (!prev || prev.redoStack.length === 0) return prev;
-      const [nextText, ...remainingRedo] = prev.redoStack;
-      return {
-        ...prev,
-        text: nextText,
-        undoStack: [...prev.undoStack, prev.text].slice(
-          -MAX_TEXT_EDITOR_HISTORY,
-        ),
-        redoStack: remainingRedo,
-      };
-    });
-  }, []);
-
-  const resetTextEditor = useCallback(() => {
-    if (!activeEditableTab || !isTextEditorActive) return;
-    pushTextEditorChange(capturePaneText(activeEditableTab));
-  }, [
-    activeEditableTab,
-    capturePaneText,
-    isTextEditorActive,
-    pushTextEditorChange,
-  ]);
-
-  const clearTextEditor = useCallback(() => {
-    if (!isTextEditorActive) return;
-    pushTextEditorChange("");
-  }, [isTextEditorActive, pushTextEditorChange]);
-
-  const copyTextEditor = useCallback(() => {
-    if (!isTextEditorActive || !textEditorState) return;
-    navigator.clipboard.writeText(textEditorState.text).catch(() => {});
-  }, [isTextEditorActive, textEditorState]);
-
-  const handleTextEditorKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      const key = e.key.toLowerCase();
-      if (!e.shiftKey && key === "z") {
-        e.preventDefault();
-        undoTextEditor();
-        return;
-      }
-      if (key === "y" || (e.shiftKey && key === "z")) {
-        e.preventDefault();
-        redoTextEditor();
-      }
-    },
-    [redoTextEditor, undoTextEditor],
   );
 
   const handleAddDebugWatch = useCallback(
@@ -468,8 +177,6 @@ export function OutputPane({
   );
 
   const primaryBottomTabs: BottomTabDescriptor[] = [
-    { id: "output", label: "Output" },
-    { id: "problems", label: "Problems" },
     { id: "terminal", label: "Terminal" },
   ];
 
@@ -480,51 +187,16 @@ export function OutputPane({
     { id: "help", label: "Help", secondary: true },
   ];
 
-  const outputLineCountText = formatCount(state.outputLines.length, "line");
-  const problemCountText = formatCount(state.problems.length, "problem");
   const variableCountText = formatCount(state.variables.length, "variable");
 
   const activePaneMeta = (() => {
     switch (state.bottomPanelTab) {
-      case "output":
-        return {
-          title: "Script Output",
-          subtitle:
-            state.outputLines.length === 0
-              ? "Run a script and keep the results ready to copy, save, or review here."
-              : `${outputLineCountText} from the current session, ready to copy or save.`,
-          chipLabel: state.isDebugging
-            ? state.debugPaused
-              ? "Debug paused"
-              : "Debugging"
-            : state.isRunning
-              ? "Running"
-              : "Copy-first view",
-          chipTone: state.isDebugging
-            ? state.debugPaused
-              ? "warn"
-              : "accent"
-            : state.isRunning
-              ? "accent"
-              : "default",
-        };
-      case "problems":
-        return {
-          title: "Problems",
-          subtitle:
-            state.problems.length === 0
-              ? "Parser and runtime issues from the last run appear here when they exist."
-              : `${problemCountText} parsed from the most recent script run.`,
-          chipLabel:
-            state.problems.length === 0 ? "No issues" : problemCountText,
-          chipTone: state.problems.length === 0 ? "default" : "danger",
-        };
       case "terminal":
         return {
           title: "Interactive Terminal",
           subtitle:
-            "Persistent PowerShell session for ad-hoc commands between script runs.",
-          chipLabel: "Persistent session",
+            "Run scripts, inspect errors, and use ad-hoc PowerShell commands in the same terminal session.",
+          chipLabel: state.isRunning ? "Running" : "Terminal-first",
           chipTone: "accent",
         };
       case "variables":
@@ -575,23 +247,10 @@ export function OutputPane({
 
   const toolbarMeta = (() => {
     switch (state.bottomPanelTab) {
-      case "output":
-        if (state.isDebugging) {
-          return state.debugPaused
-            ? "Debugger output is paused and ready for input."
-            : "Debugger output is streaming live.";
-        }
-        return state.isRunning
-          ? "Script output is streaming live."
-          : state.outputLines.length === 0
-            ? "Use F5 to run the active script into this pane."
-            : `${outputLineCountText} available to copy, save, or clear.`;
-      case "problems":
-        return state.problems.length === 0
-          ? "No problems were parsed from the last run."
-          : `${problemCountText} available to copy or save.`;
       case "terminal":
-        return "Use the terminal for quick PowerShell commands without changing your main output view.";
+        return state.isRunning
+          ? "Script execution is streaming directly into the integrated terminal."
+          : "Use the terminal for both script execution and ad-hoc PowerShell commands.";
       case "variables":
         return state.variables.length === 0
           ? "Run a script to capture variables here."
@@ -632,13 +291,6 @@ export function OutputPane({
     let badgeText: string | null = null;
     let badgeClassName = "bottom-pane-badge";
 
-    if (tab.id === "output" && state.outputLines.length > 0) {
-      badgeText = state.outputLines.length.toLocaleString();
-    }
-    if (tab.id === "problems" && state.problems.length > 0) {
-      badgeText = state.problems.length.toLocaleString();
-      badgeClassName = "bottom-pane-badge bottom-pane-badge-danger";
-    }
     if (tab.id === "variables" && state.variables.length > 0) {
       badgeText = state.variables.length.toLocaleString();
       badgeClassName = "bottom-pane-badge bottom-pane-badge-accent";
@@ -653,7 +305,7 @@ export function OutputPane({
     return (
       <button
         key={tab.id}
-        data-testid={`output-tab-${tab.id}`}
+        data-testid={`bottom-tab-${tab.id}`}
         onClick={() => {
           dispatch({ type: "SET_BOTTOM_TAB", tab: tab.id });
           if (tab.id === "terminal") {
@@ -661,17 +313,6 @@ export function OutputPane({
               (
                 window as unknown as Record<string, () => void>
               ).__psforge_terminal_focus?.();
-            });
-          }
-          if (tab.id === "output") {
-            isAtBottomRef.current = true;
-            requestAnimationFrame(() => {
-              if (state.outputLines.length > 0) {
-                virtualizer.scrollToIndex(state.outputLines.length - 1, {
-                  align: "end",
-                  behavior: "auto",
-                });
-              }
             });
           }
         }}
@@ -691,12 +332,11 @@ export function OutputPane({
   };
 
   const showInputRow =
-    (state.bottomPanelTab === "output" && state.isRunning) ||
-    (state.bottomPanelTab === "debugger" && state.isDebugging);
+    state.bottomPanelTab === "debugger" && state.isDebugging;
 
   return (
     <div
-      data-testid="output-pane"
+      data-testid="bottom-pane"
       className="flex flex-col h-full bottom-pane-shell"
     >
       <div className="bottom-pane-header no-select text-sm">
@@ -722,141 +362,10 @@ export function OutputPane({
         <div className="bottom-pane-toolbar-meta">{toolbarMeta}</div>
 
         <div className="bottom-pane-action-group">
-          {activeEditableTab && (
-            <>
-              <button
-                data-testid="bottom-pane-text-mode-toggle"
-                onClick={toggleTextEditor}
-                className={actionButtonClassName({
-                  primary: isTextEditorActive,
-                })}
-                title="Open an editable text snapshot for the current pane"
-              >
-                {isTextEditorActive ? "Structured View" : "Text View"}
-              </button>
-
-              {isTextEditorActive && (
-                <>
-                  <button
-                    data-testid="bottom-pane-text-undo"
-                    onClick={undoTextEditor}
-                    disabled={
-                      !textEditorState || textEditorState.undoStack.length === 0
-                    }
-                    className={actionButtonClassName()}
-                    title="Undo the last text edit (Ctrl+Z)"
-                  >
-                    Undo
-                  </button>
-                  <button
-                    data-testid="bottom-pane-text-redo"
-                    onClick={redoTextEditor}
-                    disabled={
-                      !textEditorState || textEditorState.redoStack.length === 0
-                    }
-                    className={actionButtonClassName()}
-                    title="Redo the last undone edit (Ctrl+Y / Ctrl+Shift+Z)"
-                  >
-                    Redo
-                  </button>
-                  <button
-                    data-testid="bottom-pane-text-copy"
-                    onClick={copyTextEditor}
-                    disabled={
-                      !textEditorState || textEditorState.text.length === 0
-                    }
-                    className={actionButtonClassName({ primary: true })}
-                    title="Copy the editable pane text"
-                  >
-                    Copy
-                  </button>
-                  <button
-                    data-testid="bottom-pane-text-reset"
-                    onClick={resetTextEditor}
-                    className={actionButtonClassName()}
-                    title="Reload the current pane text into the editor"
-                  >
-                    Reset
-                  </button>
-                  <button
-                    data-testid="bottom-pane-text-clear"
-                    onClick={clearTextEditor}
-                    disabled={
-                      !textEditorState || textEditorState.text.length === 0
-                    }
-                    className={actionButtonClassName({ danger: true })}
-                    title="Clear only the editable pane text"
-                  >
-                    Clear
-                  </button>
-                </>
-              )}
-            </>
-          )}
-
-          {!isTextEditorActive && state.bottomPanelTab === "output" && (
-            <>
-              <button
-                onClick={copyAll}
-                disabled={state.outputLines.length === 0}
-                className={actionButtonClassName({ primary: true })}
-                title="Copy all output to clipboard"
-              >
-                Copy Output
-              </button>
-              <button
-                onClick={handleSaveOutput}
-                disabled={isSavingOutput || state.outputLines.length === 0}
-                className={actionButtonClassName()}
-                title="Save output to file"
-              >
-                {isSavingOutput ? "Saving..." : "Save..."}
-              </button>
-              <button
-                data-testid="output-clear-button"
-                onClick={() => dispatch({ type: "CLEAR_OUTPUT" })}
-                disabled={state.outputLines.length === 0}
-                className={actionButtonClassName({ danger: true })}
-                title="Clear output"
-              >
-                Clear
-              </button>
-            </>
-          )}
-
-          {!isTextEditorActive && state.bottomPanelTab === "problems" && (
-            <>
-              <button
-                onClick={copyProblems}
-                disabled={state.problems.length === 0}
-                className={actionButtonClassName({ primary: true })}
-                title="Copy all problems to clipboard"
-              >
-                Copy Problems
-              </button>
-              <button
-                onClick={handleSaveProblems}
-                disabled={isSavingProblems || state.problems.length === 0}
-                className={actionButtonClassName()}
-                title="Save problems to file"
-              >
-                {isSavingProblems ? "Saving..." : "Save..."}
-              </button>
-              <button
-                data-testid="problems-clear-button"
-                onClick={() => dispatch({ type: "CLEAR_PROBLEMS" })}
-                disabled={state.problems.length === 0}
-                className={actionButtonClassName({ danger: true })}
-                title="Clear problems"
-              >
-                Clear
-              </button>
-            </>
-          )}
-
           {state.bottomPanelTab === "terminal" && (
             <>
               <button
+                data-testid="terminal-clear-button"
                 onClick={() =>
                   (
                     window as unknown as Record<string, () => void>
@@ -868,6 +377,7 @@ export function OutputPane({
                 Clear
               </button>
               <button
+                data-testid="terminal-restart-button"
                 onClick={() =>
                   (
                     window as unknown as Record<string, () => void>
@@ -947,7 +457,7 @@ export function OutputPane({
             </>
           )}
 
-          {!isTextEditorActive && state.bottomPanelTab === "variables" && (
+          {state.bottomPanelTab === "variables" && (
             <input
               data-testid="variables-filter"
               value={varFilter}
@@ -977,138 +487,7 @@ export function OutputPane({
           WebkitUserSelect: "text",
         }}
       >
-        {isTextEditorActive && textEditorState && (
-          <textarea
-            data-testid={`bottom-pane-text-editor-${textEditorState.tab}`}
-            value={textEditorState.text}
-            onChange={(e) => pushTextEditorChange(e.target.value)}
-            onKeyDown={handleTextEditorKeyDown}
-            spellCheck={false}
-            wrap={state.settings.outputWordWrap === true ? "soft" : "off"}
-            className="h-full w-full p-3 resize-none"
-            style={{
-              border: "none",
-              borderRadius: 0,
-              backgroundColor: "var(--bg-panel)",
-              color: "var(--text-primary)",
-              fontFamily:
-                state.settings.outputFontFamily ??
-                "Cascadia Code, Consolas, monospace",
-              fontSize: `${state.settings.outputFontSize ?? 13}px`,
-              outline: "none",
-            }}
-          />
-        )}
-
-        {!isTextEditorActive && state.bottomPanelTab === "output" && (
-          /* Scroll container: needs explicit height so the virtualizer can
-             calculate visible rows.  flex-1 fills the available panel space.
-             Font family/size come from user output font settings. */
-          <div
-            ref={outputScrollRef}
-            data-testid="output-scroll"
-            onScroll={handleScroll}
-            className="font-mono overflow-auto h-full"
-            style={{
-              contain: "strict",
-              fontFamily:
-                state.settings.outputFontFamily ??
-                "Cascadia Code, Consolas, monospace",
-              fontSize: `${state.settings.outputFontSize ?? 13}px`,
-            }}
-          >
-            {state.outputLines.length === 0 && (
-              <div className="bottom-pane-empty">
-                <strong>Run a script to fill this pane.</strong>
-                <span>
-                  PSForge is now tuned to keep script output easy to read, copy,
-                  and save without switching into the terminal first.
-                </span>
-              </div>
-            )}
-            {/* Outer div sized to the total virtual height so the scrollbar is correct. */}
-            <div
-              style={{
-                height: `${virtualizer.getTotalSize()}px`,
-                width: "100%",
-                position: "relative",
-              }}
-            >
-              {virtualizer.getVirtualItems().map((vItem) => {
-                const line = state.outputLines[vItem.index];
-                return (
-                  <div
-                    key={vItem.key}
-                    data-index={vItem.index}
-                    ref={virtualizer.measureElement}
-                    className="bottom-pane-log-line"
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                      transform: `translateY(${vItem.start}px)`,
-                      padding: "1px 8px",
-                      whiteSpace:
-                        state.settings.outputWordWrap === true
-                          ? "pre-wrap"
-                          : "pre",
-                      wordBreak:
-                        state.settings.outputWordWrap === true
-                          ? "break-all"
-                          : "normal",
-                      display: "flex",
-                      gap: "8px",
-                    }}
-                  >
-                    {state.settings.showTimestamps && (
-                      <span
-                        style={{
-                          color: "var(--text-muted)",
-                          flexShrink: 0,
-                        }}
-                      >
-                        [{formatTimestamp(line.timestamp)}]
-                      </span>
-                    )}
-                    <AnsiText
-                      text={line.text}
-                      color={streamColor(line.stream)}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Running indicator: sticky so it remains visible at the bottom
-                of the scroll viewport even when the user has scrolled up to
-                review earlier output.  position:sticky inside overflow:auto
-                only pins the element when the container is taller than its
-                content; once the virtualiser fills the height the indicator
-                stays pinned to the visible bottom edge either way. */}
-            {state.isRunning && (
-              <div
-                className="animate-pulse px-2 py-0.5"
-                style={{
-                  position: "sticky",
-                  bottom: 0,
-                  color: "var(--text-accent)",
-                  backgroundColor: "var(--bg-panel)",
-                  borderTop: "1px solid var(--border-primary)",
-                  fontSize: "var(--ui-font-size-xs)",
-                }}
-              >
-                {state.isDebugging
-                  ? state.debugPaused
-                    ? "Debug paused…"
-                    : "Debugging…"
-                  : "Running…"}
-              </div>
-            )}
-          </div>
-        )}
-
-        {!isTextEditorActive && state.bottomPanelTab === "variables" && (
+        {state.bottomPanelTab === "variables" && (
           <div className="flex-1 min-h-0 overflow-auto">
             <VariableTable
               variables={filteredVars}
@@ -1122,20 +501,7 @@ export function OutputPane({
           </div>
         )}
 
-        {!isTextEditorActive && state.bottomPanelTab === "problems" && (
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <ProblemsPane
-              problems={state.problems}
-              fontSize={state.settings.outputFontSize ?? 13}
-              fontFamily={
-                state.settings.outputFontFamily ??
-                "Cascadia Code, Consolas, monospace"
-              }
-            />
-          </div>
-        )}
-
-        {!isTextEditorActive && state.bottomPanelTab === "debugger" && (
+        {state.bottomPanelTab === "debugger" && (
           <div className="flex-1 min-h-0 overflow-hidden">
             <DebuggerPane
               isRunning={state.isRunning}
@@ -1182,13 +548,13 @@ export function OutputPane({
           </div>
         )}
 
-        {!isTextEditorActive && state.bottomPanelTab === "show-command" && (
+        {state.bottomPanelTab === "show-command" && (
           <div className="flex-1 min-h-0 overflow-hidden">
             <ShowCommandPane />
           </div>
         )}
 
-        {!isTextEditorActive && state.bottomPanelTab === "help" && (
+        {state.bottomPanelTab === "help" && (
           <div className="flex-1 min-h-0 overflow-hidden">
             <HelpPane />
           </div>
@@ -1213,7 +579,7 @@ export function OutputPane({
         </div>
       </div>
 
-      {/* Stdin/debugger input row (visible in output and debugger tabs). */}
+      {/* Debugger input row. */}
       {showInputRow && (
         <form
           onSubmit={handleStdinSubmit}
@@ -1229,13 +595,9 @@ export function OutputPane({
             value={stdinInput}
             onChange={(e) => setStdinInput(e.target.value)}
             placeholder={
-              isDebuggerInputTab
-                ? isStdinEnabled
-                  ? "Type debugger command or expression..."
-                  : "Debugger not active"
-                : isStdinEnabled
-                  ? "Type input for Read-Host..."
-                  : "Script not running"
+              isDebuggerInputTab && isStdinEnabled
+                ? "Type debugger command or expression..."
+                : "Debugger not active"
             }
             disabled={!isStdinEnabled}
             className="flex-1 text-xs font-mono"
@@ -1711,9 +1073,9 @@ function DebuggerPane({
             </thead>
             <tbody>
               {callStack.map((frame, idx) => {
-                const location = frame.location.trim();
+                const location = frame.location || "Unknown";
                 const target = parseCallStackLocation(location);
-                const isSelected = selectedFrameIndex === idx;
+                const isSelected = idx === selectedFrameIndex;
                 return (
                   <tr
                     key={`${frame.functionName}-${location}-${idx}`}
@@ -1755,11 +1117,11 @@ function DebuggerPane({
                           }}
                           title={`Go to ${location}`}
                         >
-                          {location || "Unknown"}
+                          {location}
                         </button>
                       ) : (
                         <span style={{ color: "var(--text-muted)" }}>
-                          {location || "Unknown"}
+                          {location}
                         </span>
                       )}
                     </td>
@@ -2411,220 +1773,3 @@ function VariableTable({
   );
 }
 
-function formatTimestamp(ts: string): string {
-  const secs = parseInt(ts, 10);
-  if (isNaN(secs)) return ts;
-  const date = new Date(secs * 1000);
-  return date.toLocaleTimeString();
-}
-
-/** Renders the Problems tab with structured diagnostic items.
- *  Rows with a known line number are clickable -- clicking navigates the
- *  Monaco editor to the error location via window.__psforge_navigateTo.
- */
-function ProblemsPane({
-  problems,
-  fontSize,
-  fontFamily,
-}: {
-  problems: ProblemItem[];
-  fontSize: number;
-  fontFamily: string;
-}) {
-  const fontStyle: React.CSSProperties = {
-    fontSize: `${fontSize}px`,
-    fontFamily: `var(--ui-font-family, ${fontFamily})`,
-  };
-
-  if (problems.length === 0) {
-    return (
-      <div className="p-3" style={{ ...fontStyle, color: "var(--text-muted)" }}>
-        No problems detected. Run a script to see errors here.
-      </div>
-    );
-  }
-
-  const severityColor = (s: string) => {
-    switch (s) {
-      case "warning":
-        return "var(--stream-warning)";
-      case "info":
-        return "var(--stream-verbose)";
-      default:
-        return "var(--stream-stderr)";
-    }
-  };
-
-  // SVG icons rendered inline so they scale with the font and honour CSS color.
-  const SeverityIcon = ({ severity }: { severity: string }) => {
-    const color = severityColor(severity);
-    if (severity === "warning") {
-      return (
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-          style={{ flexShrink: 0, marginTop: "1px" }}
-        >
-          <path
-            d="M8 1L15 14H1L8 1Z"
-            stroke={color}
-            strokeWidth="1.5"
-            fill="none"
-          />
-          <line
-            x1="8"
-            y1="6"
-            x2="8"
-            y2="10"
-            stroke={color}
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          />
-          <circle cx="8" cy="12" r="0.75" fill={color} />
-        </svg>
-      );
-    }
-    if (severity === "info") {
-      return (
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-          style={{ flexShrink: 0, marginTop: "1px" }}
-        >
-          <circle cx="8" cy="8" r="6.5" stroke={color} strokeWidth="1.5" />
-          <line
-            x1="8"
-            y1="7"
-            x2="8"
-            y2="11"
-            stroke={color}
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          />
-          <circle cx="8" cy="5" r="0.75" fill={color} />
-        </svg>
-      );
-    }
-    // default: error
-    return (
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 16 16"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        style={{ flexShrink: 0, marginTop: "1px" }}
-      >
-        <circle cx="8" cy="8" r="6.5" stroke={color} strokeWidth="1.5" />
-        <line
-          x1="5.5"
-          y1="5.5"
-          x2="10.5"
-          y2="10.5"
-          stroke={color}
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-        <line
-          x1="10.5"
-          y1="5.5"
-          x2="5.5"
-          y2="10.5"
-          stroke={color}
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  };
-
-  const navigateTo = (line: number, column: number) => {
-    const nav = (window as unknown as Record<string, unknown>)
-      .__psforge_navigateTo as ((l: number, c: number) => void) | undefined;
-    nav?.(line, column ?? 1);
-  };
-
-  /** Prevent click-to-navigate when the user is drag-selecting problem text. */
-  const hasSelectionIn = (container: HTMLElement): boolean => {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return false;
-    const anchorNode = selection.anchorNode;
-    const focusNode = selection.focusNode;
-    return (
-      (anchorNode !== null && container.contains(anchorNode)) ||
-      (focusNode !== null && container.contains(focusNode))
-    );
-  };
-
-  return (
-    <div className="flex flex-col overflow-auto h-full" style={fontStyle}>
-      {problems.map((p, i) => {
-        const navigable = p.line !== undefined;
-        return (
-          <div
-            key={i}
-            className="flex items-start gap-2.5 px-3 py-2"
-            style={{
-              borderBottom: "1px solid var(--border-primary)",
-              cursor: navigable ? "pointer" : "default",
-            }}
-            onClick={(e) => {
-              if (!navigable) return;
-              if (hasSelectionIn(e.currentTarget)) return;
-              navigateTo(p.line!, p.column ?? 1);
-            }}
-            title={navigable ? `Click to go to line ${p.line}` : undefined}
-            onMouseEnter={(e) => {
-              if (navigable)
-                (e.currentTarget as HTMLElement).style.backgroundColor =
-                  "var(--bg-hover)";
-            }}
-            onMouseLeave={(e) =>
-              ((e.currentTarget as HTMLElement).style.backgroundColor =
-                "transparent")
-            }
-          >
-            {/* Severity icon */}
-            <SeverityIcon severity={p.severity} />
-
-            {/* Message + meta */}
-            <div className="flex-1 min-w-0">
-              {/* Message — strip any residual ANSI escape sequences */}
-              <div
-                style={{
-                  color: "var(--text-primary)",
-                  wordBreak: "break-word",
-                }}
-              >
-                <AnsiText text={p.message} color="var(--text-primary)" />
-              </div>
-
-              {/* Source + location on a second line */}
-              <div
-                className="flex items-center gap-3 mt-0.5"
-                style={{ color: "var(--text-muted)", fontSize: "0.82em" }}
-              >
-                <span>{p.source}</span>
-                {p.line !== undefined && (
-                  <span>
-                    Ln {p.line}
-                    {p.column !== undefined ? `, Col ${p.column}` : ""}
-                  </span>
-                )}
-                {navigable && (
-                  <span style={{ opacity: 0.6 }}>Click to navigate</span>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}

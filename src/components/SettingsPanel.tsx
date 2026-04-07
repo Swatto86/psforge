@@ -637,7 +637,7 @@ export function SettingsPanel() {
                 <Toggle
                   checked={state.settings.clearOutputOnRun !== false}
                   onChange={(v) => updateSetting("clearOutputOnRun", v)}
-                  label="Clear the output pane before each run"
+                  label="Clear the terminal before each run"
                 />
               </SettingRow>
 
@@ -821,18 +821,18 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Show Timestamps"
-                tooltip="Prepends local-time timestamps to output pane lines."
+                tooltip="Prepends local-time timestamps to script output lines when PSForge captures them."
               >
                 <Toggle
                   checked={state.settings.showTimestamps === true}
                   onChange={(v) => updateSetting("showTimestamps", v)}
-                  label="Show timestamps in the output pane"
+                  label="Show timestamps on captured script output"
                 />
               </SettingRow>
 
               <SettingRow
                 label="Output Word Wrap"
-                tooltip="Wraps long output lines in the Output panel."
+                tooltip="Wraps long lines in PSForge bottom-pane text views."
               >
                 <Toggle
                   checked={state.settings.outputWordWrap === true}
@@ -843,7 +843,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Output Font Size"
-                tooltip="Sets font size for Output, Problems, Variables, and terminal text."
+                tooltip="Sets font size for Variables, Debugger, Help, and terminal text."
               >
                 <NumberInput
                   min={8}
@@ -857,7 +857,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Output Font Family"
-                tooltip="Font stack used for Output, Problems, Variables, and terminal panes."
+                tooltip="Font stack used for Variables, Debugger, Help, and terminal panes."
               >
                 <TextInput
                   value={

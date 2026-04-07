@@ -740,6 +740,47 @@ function AppInner() {
     [state.isDebugging, state.debugPaused],
   );
 
+  const runCommandInTerminal = useCallback(
+    async (
+      command: string,
+      options?: { clearBeforeRun?: boolean; reveal?: boolean },
+    ) => {
+      const runFn = (window as unknown as Record<string, unknown>)
+        .__psforge_terminal_run_command as
+        | ((
+            scriptCommand: string,
+            runOptions?: { clearBeforeRun?: boolean; reveal?: boolean },
+          ) => Promise<number | null>)
+        | undefined;
+      if (!runFn) {
+        throw new Error("Integrated terminal bridge is not ready.");
+      }
+      return runFn(command, options);
+    },
+    [],
+  );
+
+  const writeTerminalNotice = useCallback(
+    async (text: string, options?: { reveal?: boolean }) => {
+      const writeFn = (window as unknown as Record<string, unknown>)
+        .__psforge_terminal_write_notice as
+        | ((
+            terminalText: string,
+            writeOptions?: { reveal?: boolean },
+          ) => Promise<void>)
+        | undefined;
+      if (!writeFn) return;
+      await writeFn(text.endsWith("\n") ? text : `${text}\n`, options);
+    },
+    [],
+  );
+
+  const interruptTerminalCommand = useCallback(() => {
+    const interruptFn = (window as unknown as Record<string, unknown>)
+      .__psforge_terminal_interrupt as (() => void) | undefined;
+    interruptFn?.();
+  }, []);
+
   // Remove the startup loading mask once React has successfully mounted.
   // This completes the white-flash prevention sequence started by preload.js
   // and the `html.psforge-loading body { opacity: 0 }` CSS rule in index.html.
@@ -826,7 +867,7 @@ function AppInner() {
         }
       }
 
-      dispatch({ type: "ADD_OUTPUT", line: event.payload });
+      void writeTerminalNotice(event.payload.text, { reveal: false });
 
       if (!debugSessionRef.current) return;
 
@@ -894,18 +935,11 @@ function AppInner() {
       nav?.(line, 1);
     });
 
-    // Show exit code in output for non-zero exits so the user knows the script
-    // failed even if the error message was already scrolled past.
     const unlistenComplete = listen<number>("ps-complete", (event) => {
       const code = event.payload;
       if (code !== 0) {
-        dispatch({
-          type: "ADD_OUTPUT",
-          line: {
-            stream: "stderr",
-            text: `Process exited with code ${code}`,
-            timestamp: String(Math.floor(Date.now() / 1000)),
-          },
+        void writeTerminalNotice(`[PSForge] Process exited with code ${code}`, {
+          reveal: false,
         });
       }
       // Clear the synchronous run guard so subsequent runs are possible.
@@ -928,7 +962,7 @@ function AppInner() {
       unlistenDebugBreak.then((fn) => fn());
       unlistenComplete.then((fn) => fn());
     };
-  }, [dispatch, refreshDebugInspector]);
+  }, [dispatch, refreshDebugInspector, writeTerminalNotice]);
 
   const openFile = useCallback(
     async (specificPath?: string) => {
@@ -1213,14 +1247,10 @@ function AppInner() {
     }
 
     if (!state.selectedPsPath) {
-      dispatch({
-        type: "ADD_OUTPUT",
-        line: {
-          stream: "stderr",
-          text: "Run failed: no PowerShell executable is selected.",
-          timestamp: String(Math.floor(Date.now() / 1000)),
-        },
-      });
+      await writeTerminalNotice(
+        "[PSForge] Run failed: no PowerShell executable is selected.",
+        { reveal: true },
+      );
       return;
     }
 
@@ -1311,23 +1341,25 @@ function AppInner() {
       // Degrade gracefully: run the script as-is and let PS handle it.
     }
 
-    // Clear output before marking as running so the user never sees
-    // "Running..." overlaid on the previous run's output (ISE parity).
-    if (state.settings.clearOutputOnRun !== false) {
-      dispatch({ type: "CLEAR_OUTPUT" });
-    }
     dispatch({ type: "SET_VARIABLES", variables: [] });
     dispatch({ type: "SET_RUNNING", running: true });
 
-    try {
-      await cmd.executeScript(
+    const executeInTerminal = async (workingDir: string) => {
+      const command = await cmd.prepareTerminalScriptCommand(
         psPath,
         scriptContent,
-        workDir,
+        workingDir,
         state.settings.executionPolicy,
         scriptArgs,
-        state.settings.persistRunspaceBetweenRuns !== false,
       );
+      return runCommandInTerminal(command, {
+        clearBeforeRun: state.settings.clearOutputOnRun !== false,
+        reveal: true,
+      });
+    };
+
+    try {
+      await executeInTerminal(workDir);
     } catch (err) {
       if (
         state.settings.workingDirMode !== "custom" &&
@@ -1335,24 +1367,13 @@ function AppInner() {
       ) {
         const fallbackWorkDir = resolveFallbackWorkDir(activeTab);
         if (fallbackWorkDir !== workDir) {
-          dispatch({
-            type: "ADD_OUTPUT",
-            line: {
-              stream: "warning",
-              text: `Working directory "${workDir}" is unavailable; retrying from "${fallbackWorkDir}".`,
-              timestamp: String(Math.floor(Date.now() / 1000)),
-            },
-          });
+          await writeTerminalNotice(
+            `[PSForge] Working directory "${workDir}" is unavailable; retrying from "${fallbackWorkDir}".`,
+            { reveal: true },
+          );
           dispatch({ type: "SET_WORKING_DIR", dir: fallbackWorkDir });
           try {
-            await cmd.executeScript(
-              psPath,
-              scriptContent,
-              fallbackWorkDir,
-              state.settings.executionPolicy,
-              scriptArgs,
-              state.settings.persistRunspaceBetweenRuns !== false,
-            );
+            await executeInTerminal(fallbackWorkDir);
             return;
           } catch (retryErr) {
             err = retryErr;
@@ -1362,14 +1383,10 @@ function AppInner() {
 
       console.error("runScript failed:", err);
       const message = extractInvokeErrorMessage(err);
-      dispatch({
-        type: "ADD_OUTPUT",
-        line: {
-          stream: "stderr",
-          text: `Run failed: ${message}`,
-          timestamp: String(Math.floor(Date.now() / 1000)),
-        },
+      await writeTerminalNotice(`[PSForge] Run failed: ${message}`, {
+        reveal: true,
       });
+    } finally {
       runGuardRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
     }
@@ -1383,9 +1400,10 @@ function AppInner() {
     state.settings.workingDirMode,
     state.settings.customWorkingDir,
     state.settings.executionPolicy,
-    state.settings.persistRunspaceBetweenRuns,
     setParamPrompt,
     dispatch,
+    runCommandInTerminal,
+    writeTerminalNotice,
   ]);
 
   const startDebugSession = useCallback(async () => {
@@ -1394,14 +1412,10 @@ function AppInner() {
     }
 
     if (!state.selectedPsPath) {
-      dispatch({
-        type: "ADD_OUTPUT",
-        line: {
-          stream: "stderr",
-          text: "Debug failed: no PowerShell executable is selected.",
-          timestamp: String(Math.floor(Date.now() / 1000)),
-        },
-      });
+      await writeTerminalNotice(
+        "[PSForge] Debug failed: no PowerShell executable is selected.",
+        { reveal: true },
+      );
       return;
     }
 
@@ -1478,9 +1492,6 @@ function AppInner() {
       // Graceful degradation: run debug without preflight params.
     }
 
-    if (state.settings.clearOutputOnRun !== false) {
-      dispatch({ type: "CLEAR_OUTPUT" });
-    }
     dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
     dispatch({
       type: "SET_DEBUG_STATE",
@@ -1511,14 +1522,10 @@ function AppInner() {
       ) {
         const fallbackWorkDir = resolveFallbackWorkDir(activeTab);
         if (fallbackWorkDir !== workDir) {
-          dispatch({
-            type: "ADD_OUTPUT",
-            line: {
-              stream: "warning",
-              text: `Working directory "${workDir}" is unavailable; retrying debug session from "${fallbackWorkDir}".`,
-              timestamp: String(Math.floor(Date.now() / 1000)),
-            },
-          });
+          await writeTerminalNotice(
+            `[PSForge] Working directory "${workDir}" is unavailable; retrying debug session from "${fallbackWorkDir}".`,
+            { reveal: true },
+          );
           dispatch({ type: "SET_WORKING_DIR", dir: fallbackWorkDir });
           try {
             await cmd.executeScriptDebug(
@@ -1539,13 +1546,8 @@ function AppInner() {
 
       console.error("startDebugSession failed:", err);
       const message = extractInvokeErrorMessage(err);
-      dispatch({
-        type: "ADD_OUTPUT",
-        line: {
-          stream: "stderr",
-          text: `Debug failed: ${message}`,
-          timestamp: String(Math.floor(Date.now() / 1000)),
-        },
+      await writeTerminalNotice(`[PSForge] Debug failed: ${message}`, {
+        reveal: true,
       });
       dispatch({ type: "SET_VARIABLES", variables: [] });
       runGuardRef.current = false;
@@ -1574,6 +1576,7 @@ function AppInner() {
     state.settings.persistRunspaceBetweenRuns,
     setParamPrompt,
     dispatch,
+    writeTerminalNotice,
   ]);
 
   const debugContinue = useCallback(async () => {
@@ -1665,30 +1668,38 @@ function AppInner() {
   );
 
   const stopExecution = useCallback(() => {
-    cmd.stopScript().catch(() => {});
-    runGuardRef.current = false;
-    debugSessionRef.current = false;
-    dispatch({ type: "SET_RUNNING", running: false });
-    dispatch({
-      type: "SET_DEBUG_STATE",
-      isDebugging: false,
-      debugPaused: false,
-      debugLine: null,
-      debugColumn: null,
-    });
-    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
-  }, [dispatch]);
+    if (debugSessionRef.current || state.isDebugging) {
+      cmd.stopScript().catch(() => {});
+      runGuardRef.current = false;
+      debugSessionRef.current = false;
+      dispatch({ type: "SET_RUNNING", running: false });
+      dispatch({
+        type: "SET_DEBUG_STATE",
+        isDebugging: false,
+        debugPaused: false,
+        debugLine: null,
+        debugColumn: null,
+      });
+      dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
+      return;
+    }
+
+    interruptTerminalCommand();
+  }, [dispatch, interruptTerminalCommand, state.isDebugging]);
 
   const runSelection = useCallback(async () => {
     // Guard: welcome tabs have no Monaco editor, so stale selection from a
     // prior tab must not be submitted (mirrors the runScript guard).
-    if (
-      !activeTab ||
-      activeTab.tabType === "welcome" ||
-      state.isRunning ||
-      !state.selectedPsPath
-    )
+    if (!activeTab || activeTab.tabType === "welcome" || state.isRunning)
       return;
+
+    if (!state.selectedPsPath) {
+      await writeTerminalNotice(
+        "[PSForge] Selection run failed: no PowerShell executable is selected.",
+        { reveal: true },
+      );
+      return;
+    }
 
     // Synchronous ref guard prevents double-execution from rapid keypresses
     // (React state updates are async, so state.isRunning alone is racy).
@@ -1715,6 +1726,7 @@ function AppInner() {
     // Snapshot mutable values before async gap.
     const psPath = state.selectedPsPath;
 
+    dispatch({ type: "SET_VARIABLES", variables: [] });
     dispatch({ type: "SET_RUNNING", running: true });
 
     const workDir = resolveExecutionWorkDir(
@@ -1725,13 +1737,16 @@ function AppInner() {
     );
 
     try {
-      await cmd.executeSelection(
+      const command = await cmd.prepareTerminalScriptCommand(
         psPath,
         runText,
         workDir,
         state.settings.executionPolicy,
-        state.settings.persistRunspaceBetweenRuns !== false,
       );
+      await runCommandInTerminal(command, {
+        clearBeforeRun: state.settings.clearOutputOnRun !== false,
+        reveal: true,
+      });
     } catch (err) {
       if (
         state.settings.workingDirMode !== "custom" &&
@@ -1739,23 +1754,22 @@ function AppInner() {
       ) {
         const fallbackWorkDir = resolveFallbackWorkDir(activeTab);
         if (fallbackWorkDir !== workDir) {
-          dispatch({
-            type: "ADD_OUTPUT",
-            line: {
-              stream: "warning",
-              text: `Working directory "${workDir}" is unavailable; retrying selection from "${fallbackWorkDir}".`,
-              timestamp: String(Math.floor(Date.now() / 1000)),
-            },
-          });
+          await writeTerminalNotice(
+            `[PSForge] Working directory "${workDir}" is unavailable; retrying selection from "${fallbackWorkDir}".`,
+            { reveal: true },
+          );
           dispatch({ type: "SET_WORKING_DIR", dir: fallbackWorkDir });
           try {
-            await cmd.executeSelection(
+            const retryCommand = await cmd.prepareTerminalScriptCommand(
               psPath,
               runText,
               fallbackWorkDir,
               state.settings.executionPolicy,
-              state.settings.persistRunspaceBetweenRuns !== false,
             );
+            await runCommandInTerminal(retryCommand, {
+              clearBeforeRun: state.settings.clearOutputOnRun !== false,
+              reveal: true,
+            });
             return;
           } catch (retryErr) {
             err = retryErr;
@@ -1765,14 +1779,10 @@ function AppInner() {
 
       console.error("runSelection failed:", err);
       const message = extractInvokeErrorMessage(err);
-      dispatch({
-        type: "ADD_OUTPUT",
-        line: {
-          stream: "stderr",
-          text: `Selection run failed: ${message}`,
-          timestamp: String(Math.floor(Date.now() / 1000)),
-        },
+      await writeTerminalNotice(`[PSForge] Selection run failed: ${message}`, {
+        reveal: true,
       });
+    } finally {
       runGuardRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
     }
@@ -1784,8 +1794,9 @@ function AppInner() {
     state.settings.workingDirMode,
     state.settings.customWorkingDir,
     state.settings.executionPolicy,
-    state.settings.persistRunspaceBetweenRuns,
     dispatch,
+    runCommandInTerminal,
+    writeTerminalNotice,
   ]);
 
   /** Format the active script using PSScriptAnalyzer Invoke-Formatter (Shift+Alt+F). */
