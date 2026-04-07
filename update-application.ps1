@@ -158,6 +158,16 @@ function Set-UpdaterSigningEnvironment {
         $env:TAURI_SIGNING_PRIVATE_KEY = [System.IO.File]::ReadAllText($defaultKeyPath).TrimEnd("`r", "`n")
     }
     Write-Info "Using updater signing key: $defaultKeyPath"
+    if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+        $persistedPassword = [Environment]::GetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'User')
+        if ([string]::IsNullOrWhiteSpace($persistedPassword)) {
+            $persistedPassword = [Environment]::GetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'Machine')
+        }
+        if (-not [string]::IsNullOrWhiteSpace($persistedPassword)) {
+            $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $persistedPassword.Trim()
+            Write-Info "Loaded updater signing password from persisted environment."
+        }
+    }
     if (
         $null -ne $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -and
         [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
