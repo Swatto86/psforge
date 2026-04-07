@@ -95,19 +95,20 @@ pub async fn prepare_terminal_script_command(
     exec_policy: String,
     script_args: Option<Vec<String>>,
 ) -> Result<String, AppError> {
-    info!("prepare_terminal_script_command called with ps_path={}", ps_path);
+    info!(
+        "prepare_terminal_script_command called with ps_path={}",
+        ps_path
+    );
     powershell::validate_ps_path(&ps_path)?;
 
     let effective_working_dir = resolve_terminal_working_dir(&working_dir)?;
-    let user_script_path = write_secure_temp_file(
-        "psforge_terminal_run",
-        ".ps1",
-        script.as_bytes(),
-    )
-    .map_err(|e| AppError {
-        code: "SCRIPT_WRITE_FAILED".to_string(),
-        message: format!("Failed to write script to temp file: {}", e),
-    })?;
+    let user_script_path =
+        write_secure_temp_file("psforge_terminal_run", ".ps1", script.as_bytes()).map_err(|e| {
+            AppError {
+                code: "SCRIPT_WRITE_FAILED".to_string(),
+                message: format!("Failed to write script to temp file: {}", e),
+            }
+        })?;
 
     let ps_path_ps = ps_single_quoted(ps_path.trim().trim_matches('"'));
     let work_dir_ps = ps_single_quoted(&effective_working_dir);
@@ -140,7 +141,8 @@ pub async fn prepare_terminal_script_command(
     }
     command.push_str("-File '");
     command.push_str(&user_script_path_ps);
-    command.push_str("' @__psforge_script_args } finally { Pop-Location; Remove-Item -LiteralPath '");
+    command
+        .push_str("' @__psforge_script_args } finally { Pop-Location; Remove-Item -LiteralPath '");
     command.push_str(&user_script_path_ps);
     command.push_str("' -Force -ErrorAction SilentlyContinue } }");
 
