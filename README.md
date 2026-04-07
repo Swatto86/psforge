@@ -42,7 +42,7 @@ PSForge does **not** require the .NET SDK, Node.js, or any other runtime at depl
 
 ### From GitHub Releases (recommended)
 
-1. Download the latest `PSForge_1.2.0_x64-setup.exe` from the [Releases page](../../releases).
+1. Download the latest `PSForge_1.2.1_x64-setup.exe` from the [Releases page](../../releases).
 2. Run the installer -- no administrator rights required for per-user install.
 3. Launch **PSForge** from the Start Menu or by double-clicking any `.ps1` file (after registering associations in Settings).
 4. Leave update checks enabled in Settings if you want PSForge to offer signed in-app upgrades when a newer GitHub Release is published.
@@ -50,7 +50,7 @@ PSForge does **not** require the .NET SDK, Node.js, or any other runtime at depl
 ### From the MSI (enterprise / silent install)
 
 ```powershell
-msiexec /i PSForge_1.2.0_x64_en-US.msi /quiet
+msiexec /i PSForge_1.2.1_x64_en-US.msi /quiet
 ```
 
 ---
@@ -185,11 +185,11 @@ The release pipeline is automated by `update-application.ps1` in the repo root. 
 The in-app updater reads `latest.json` from the latest GitHub Release, so the release is not complete unless the script publishes the signed installer, its `.sig` file, and the manifest together.
 
 ```powershell
-# Release version 1.2.0
-.\update-application.ps1 -Version 1.2.0
+# Release version 1.2.1
+.\update-application.ps1 -Version 1.2.1
 
 # Preview what would happen (no changes made)
-.\update-application.ps1 -Version 1.2.0 -DryRun
+.\update-application.ps1 -Version 1.2.1 -DryRun
 ```
 
 If the updater signing env vars are not already set, the script falls back to `~/.tauri/psforge-updater.key` and loads that key automatically for Tauri bundling. If that key is password-protected, also set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` before releasing. Keep the updater key stable and backed up; rotating or losing it breaks updates for already-installed builds.
