@@ -3021,7 +3021,6 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
- "tempfile",
  "tokio",
  "uuid",
  "winreg 0.55.0",
