@@ -28,6 +28,7 @@ import { getPsMonarchGrammar } from "../ps-grammar";
 import type { DebugBreakpoint, PsCompletion, ThemeName } from "../types";
 import { WelcomePane } from "./WelcomePane";
 import { analyzeScript, getCompletions } from "../commands";
+import { sanitizePastedText } from "../sanitize-paste";
 
 // ---------------------------------------------------------------------------
 // Helpers — kept module-level so they are not recreated on every render.
@@ -511,6 +512,22 @@ export function EditorPane() {
           line: e.position.lineNumber,
           column: e.position.column,
         });
+      });
+
+      // Sanitize "smart" typographic characters (curly quotes, en/em dashes,
+      // non-breaking spaces, zero-width chars) on paste. These commonly appear
+      // when copying from Word, Teams, or web pages and break PowerShell
+      // parsing. Only the just-pasted range is rewritten; existing content is
+      // never touched. See src/sanitize-paste.ts for the substitution table.
+      editor.onDidPaste((event) => {
+        const model = editor.getModel();
+        if (!model) return;
+        const pasted = model.getValueInRange(event.range);
+        const cleaned = sanitizePastedText(pasted);
+        if (cleaned === pasted) return;
+        editor.executeEdits("psforge-paste-sanitize", [
+          { range: event.range, text: cleaned },
+        ]);
       });
 
       editor.onDidChangeModelContent((e) => {
