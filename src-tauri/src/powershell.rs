@@ -5,7 +5,10 @@ use crate::utils::write_secure_temp_file;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(not(windows))]
+use crate::win_compat::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{

@@ -13,7 +13,10 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 // CREATE_NO_WINDOW (0x08000000): prevents a console window from flashing when
 // probing PowerShell candidates during auto-discovery.
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(not(windows))]
+use crate::win_compat::CommandExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;

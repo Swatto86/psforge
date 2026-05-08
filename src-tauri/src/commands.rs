@@ -4,6 +4,8 @@ use crate::errors::{AppError, BatchResult};
 use crate::powershell::{self, OutputLine, ProcessManager};
 use crate::settings::{self, AppSettings};
 use crate::utils::{with_retry, write_secure_temp_file};
+#[cfg(not(windows))]
+use crate::win_compat::CommandExt;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

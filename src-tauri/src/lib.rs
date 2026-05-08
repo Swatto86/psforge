@@ -6,6 +6,7 @@ pub mod powershell;
 pub mod settings;
 pub mod terminal;
 pub mod utils;
+pub mod win_compat;
 
 use log::{info, warn};
 use tauri::Manager;
