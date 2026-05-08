@@ -164,6 +164,8 @@ export interface FileContent {
   content: string;
   encoding: string;
   path: string;
+  /** Optional non-fatal decode warning the UI should surface (e.g. odd-byte UTF-16). */
+  warning?: string;
 }
 
 /** File association status for a single extension. */
@@ -333,6 +335,12 @@ export interface BatchResult<T> {
   items: T[];
   /** Per-item errors, capped at MAX_BATCH_ERRORS (100) on the backend. */
   errors: BatchError[];
+  /**
+   * `true` when more than `MAX_BATCH_ERRORS` items failed and the extra error
+   * records were dropped to bound memory. Lets the UI say "and N more failures"
+   * rather than implying the rest succeeded.
+   */
+  truncated: boolean;
 }
 
 /**

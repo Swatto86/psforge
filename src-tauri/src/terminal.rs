@@ -330,15 +330,87 @@ pub async fn start_terminal(
     let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
 
     // Reader thread: forward raw PTY UTF-8 chunks directly to xterm.js.
+    //
+    // We buffer trailing partial UTF-8 between reads so a multi-byte
+    // character that straddles an 8 KiB read boundary is not turned into
+    // U+FFFD (which would corrupt every accented character that happens to
+    // land at a chunk edge). When a read leaves an incomplete sequence at
+    // the end, those bytes are stashed and prepended to the next read.
     let win_out = window.clone();
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        let mut pending: Vec<u8> = Vec::new();
         let mut chunk_index: u32 = 0;
         loop {
             match reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) => {
+                    // Flush any leftover bytes (likely garbage at this point)
+                    // before exiting so we never silently drop data.
+                    if !pending.is_empty() {
+                        let trailing = String::from_utf8_lossy(&pending).into_owned();
+                        pending.clear();
+                        let _ = win_out.emit(
+                            "terminal-output",
+                            TerminalOutputEvent {
+                                session_id,
+                                data: trailing,
+                            },
+                        );
+                    }
+                    break;
+                }
                 Ok(n) => {
-                    let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    pending.extend_from_slice(&buf[..n]);
+
+                    // Find the longest valid-UTF-8 prefix. The bytes after
+                    // that prefix are an incomplete sequence we'll prepend
+                    // to the next read.
+                    let split_at = match std::str::from_utf8(&pending) {
+                        Ok(_) => pending.len(),
+                        Err(e) => {
+                            // `valid_up_to()` is the boundary of the longest
+                            // valid prefix. If `error_len` is `Some`, that
+                            // tail is genuinely invalid (not just truncated)
+                            // and we emit it as the standard replacement
+                            // character; otherwise we keep the tail buffered.
+                            let valid = e.valid_up_to();
+                            match e.error_len() {
+                                Some(_) => {
+                                    // Genuine invalid byte: include it in the
+                                    // emitted slice (lossy decode handles it)
+                                    // and skip past so we don't loop forever.
+                                    let bad_end = valid + e.error_len().unwrap_or(1);
+                                    bad_end.min(pending.len())
+                                }
+                                None => valid,
+                            }
+                        }
+                    };
+
+                    if split_at == 0 {
+                        // No complete codepoints yet; wait for more bytes.
+                        // (Pending capped below to defend against a stuck stream.)
+                        if pending.len() > 16 {
+                            // Defensive: 4 bytes is the UTF-8 max codepoint
+                            // length, so >16 buffered means the stream is
+                            // emitting garbage. Flush it to avoid unbounded
+                            // growth.
+                            let trailing = String::from_utf8_lossy(&pending).into_owned();
+                            pending.clear();
+                            let _ = win_out.emit(
+                                "terminal-output",
+                                TerminalOutputEvent {
+                                    session_id,
+                                    data: trailing,
+                                },
+                            );
+                        }
+                        continue;
+                    }
+
+                    let text = String::from_utf8_lossy(&pending[..split_at]).into_owned();
+                    pending.drain(..split_at);
+
                     if chunk_index < 8 {
                         let preview: String = text.chars().take(240).collect();
                         debug!(
@@ -554,20 +626,32 @@ fn stop_session(session_id: u64, kill_process: bool) {
 
 /// Returns the best available PowerShell executable on this machine.
 /// Prefers pwsh (PowerShell 7+) over legacy Windows PowerShell.
+///
+/// Requires the candidate to exit successfully, not merely to spawn — a broken
+/// PowerShell install (corrupted assemblies, missing CLR) will still spawn but
+/// exit non-zero, and selecting it would saddle every user run with the same
+/// failure rather than falling through to the next candidate.
 fn find_powershell() -> String {
     for candidate in ["pwsh", "pwsh.exe", "powershell", "powershell.exe"] {
-        if Command::new(candidate)
-            .arg("-Version")
+        match Command::new(candidate)
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Command")
+            .arg("$PSVersionTable.PSVersion.Major")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .creation_flags(0x08000000) // CREATE_NO_WINDOW: suppress console flash
             .status()
-            .is_ok()
         {
-            return candidate.to_string();
+            Ok(status) if status.success() => return candidate.to_string(),
+            _ => continue,
         }
     }
 
     // Fallback: spawn will return a descriptive error if this binary is absent.
-    "powershell.exe".to_string()
+    if cfg!(windows) {
+        "powershell.exe".to_string()
+    } else {
+        "pwsh".to_string()
+    }
 }

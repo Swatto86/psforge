@@ -81,6 +81,10 @@ pub struct BatchResult<T: Serialize> {
     pub items: Vec<T>,
     /// Per-item errors, capped at `MAX_BATCH_ERRORS`.
     pub errors: Vec<BatchError>,
+    /// `true` once the per-item error list has been truncated (additional errors
+    /// occurred but were silently dropped to bound memory). Lets the frontend
+    /// surface "and N more failures..." rather than implying success.
+    pub truncated: bool,
 }
 
 impl<T: Serialize> BatchResult<T> {
@@ -89,6 +93,7 @@ impl<T: Serialize> BatchResult<T> {
         Self {
             items: Vec::new(),
             errors: Vec::new(),
+            truncated: false,
         }
     }
 
@@ -97,8 +102,9 @@ impl<T: Serialize> BatchResult<T> {
         self.items.push(item);
     }
 
-    /// Records a per-item error, ignoring it silently once `MAX_BATCH_ERRORS` is reached.
-    /// This prevents unbounded growth while still surfacing the most important failures.
+    /// Records a per-item error, marking the result as truncated once
+    /// `MAX_BATCH_ERRORS` is reached. Truncation is reported back to the caller
+    /// via the `truncated` field rather than being silently dropped.
     pub fn push_error(
         &mut self,
         item: impl Into<String>,
@@ -111,13 +117,15 @@ impl<T: Serialize> BatchResult<T> {
                 code: code.into(),
                 message: message.into(),
             });
+        } else {
+            self.truncated = true;
         }
     }
 
     /// Returns `true` if every item succeeded and no errors were accumulated.
     #[allow(dead_code)]
     pub fn is_clean(&self) -> bool {
-        self.errors.is_empty()
+        self.errors.is_empty() && !self.truncated
     }
 }
 

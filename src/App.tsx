@@ -1,7 +1,7 @@
 /** PSForge main application component with full layout. */
 
 import React, { useEffect, useCallback, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 import { AppProvider, useAppState, newTabId, untitledCounter } from "./store";
@@ -18,6 +18,13 @@ import { AboutDialog } from "./components/AboutDialog";
 import { ScriptSigningDialog } from "./components/ScriptSigningDialog";
 import { ParamPromptDialog } from "./components/ParamPromptDialog";
 import * as cmd from "./commands";
+import { basename, dirname } from "./path-utils";
+import {
+  getBookmarksForPath,
+  getBreakpointsForPath,
+  setBookmarksForPath,
+  setBreakpointsForPath,
+} from "./path-state-store";
 import type {
   OutputLine,
   EditorTab,
@@ -58,9 +65,14 @@ function buildScriptArgs(
   const args: string[] = [];
   for (const param of params) {
     const raw = paramValues[param.name] ?? "";
-    const trimmed = raw.trim();
-    const lower = trimmed.toLowerCase();
+    // SecureString password fields preserve leading/trailing whitespace; for
+    // every other type we trim because PS would do the same on parse.
     const typeName = param.typeName.toLowerCase();
+    const isSecure =
+      typeName === "securestring" ||
+      typeName === "system.security.securestring";
+    const trimmed = isSecure ? raw : raw.trim();
+    const lower = trimmed.toLowerCase();
     const isSwitch =
       typeName === "switchparameter" ||
       typeName.endsWith(".switchparameter") ||
@@ -74,6 +86,29 @@ function buildScriptArgs(
         // the backend host process.
         args.push(`-${param.name}:$true`);
       }
+      continue;
+    }
+
+    if (isSecure) {
+      // SecureString parameters: encode the plain value as base64 and tag it
+      // with a sentinel prefix the backend wrapper recognises and converts to
+      // a real [SecureString] before splatting. Without this, PowerShell's
+      // parameter binder rejects the plain string with a "Cannot convert"
+      // error and the script never starts. Base64 protects against shell
+      // metacharacters, embedded `:` (the colon-form arg tokenizer splits
+      // there), and bidi/control bytes that could break the wrapper.
+      const utf8 =
+        typeof TextEncoder !== "undefined"
+          ? new TextEncoder().encode(trimmed)
+          : Uint8Array.from(unescape(encodeURIComponent(trimmed)), (ch) =>
+              ch.charCodeAt(0),
+            );
+      let binary = "";
+      for (let i = 0; i < utf8.length; i++) {
+        binary += String.fromCharCode(utf8[i]);
+      }
+      const encoded = typeof btoa === "function" ? btoa(binary) : binary;
+      args.push(`-${param.name}:__psforge_securestring__${encoded}`);
       continue;
     }
 
@@ -123,9 +158,15 @@ function normalizeFrameIndex(value: number): number {
   return Math.floor(value);
 }
 
-function directoryFromFilePath(filePath: string): string {
-  const lastSeparator = filePath.lastIndexOf("\\");
-  return lastSeparator > 0 ? filePath.slice(0, lastSeparator) : "";
+/** Cross-platform fallback when the active tab has no usable directory. */
+function platformHomeFallback(): string {
+  // navigator.platform is deprecated but still the cheapest signal in a
+  // browser/WebView. We only use it to pick a sensible "where do scripts run
+  // when there is no file" default; the choice is non-load-bearing.
+  if (typeof navigator !== "undefined" && /win/i.test(navigator.platform)) {
+    return "C:\\";
+  }
+  return "/";
 }
 
 function resolveExecutionWorkDir(
@@ -138,17 +179,15 @@ function resolveExecutionWorkDir(
     return customWorkingDir.trim();
   }
 
-  const fileDir = activeTab.filePath
-    ? directoryFromFilePath(activeTab.filePath)
-    : "";
+  const fileDir = activeTab.filePath ? dirname(activeTab.filePath) : "";
 
-  return stateWorkingDir || fileDir || "C:\\";
+  return stateWorkingDir || fileDir || platformHomeFallback();
 }
 
 function resolveFallbackWorkDir(activeTab: EditorTab): string {
   return (
-    (activeTab.filePath ? directoryFromFilePath(activeTab.filePath) : "") ||
-    "C:\\"
+    (activeTab.filePath ? dirname(activeTab.filePath) : "") ||
+    platformHomeFallback()
   );
 }
 
@@ -784,10 +823,18 @@ function AppInner() {
   // Remove the startup loading mask once React has successfully mounted.
   // This completes the white-flash prevention sequence started by preload.js
   // and the `html.psforge-loading body { opacity: 0 }` CSS rule in index.html.
+  // We also emit `psforge-ready` on the Tauri event bus so the Rust setup
+  // hook can show the OS window in response to actual paint readiness rather
+  // than a hard-coded 200 ms timer (which is either too short on slow boxes
+  // or wastes time on fast ones).
   useEffect(() => {
     if (typeof window.__psforgeReveal === "function") {
       window.__psforgeReveal();
     }
+    void emit("psforge-ready").catch(() => {
+      // Best-effort signal. If this fails the safety-net timer in lib.rs
+      // will reveal the window after 3 s.
+    });
   }, []);
 
   // Open the file passed as a CLI argument when the app was launched via a
@@ -997,7 +1044,7 @@ function AppInner() {
         }
 
         const fileData = await cmd.readFileContent(selected);
-        const fileName = selected.split("\\").pop() || selected;
+        const fileName = basename(selected);
         const id = newTabId();
         const tab: EditorTab = {
           id,
@@ -1012,8 +1059,40 @@ function AppInner() {
         };
         dispatch({ type: "ADD_TAB", tab });
 
+        // Reattach bookmarks/breakpoints saved for this file path during a
+        // previous session. The path-keyed store survives close/reopen of
+        // file-backed tabs, where the original tab-id-keyed state is wiped
+        // by CLOSE_TAB. Lookup is case-insensitive on Windows so the same
+        // file accessed through differently-cased paths shares one set.
+        const restoredBookmarks = getBookmarksForPath(selected);
+        if (restoredBookmarks && restoredBookmarks.length > 0) {
+          dispatch({
+            type: "SET_BOOKMARKS",
+            tabId: id,
+            lines: restoredBookmarks,
+          });
+        }
+        const restoredBreakpoints = getBreakpointsForPath(selected);
+        if (restoredBreakpoints && restoredBreakpoints.length > 0) {
+          dispatch({
+            type: "SET_BREAKPOINTS",
+            tabId: id,
+            breakpoints: restoredBreakpoints,
+          });
+        }
+
+        // Surface backend decode warnings (odd-byte UTF-16, Windows-1252
+        // fallback) via the integrated terminal so the user can choose to
+        // re-save in UTF-8 if the legacy encoding will cause issues.
+        if (fileData.warning) {
+          void writeTerminalNotice(
+            `[PSForge] ${fileName}: ${fileData.warning}`,
+            { reveal: false },
+          );
+        }
+
         // Set working directory to file's directory.
-        const dir = selected.substring(0, selected.lastIndexOf("\\"));
+        const dir = dirname(selected);
         if (dir) dispatch({ type: "SET_WORKING_DIR", dir });
 
         // Update recent files list, respecting maxRecentFiles setting.
@@ -1064,19 +1143,19 @@ function AppInner() {
   // Must be declared after openFile to satisfy declaration order rules.
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
+    // User-facing helpers: the WelcomePane and CommandPalette read these.
     w.__psforge_openFile = () => void openFile();
     w.__psforge_openFileByPath = (p: string) => void openFile(p);
     w.__psforge_openWelcome = () => openWelcomePage();
-    /** Expose dispatch for E2E tests that need to trigger state changes
-     *  (e.g. open the signing dialog on a tab without a saved file path). */
-    w.__psforge_dispatch = dispatch;
-    /**
-     * E2E test helper: reset the variables inspector to an empty state.
-     * Allows tests to establish a known-empty condition without restarting
-     * the app when the full test suite runs in a shared browser session.
-     */
-    w.__psforge_reset_variables = () =>
-      dispatch({ type: "SET_VARIABLES", variables: [] });
+    // E2E-only helpers. We expose `dispatch` and `reset_variables` only in
+    // dev builds so production users cannot stumble onto them via the
+    // WebView devtools or accidentally come to depend on a hook surface
+    // that is meant for the test harness alone.
+    if (import.meta.env.DEV) {
+      w.__psforge_dispatch = dispatch;
+      w.__psforge_reset_variables = () =>
+        dispatch({ type: "SET_VARIABLES", variables: [] });
+    }
     return () => {
       delete w.__psforge_openFile;
       delete w.__psforge_openFileByPath;
@@ -1129,7 +1208,7 @@ function AppInner() {
 
       try {
         await cmd.saveFileContent(filePath, tab.content, tab.encoding);
-        const fileName = filePath.split("\\").pop() || filePath;
+        const fileName = basename(filePath);
         dispatch({
           type: "UPDATE_TAB",
           id: tab.id,
@@ -1142,7 +1221,7 @@ function AppInner() {
         });
 
         // Update working directory to the most recently saved file location.
-        const dir = filePath.substring(0, filePath.lastIndexOf("\\"));
+        const dir = dirname(filePath);
         if (dir) {
           dispatch({ type: "SET_WORKING_DIR", dir });
         }
@@ -1184,9 +1263,11 @@ function AppInner() {
     const savedPaths: string[] = [];
     for (const tab of orderedTargets) {
       const result = await saveTab(tab);
-      if (result.cancelled) {
-        break;
-      }
+      // Cancelling the Save-As dialog for one untitled tab should not abort
+      // the rest of the batch. Skip the cancelled tab and keep going so users
+      // never lose 4 saves because they cancelled the 1 prompt for an
+      // untitled scratch buffer.
+      if (result.cancelled) continue;
       if (result.saved && result.path) {
         savedPaths.push(result.path);
       }
@@ -1317,6 +1398,21 @@ function AppInner() {
     try {
       const allParams = await cmd.getScriptParameters(psPath, scriptContent);
       const required = allParams.filter((p) => p.isMandatory && !p.hasDefault);
+
+      // The backend skips parameter inspection silently for scripts >32 KB
+      // (Windows env-var size limit). If the script clearly declares a
+      // `param(` block but the inspector returned nothing, surface a hint
+      // so the user understands why the prompt didn't appear and is not
+      // confused by a cryptic PowerShell binding error mid-run.
+      if (allParams.length === 0 && /\bparam\s*\(/i.test(scriptContent)) {
+        if (scriptContent.length > 32_000) {
+          void writeTerminalNotice(
+            "[PSForge] Script is too large to inspect parameters before running. " +
+              "Mandatory parameters will not be prompted for; supply them in the script or via splatting.",
+            { reveal: false },
+          );
+        }
+      }
 
       if (required.length > 0) {
         // Wait for the user to either supply values or cancel.
@@ -1671,23 +1767,27 @@ function AppInner() {
 
   const stopExecution = useCallback(() => {
     if (debugSessionRef.current || state.isDebugging) {
-      cmd.stopScript().catch(() => {});
-      runGuardRef.current = false;
-      debugSessionRef.current = false;
-      dispatch({ type: "SET_RUNNING", running: false });
-      dispatch({
-        type: "SET_DEBUG_STATE",
-        isDebugging: false,
-        debugPaused: false,
-        debugLine: null,
-        debugColumn: null,
+      // Await the backend kill so we can report failures rather than silently
+      // claiming "not running" while the process keeps streaming output. The
+      // run state itself is driven by `ps-complete`, but we only flip the
+      // debug-paused flag immediately so the inspector clears.
+      void cmd.stopScript().catch(async (err) => {
+        const message = extractInvokeErrorMessage(err);
+        await writeTerminalNotice(
+          `[PSForge] Stop request failed: ${message}. The script may still be running.`,
+          { reveal: true },
+        );
       });
+      // Clear inspector immediately so the UI looks responsive; the Running
+      // / Debugging flags wait for the actual exit event so we never lie
+      // about the process state.
+      dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
       dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
       return;
     }
 
     interruptTerminalCommand();
-  }, [dispatch, interruptTerminalCommand, state.isDebugging]);
+  }, [dispatch, interruptTerminalCommand, state.isDebugging, writeTerminalNotice]);
 
   const runSelection = useCallback(async () => {
     // Guard: welcome tabs have no Monaco editor, so stale selection from a
@@ -1849,7 +1949,18 @@ function AppInner() {
   const printScript = useCallback(() => {
     if (!activeTab || !activeTab.content) return;
     const w = window.open("", "_blank", "width=900,height=700");
-    if (!w) return;
+    if (!w) {
+      // window.open returns null when the WebView blocks the popup
+      // (rare but possible under strict Chromium flags). Surface it via
+      // the integrated terminal so the user is not left wondering why
+      // nothing happened when they hit Print.
+      void writeTerminalNotice(
+        "[PSForge] Could not open the print preview window. " +
+          "If the issue persists, copy the script to another editor and print from there.",
+        { reveal: true },
+      );
+      return;
+    }
     const escapeHtml = (value: string) =>
       value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const escaped = escapeHtml(activeTab.content);
@@ -1864,7 +1975,7 @@ function AppInner() {
     );
     w.document.close();
     w.print();
-  }, [activeTab]);
+  }, [activeTab, writeTerminalNotice]);
 
   const toggleBookmarkAtCursor = useCallback(() => {
     const tab = activeTabRef.current;
@@ -1906,8 +2017,14 @@ function AppInner() {
   // not on every render (which would cause constant DOM listener churn).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Normalise letter shortcuts for Caps Lock. With Caps Lock on,
+      // `e.key` for "n" becomes "N", so direct character comparisons
+      // (e.key === "n") silently fail to match. Compare against the
+      // lower-cased value below for every alphabetic shortcut.
+      const keyLower = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
       // Ctrl+N: New tab
-      if (e.ctrlKey && e.key === "n") {
+      if (e.ctrlKey && keyLower === "n") {
         e.preventDefault();
         const id = newTabId();
         const tab: EditorTab = {
@@ -1925,19 +2042,19 @@ function AppInner() {
       }
 
       // Ctrl+O: Open file
-      if (e.ctrlKey && e.key === "o") {
+      if (e.ctrlKey && keyLower === "o") {
         e.preventDefault();
         openFile();
       }
 
       // Ctrl+S: Save current file
-      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "s") {
+      if (e.ctrlKey && !e.shiftKey && keyLower === "s") {
         e.preventDefault();
         void saveCurrentFile();
       }
 
       // Ctrl+Shift+S: Save all files (ISE parity)
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "s") {
+      if (e.ctrlKey && e.shiftKey && keyLower === "s") {
         e.preventDefault();
         void saveAllFiles();
       }
@@ -2009,13 +2126,13 @@ function AppInner() {
       }
 
       // Ctrl+Shift+P: Command palette
-      if (e.ctrlKey && e.shiftKey && e.key === "P") {
+      if (e.ctrlKey && e.shiftKey && keyLower === "p") {
         e.preventDefault();
         dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "all" });
       }
 
       // Ctrl+W: close active tab.
-      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "w") {
+      if (e.ctrlKey && !e.shiftKey && keyLower === "w") {
         e.preventDefault();
         void closeActiveTab();
       }
@@ -2027,18 +2144,13 @@ function AppInner() {
       }
 
       // Ctrl+J: ISE-style snippets picker
-      if (
-        e.ctrlKey &&
-        !e.shiftKey &&
-        !e.altKey &&
-        e.key.toLowerCase() === "j"
-      ) {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && keyLower === "j") {
         e.preventDefault();
         dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "snippets" });
       }
 
       // Ctrl+Shift+C: Open Show Command tab.
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c") {
+      if (e.ctrlKey && e.shiftKey && keyLower === "c") {
         e.preventDefault();
         dispatch({ type: "SET_BOTTOM_TAB", tab: "show-command" });
       }
@@ -2070,13 +2182,13 @@ function AppInner() {
       }
 
       // Ctrl+B: Toggle sidebar
-      if (e.ctrlKey && e.key === "b") {
+      if (e.ctrlKey && keyLower === "b") {
         e.preventDefault();
         dispatch({ type: "TOGGLE_SIDEBAR" });
       }
 
       // Ctrl+H: Find & Replace (focus Monaco and trigger built-in action)
-      if (e.ctrlKey && e.key === "h") {
+      if (e.ctrlKey && keyLower === "h") {
         e.preventDefault();
         const trigger = (window as unknown as Record<string, unknown>)
           .__psforge_triggerFindReplace as (() => void) | undefined;
@@ -2084,13 +2196,13 @@ function AppInner() {
       }
 
       // Shift+Alt+F: Format document with Invoke-Formatter
-      if (e.shiftKey && e.altKey && e.key === "F") {
+      if (e.shiftKey && e.altKey && keyLower === "f") {
         e.preventDefault();
         void formatCurrentScript();
       }
 
       // Ctrl+G: Go to line (focus Monaco and trigger built-in action)
-      if (e.ctrlKey && e.key === "g") {
+      if (e.ctrlKey && keyLower === "g") {
         e.preventDefault();
         const trigger = (window as unknown as Record<string, unknown>)
           .__psforge_triggerGoToLine as (() => void) | undefined;
@@ -2145,6 +2257,60 @@ function AppInner() {
     toggleBookmarkAtCursor,
     jumpToBookmark,
   ]);
+
+  // Mirror tab-keyed bookmarks/breakpoints to the path-keyed store for every
+  // file-backed tab. This keeps a path-indexed copy in sync so closing the
+  // tab and opening the same file later (within or across sessions) restores
+  // the markers. Tabs without `filePath` are intentionally skipped — there's
+  // no stable identity to key against.
+  //
+  // The "seen tabs" refs are a defence-in-depth guard: we skip the mirror on
+  // the very first effect run for each tab id so that an ADD_TAB which (in
+  // some pathological future React batching scenario) lands in a different
+  // render tick from its sibling SET_BOOKMARKS / SET_BREAKPOINTS restoration
+  // cannot overwrite valid path-store data with the empty initial state.
+  // Subsequent runs mirror normally — including legitimate clears (toggling
+  // off the last bookmark) which then also delete the path-store entry.
+  // Each mirror gets its own ref because the two effects run independently
+  // and one shouldn't be able to "see" the other into skipping its work.
+  const seenBookmarkTabsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const tab of state.tabs) {
+      if (!tab.filePath) continue;
+      const lines = state.bookmarks[tab.id] ?? [];
+      if (!seenBookmarkTabsRef.current.has(tab.id)) {
+        seenBookmarkTabsRef.current.add(tab.id);
+        // First sighting: skip the mirror only if it would clobber existing
+        // path-store data with empty live state (defends against a future
+        // batching change where ADD_TAB renders before the openFile flow's
+        // SET_BOOKMARKS restoration). Non-empty live state on first sight
+        // is still mirrored — that's the Save As path, where an untitled
+        // tab with bookmarks just gained a filePath and should immediately
+        // start persisting under it.
+        if (lines.length === 0) {
+          const existing = getBookmarksForPath(tab.filePath);
+          if (existing && existing.length > 0) continue;
+        }
+      }
+      setBookmarksForPath(tab.filePath, lines);
+    }
+  }, [state.tabs, state.bookmarks]);
+
+  const seenBreakpointTabsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const tab of state.tabs) {
+      if (!tab.filePath) continue;
+      const breakpoints = state.breakpoints[tab.id] ?? [];
+      if (!seenBreakpointTabsRef.current.has(tab.id)) {
+        seenBreakpointTabsRef.current.add(tab.id);
+        if (breakpoints.length === 0) {
+          const existing = getBreakpointsForPath(tab.filePath);
+          if (existing && existing.length > 0) continue;
+        }
+      }
+      setBreakpointsForPath(tab.filePath, breakpoints);
+    }
+  }, [state.tabs, state.breakpoints]);
 
   // Sync local state from persisted settings the first time they load from
   // disk.  Without this, split/sidebar always start at DEFAULT_SETTINGS values.
@@ -2203,13 +2369,18 @@ function AppInner() {
     if (!container) return;
     if (typeof ResizeObserver === "undefined") return;
     let rafId: number | null = null;
+    let lastObservedHeight = 0;
     const reconcile = () => {
       rafId = null;
+      const rect = container.getBoundingClientRect();
+      // Only act when the container height materially changed; otherwise the
+      // ResizeObserver can fire because of our own setSplitPercent (which
+      // re-renders sibling panes and re-triggers the observer), creating a
+      // visible jitter loop on some Chromium versions.
+      if (Math.abs(rect.height - lastObservedHeight) < 0.5) return;
+      lastObservedHeight = rect.height;
       const current = splitPercentRef.current;
-      const clamped = clampSplitPercentForHeight(
-        current,
-        container.getBoundingClientRect().height,
-      );
+      const clamped = clampSplitPercentForHeight(current, rect.height);
       if (Math.abs(clamped - current) > SPLIT_EPSILON) {
         setSplitPercent(clamped);
         splitPercentRef.current = clamped;
@@ -2219,6 +2390,8 @@ function AppInner() {
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(reconcile);
     };
+    // Force the first reconcile regardless of last-observed height.
+    lastObservedHeight = 0;
     scheduleReconcile();
     const observer = new ResizeObserver(scheduleReconcile);
     observer.observe(container);
@@ -2281,11 +2454,23 @@ function AppInner() {
       onDrop={(e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        const file = e.dataTransfer.files[0];
-        if (!file) return;
-        // Tauri exposes the native file system path on the File object.
-        const path = (file as File & { path?: string }).path;
-        if (path) void openFile(path);
+        // Tauri exposes the native file system path on each File object.
+        // Open every dropped file so dragging a selection of scripts in
+        // (the obvious power-user gesture) doesn't silently skip all but
+        // the first. Files are opened sequentially to keep the recent-files
+        // list and tab order deterministic.
+        const files = Array.from(e.dataTransfer.files) as Array<
+          File & { path?: string }
+        >;
+        const paths = files
+          .map((f) => f.path)
+          .filter((p): p is string => typeof p === "string" && !!p);
+        if (paths.length === 0) return;
+        (async () => {
+          for (const path of paths) {
+            await openFile(path);
+          }
+        })().catch(() => {});
       }}
     >
       {/* Toolbar */}

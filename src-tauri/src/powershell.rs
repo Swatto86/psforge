@@ -420,6 +420,19 @@ impl ProcessManager {
                                 "Output line limit reached ({}); dropping additional lines for current command",
                                 MAX_OUTPUT_LINES
                             );
+                            // Surface truncation in the user-visible output so
+                            // they know stop appearing, not that the script
+                            // simply went silent. Emitted exactly once per
+                            // command (the swap above gates this branch).
+                            let _ = tx.send(SessionEvent::Output(OutputLine {
+                                stream: "stderr".to_string(),
+                                text: format!(
+                                    "[PSForge] Output truncated after {} lines; \
+                                     subsequent script output is being dropped to keep the UI responsive.",
+                                    MAX_OUTPUT_LINES
+                                ),
+                                timestamp: chrono_now(),
+                            }));
                             // Keep draining to avoid filling the OS pipe and
                             // deadlocking the PowerShell process.
                         }
@@ -723,11 +736,30 @@ function __psforge_coerce_arg_value {
     $__psforge_text = [string]$Raw
     if ($__psforge_text -match '^(?i)\$?true$') { return $true }
     if ($__psforge_text -match '^(?i)\$?false$') { return $false }
+    if ($__psforge_text.StartsWith('__psforge_securestring__')) {
+        # SecureString sentinel emitted by the frontend ParamPromptDialog so
+        # plain-text values typed into the dialog can satisfy a script
+        # parameter declared as [SecureString]. Without this conversion, the
+        # parameter binder would reject the string with a "Cannot convert"
+        # error and the script would never start. The base64 encoding keeps
+        # the value safe across the colon-tokenizer and shell metacharacters.
+        $__psforge_b64 = $__psforge_text.Substring('__psforge_securestring__'.Length)
+        try {
+            $__psforge_bytes = [Convert]::FromBase64String($__psforge_b64)
+            $__psforge_plain = [System.Text.Encoding]::UTF8.GetString($__psforge_bytes)
+            return (ConvertTo-SecureString -String $__psforge_plain -AsPlainText -Force)
+        } catch {
+            # Malformed sentinel: fall through to the original token rather
+            # than blocking the run. The script will then receive the
+            # tagged string and surface its own binding error to the user.
+        }
+    }
     return $Raw
 }
 
 function __psforge_emit_variables {
     try {
+        $__psforge_value_max = 4096
         $__psforge_vars = @(
             Get-Variable |
             Where-Object {
@@ -735,9 +767,18 @@ function __psforge_emit_variables {
                 $_.Name -notlike '__psforge*'
             } |
             ForEach-Object {
+                # Truncate large values so a single $bigArray cannot blow up the
+                # variable inspector pipe and stall the host. The frontend tab
+                # is interactive, not a data dump, so 4 KiB is plenty.
+                $__psforge_raw = if ($_.Value -ne $null) {
+                    try { $_.Value.ToString() } catch { '<unprintable>' }
+                } else { '<null>' }
+                if ($__psforge_raw.Length -gt $__psforge_value_max) {
+                    $__psforge_raw = $__psforge_raw.Substring(0, $__psforge_value_max) + "... (truncated, $($__psforge_raw.Length - $__psforge_value_max) more chars)"
+                }
                 [PSCustomObject]@{
                     Name = $_.Name
-                    Value = if ($_.Value -ne $null) { $_.Value.ToString() } else { '<null>' }
+                    Value = $__psforge_raw
                     TypeName = if ($_.Value -ne $null) { $_.Value.GetType().Name } else { 'Null' }
                 }
             }
@@ -1098,6 +1139,10 @@ fn resolve_working_dir(working_dir: &str) -> Result<String, AppError> {
 /// Validates that `ps_path` points to an existing executable file.
 /// Keeps checks lightweight because this is called on hot paths
 /// (e.g. completions/analysis invocations).
+///
+/// Accepts both absolute paths and bare command names that resolve through
+/// PATH. Bare-name lookup is done by scanning `$PATH` directly so the check
+/// works on Linux/macOS where `where.exe` does not exist.
 pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
     let trimmed = ps_path.trim().trim_matches('"');
     if trimmed.is_empty() {
@@ -1112,18 +1157,8 @@ pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
         // Accept bare executable names that resolve via PATH (e.g. "pwsh.exe").
         let is_bare_command =
             !trimmed.contains('\\') && !trimmed.contains('/') && !trimmed.contains(':');
-        if is_bare_command {
-            let found_on_path = std::process::Command::new("where.exe")
-                .arg(trimmed)
-                .creation_flags(0x08000000)
-                .output()
-                .map(|o| {
-                    o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty()
-                })
-                .unwrap_or(false);
-            if found_on_path {
-                return Ok(());
-            }
+        if is_bare_command && find_on_path(trimmed).is_some() {
+            return Ok(());
         }
 
         return Err(AppError {
@@ -1135,74 +1170,159 @@ pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Returns the first PATH entry containing `name` as an executable file.
+/// Pure-Rust replacement for shelling out to `where.exe`/`which`; works on
+/// every platform without an additional dependency.
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path_env = std::env::var_os("PATH")?;
+    // On Windows also try the common executable extensions if the caller
+    // supplied a bare name without `.exe`.
+    let extensions: &[&str] = if cfg!(windows) {
+        if name.contains('.') {
+            &[""]
+        } else {
+            &[".exe", ".cmd", ".bat", ""]
+        }
+    } else {
+        &[""]
+    };
+    for dir in std::env::split_paths(&path_env) {
+        for ext in extensions {
+            let candidate = if ext.is_empty() {
+                dir.join(name)
+            } else {
+                dir.join(format!("{}{}", name, ext))
+            };
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// Discovers all installed PowerShell versions on the system.
+///
+/// Discovery is platform-aware:
+/// - Windows: probes the well-known PS7+ install dirs, scans `where.exe`, and
+///   adds Windows PowerShell 5.1 if present.
+/// - Linux/macOS: scans every PATH entry for `pwsh` (PowerShell 7+ ships as
+///   `pwsh` there). PS5.1 does not exist outside Windows.
 pub fn discover_ps_versions() -> Vec<PsVersion> {
     info!("Discovering installed PowerShell versions");
     let mut versions = Vec::new();
     let mut seen_paths: HashMap<String, bool> = HashMap::new();
 
-    // Check PS7+ in well-known paths
-    let ps7_dirs = [
-        r"C:\Program Files\PowerShell",
-        r"C:\Program Files (x86)\PowerShell",
-    ];
+    #[cfg(windows)]
+    {
+        // Check PS7+ in well-known paths
+        let ps7_dirs = [
+            r"C:\Program Files\PowerShell",
+            r"C:\Program Files (x86)\PowerShell",
+        ];
 
-    for base in &ps7_dirs {
-        let base_path = PathBuf::from(base);
-        if base_path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&base_path) {
-                for entry in entries.flatten() {
-                    let pwsh = entry.path().join("pwsh.exe");
-                    if pwsh.is_file() {
-                        let path_str = pwsh.to_string_lossy().to_string();
-                        seen_paths
-                            .entry(path_str.to_lowercase())
-                            .or_insert_with(|| {
-                                let ver_name = entry.file_name().to_string_lossy().to_string();
-                                versions.push(PsVersion {
-                                    name: format!("PowerShell {}", ver_name),
-                                    path: path_str.clone(),
-                                    version: ver_name,
+        for base in &ps7_dirs {
+            let base_path = PathBuf::from(base);
+            if base_path.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&base_path) {
+                    for entry in entries.flatten() {
+                        let pwsh = entry.path().join("pwsh.exe");
+                        if pwsh.is_file() {
+                            let path_str = pwsh.to_string_lossy().to_string();
+                            seen_paths
+                                .entry(path_str.to_lowercase())
+                                .or_insert_with(|| {
+                                    let ver_name = entry.file_name().to_string_lossy().to_string();
+                                    versions.push(PsVersion {
+                                        name: format!("PowerShell {}", ver_name),
+                                        path: path_str.clone(),
+                                        version: ver_name,
+                                    });
+                                    true
                                 });
-                                true
-                            });
+                        }
                     }
                 }
             }
         }
+
+        // Check pwsh on PATH
+        if let Ok(output) = std::process::Command::new("where.exe")
+            .arg("pwsh.exe")
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW: suppress console flash
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && PathBuf::from(trimmed).is_file() {
+                    let key = trimmed.to_lowercase();
+                    seen_paths.entry(key).or_insert_with(|| {
+                        versions.push(PsVersion {
+                            name: "PowerShell (PATH)".to_string(),
+                            path: trimmed.to_string(),
+                            version: "7+".to_string(),
+                        });
+                        true
+                    });
+                }
+            }
+        }
+
+        // Windows PowerShell 5.1
+        let win_ps = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+        if PathBuf::from(win_ps).is_file() {
+            versions.push(PsVersion {
+                name: "Windows PowerShell 5.1".to_string(),
+                path: win_ps.to_string(),
+                version: "5.1".to_string(),
+            });
+        }
     }
 
-    // Check pwsh on PATH
-    if let Ok(output) = std::process::Command::new("where.exe")
-        .arg("pwsh.exe")
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW: suppress console flash
-        .output()
+    #[cfg(unix)]
     {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() && PathBuf::from(trimmed).is_file() {
-                let key = trimmed.to_lowercase();
-                seen_paths.entry(key).or_insert_with(|| {
+        // PowerShell 7+ on Linux/macOS ships as `pwsh` (no .exe). We scan every
+        // PATH entry rather than shelling out so the discovery does not depend
+        // on a specific helper (`which`, `where`, etc.) being installed.
+        if let Ok(path_env) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&path_env) {
+                for candidate_name in ["pwsh", "powershell"] {
+                    let candidate = dir.join(candidate_name);
+                    if candidate.is_file() {
+                        let path_str = candidate.to_string_lossy().to_string();
+                        seen_paths.entry(path_str.clone()).or_insert_with(|| {
+                            versions.push(PsVersion {
+                                name: format!("PowerShell ({})", path_str),
+                                path: path_str.clone(),
+                                version: "7+".to_string(),
+                            });
+                            true
+                        });
+                    }
+                }
+            }
+        }
+
+        // Common Homebrew / package locations not always on PATH for GUI apps.
+        for fixed in [
+            "/usr/local/bin/pwsh",
+            "/opt/homebrew/bin/pwsh",
+            "/usr/bin/pwsh",
+            "/snap/bin/pwsh",
+        ] {
+            let candidate = PathBuf::from(fixed);
+            if candidate.is_file() {
+                seen_paths.entry(fixed.to_string()).or_insert_with(|| {
                     versions.push(PsVersion {
-                        name: "PowerShell (PATH)".to_string(),
-                        path: trimmed.to_string(),
+                        name: format!("PowerShell ({})", fixed),
+                        path: fixed.to_string(),
                         version: "7+".to_string(),
                     });
                     true
                 });
             }
         }
-    }
-
-    // Windows PowerShell 5.1
-    let win_ps = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
-    if PathBuf::from(win_ps).is_file() {
-        versions.push(PsVersion {
-            name: "Windows PowerShell 5.1".to_string(),
-            path: win_ps.to_string(),
-            version: "5.1".to_string(),
-        });
     }
 
     if versions.is_empty() {

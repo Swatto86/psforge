@@ -3,7 +3,7 @@
 use crate::errors::{AppError, BatchResult};
 use crate::powershell::{self, OutputLine, ProcessManager};
 use crate::settings::{self, AppSettings};
-use crate::utils::{with_retry, write_secure_temp_file};
+use crate::utils::{atomic_write, with_retry, write_secure_temp_file};
 #[cfg(not(windows))]
 use crate::win_compat::CommandExt;
 use log::{debug, error, info, warn};
@@ -473,11 +473,20 @@ pub struct ModuleInfo {
 }
 
 /// Returns `true` when `ps_path` points to Windows PowerShell 5.1 (`powershell.exe`).
-/// Any path ending with `pwsh.exe` (or `pwsh`) is PowerShell 6+ and supports
-/// the additional `-SkipEditionCheck` flag on `Get-Module`.
+/// Any path resolving to `pwsh.exe` (or bare `pwsh`) is PowerShell 6+ and
+/// supports the additional `-SkipEditionCheck` flag on `Get-Module`.
+///
+/// Compares the file-name component (case-insensitive) rather than a suffix
+/// match so user-named binaries like `mypowershell.exe` are not mis-detected
+/// as Windows PowerShell.
 fn is_windows_powershell(ps_path: &str) -> bool {
-    let normalized = ps_path.to_lowercase().trim_end_matches('"').to_string();
-    normalized.ends_with("powershell.exe") || normalized == "powershell"
+    let trimmed = ps_path.trim().trim_matches('"');
+    let file_name = std::path::Path::new(trimmed)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(trimmed)
+        .to_ascii_lowercase();
+    file_name == "powershell.exe" || file_name == "powershell"
 }
 
 /// Returns all installed PowerShell modules (runs async, non-blocking).
@@ -1040,6 +1049,11 @@ pub struct FileContent {
     pub content: String,
     pub encoding: String,
     pub path: String,
+    /// Optional non-fatal warning surfaced to the user (e.g. an odd-byte
+    /// UTF-16 file where decoding had to drop a trailing byte). The frontend
+    /// shows this as a one-time notice rather than blocking the open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 /// Reads a file's content, detecting encoding.
@@ -1079,12 +1093,13 @@ pub async fn read_file_content(path: String) -> Result<FileContent, AppError> {
     }
 
     let bytes = with_retry("read_file_content", || std::fs::read(&path))?;
-    let (content, encoding) = detect_and_decode(&bytes);
+    let (content, encoding, warning) = detect_and_decode(&bytes);
 
     Ok(FileContent {
         content,
         encoding,
         path,
+        warning,
     })
 }
 
@@ -1128,28 +1143,70 @@ pub async fn save_file_content(
             }
             bytes
         }
+        "windows1252" => {
+            // Round-trip files originally detected as Windows-1252 (the common
+            // legacy Notepad/ANSI encoding on en-US Windows) without forcing a
+            // conversion to UTF-8 the user did not ask for.
+            let (encoded, _, had_unmappable) =
+                encoding_rs::WINDOWS_1252.encode(content.as_str());
+            if had_unmappable {
+                warn!(
+                    "save_file_content: content contains characters not representable in Windows-1252; \
+                     unrepresentable bytes have been replaced with '?'"
+                );
+            }
+            encoded.into_owned()
+        }
         _ => content.into_bytes(), // utf8 (no BOM)
     };
 
-    with_retry("save_file_content", || std::fs::write(&path, &bytes))?;
+    // Write atomically: serialise to a sibling temp file, fsync, then rename.
+    // Without this, a crash or power loss between truncate and full-write can
+    // leave the user's script as an empty or partial file.
+    with_retry("save_file_content", || {
+        atomic_write(std::path::Path::new(&path), &bytes)
+    })?;
     Ok(())
 }
 
 /// Detects encoding from BOM and decodes bytes to a string.
-fn detect_and_decode(bytes: &[u8]) -> (String, String) {
+///
+/// Returns `(content, encoding, optional warning)` where:
+/// - `encoding` is one of `utf8`, `utf8bom`, `utf16le`, `utf16be`, `windows1252`.
+/// - `warning` is `Some(message)` when decoding succeeded but produced a
+///   non-fatal anomaly the user should know about (legacy encoding fallback,
+///   odd-byte UTF-16 trailing byte). The frontend surfaces this rather than
+///   dropping it.
+///
+/// Critically, this function never silently substitutes U+FFFD for invalid
+/// UTF-8 the way `String::from_utf8_lossy` would. Files that aren't valid
+/// UTF-8 are decoded as Windows-1252 instead — every byte 0x00-0xFF maps to
+/// a code point, and saving back as `windows1252` round-trips the original
+/// bytes exactly. The previous behaviour caused permanent data loss the
+/// first time the user saved a file that had been opened with mojibake;
+/// faithful round-trip means even mis-detected files (KOI8, ISO-8859-15)
+/// survive a save unchanged on disk.
+fn detect_and_decode(bytes: &[u8]) -> (String, String, Option<String>) {
     if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
-        // UTF-8 BOM
-        (
-            String::from_utf8_lossy(&bytes[3..]).to_string(),
-            "utf8bom".to_string(),
-        )
+        // UTF-8 BOM. If the body is not valid UTF-8, fall back to the
+        // Windows-1252 path below so we still give the user a faithful
+        // round-trip rather than silently substituting U+FFFD.
+        if let Ok(s) = std::str::from_utf8(&bytes[3..]) {
+            return (s.to_string(), "utf8bom".to_string(), None);
+        }
+        // fall through to no-BOM detection (using full bytes minus BOM)
+        return decode_no_bom_fallback(&bytes[3..]);
     } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
         // UTF-16 LE
         let payload = &bytes[2..];
+        let mut warning = None;
         if !payload.len().is_multiple_of(2) {
             warn!(
                 "UTF-16 LE file has odd byte count ({}); trailing byte dropped",
                 bytes.len()
+            );
+            warning = Some(
+                "File appears to be UTF-16 LE but has an odd byte count; the trailing byte was dropped during decode.".to_string(),
             );
         }
         let u16_iter = payload
@@ -1158,14 +1215,18 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String) {
         let decoded: String = char::decode_utf16(u16_iter)
             .map(|r| r.unwrap_or('\u{FFFD}'))
             .collect();
-        (decoded, "utf16le".to_string())
+        (decoded, "utf16le".to_string(), warning)
     } else if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         // UTF-16 BE
         let payload = &bytes[2..];
+        let mut warning = None;
         if !payload.len().is_multiple_of(2) {
             warn!(
                 "UTF-16 BE file has odd byte count ({}); trailing byte dropped",
                 bytes.len()
+            );
+            warning = Some(
+                "File appears to be UTF-16 BE but has an odd byte count; the trailing byte was dropped during decode.".to_string(),
             );
         }
         let u16_iter = payload
@@ -1174,14 +1235,30 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String) {
         let decoded: String = char::decode_utf16(u16_iter)
             .map(|r| r.unwrap_or('\u{FFFD}'))
             .collect();
-        (decoded, "utf16be".to_string())
+        (decoded, "utf16be".to_string(), warning)
     } else {
-        // Assume UTF-8 without BOM
-        (
-            String::from_utf8_lossy(bytes).to_string(),
-            "utf8".to_string(),
-        )
+        decode_no_bom_fallback(bytes)
     }
+}
+
+/// Decodes a buffer with no recognised BOM. Strict UTF-8 first, otherwise
+/// Windows-1252 fallback (which preserves every byte for faithful round-trip).
+fn decode_no_bom_fallback(bytes: &[u8]) -> (String, String, Option<String>) {
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return (s.to_string(), "utf8".to_string(), None);
+    }
+    // Invalid UTF-8. Windows-1252 maps every byte 0x00-0xFF to a code point,
+    // so this branch always succeeds; we surface a warning so the user knows
+    // a legacy decoding was applied and can choose to convert to UTF-8.
+    let (decoded, _, _had_errors) = encoding_rs::WINDOWS_1252.decode(bytes);
+    (
+        decoded.into_owned(),
+        "windows1252".to_string(),
+        Some(
+            "File is not valid UTF-8; decoded as Windows-1252 (legacy ANSI). Saving will round-trip the original bytes; convert to UTF-8 from another tool if you need broader compatibility."
+                .to_string(),
+        ),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,6 +1292,30 @@ pub struct AssociationStatus {
 
 /// Supported PowerShell file extensions.
 const PS_EXTENSIONS: &[&str] = &[".ps1", ".psm1", ".psd1", ".ps1xml", ".pssc", ".cdxml"];
+
+/// Validates that `extension` is a safe registry-key fragment.
+///
+/// All Tauri commands that touch the registry derive subkey paths from this
+/// string. A caller could in principle pass `..\\..\\Foo` or a control
+/// character via the IPC boundary; rejecting anything outside `^\.[A-Za-z0-9]+$`
+/// blocks that without limiting any legitimate caller (the frontend only ever
+/// sends values from `PS_EXTENSIONS`, all of which match this shape).
+fn validate_extension(extension: &str) -> Result<(), AppError> {
+    let invalid = extension.len() < 2
+        || extension.len() > 16
+        || !extension.starts_with('.')
+        || !extension[1..].chars().all(|c| c.is_ascii_alphanumeric());
+    if invalid {
+        return Err(AppError {
+            code: "INVALID_EXTENSION".to_string(),
+            message: format!(
+                "Extension '{}' is not a valid file extension. Expected '.<alphanumeric>' (max 16 chars).",
+                extension
+            ),
+        });
+    }
+    Ok(())
+}
 
 #[cfg(target_os = "windows")]
 const ASSOCIATION_ICON_FILE_NAME: &str = "psforge-file-association.ico";
@@ -1274,6 +1375,7 @@ fn file_association_icon_registry_value(exe_path: &std::path::Path) -> String {
 #[tauri::command]
 pub async fn register_file_association(extension: String) -> Result<(), AppError> {
     info!("Registering file association for {}", extension);
+    validate_extension(&extension)?;
 
     #[cfg(target_os = "windows")]
     {
@@ -1343,6 +1445,9 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
 
     #[cfg(not(target_os = "windows"))]
     {
+        // Trailing Ok(()) below is unreachable on non-Windows so the explicit
+        // return suppresses the unreachable_code warning the compiler emits
+        // when only one of the cfg branches keeps going.
         let _ = extension;
         return Err(AppError {
             code: "UNSUPPORTED_PLATFORM".to_string(),
@@ -1350,6 +1455,7 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
         });
     }
 
+    #[cfg(target_os = "windows")]
     Ok(())
 }
 
@@ -1357,6 +1463,7 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
 #[tauri::command]
 pub async fn unregister_file_association(extension: String) -> Result<(), AppError> {
     info!("Unregistering file association for {}", extension);
+    validate_extension(&extension)?;
 
     #[cfg(target_os = "windows")]
     {
@@ -1588,8 +1695,24 @@ pub fn get_snippets_from(user_path: std::path::PathBuf) -> Result<Vec<Snippet>, 
     let mut snippets = builtin_snippets();
     if user_path.exists() {
         let content = with_retry("read_user_snippets", || std::fs::read_to_string(&user_path))?;
-        if let Ok(user_snippets) = serde_json::from_str::<Vec<Snippet>>(&content) {
-            snippets.extend(user_snippets);
+        match serde_json::from_str::<Vec<Snippet>>(&content) {
+            Ok(user_snippets) => snippets.extend(user_snippets),
+            Err(e) => {
+                // Corrupt user snippets: back up the bad file so the user can
+                // recover, then continue with built-ins only. Without the
+                // backup, custom snippets are silently destroyed.
+                let backup_path = settings::backup_path_for(&user_path);
+                match std::fs::copy(&user_path, &backup_path) {
+                    Ok(_) => warn!(
+                        "user snippets file is corrupted ({}); backed up to {:?} and falling back to built-ins",
+                        e, backup_path
+                    ),
+                    Err(copy_err) => error!(
+                        "user snippets file is corrupted ({}); failed to back up to {:?}: {}. Falling back to built-ins",
+                        e, backup_path, copy_err
+                    ),
+                }
+            }
         }
     }
     Ok(snippets)
@@ -1609,9 +1732,7 @@ pub async fn save_user_snippets(snippets: Vec<Snippet>) -> Result<(), AppError> 
 /// Saves user snippets to an explicit path (for testing).
 pub fn save_user_snippets_to(path: &std::path::Path, snippets: &[Snippet]) -> Result<(), AppError> {
     let json = serde_json::to_string_pretty(snippets)?;
-    with_retry("save_user_snippets", || {
-        std::fs::write(path, json.as_bytes())
-    })?;
+    with_retry("save_user_snippets", || atomic_write(path, json.as_bytes()))?;
     Ok(())
 }
 
@@ -1644,9 +1765,25 @@ pub async fn reveal_in_explorer(path: String) -> Result<(), AppError> {
             })?;
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     {
-        // Open the parent directory with the platform file manager.
+        // macOS Finder: `-R` reveals the file in its parent folder, mirroring
+        // the Windows Explorer "/select" behaviour above.
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| AppError {
+                code: "EXPLORER_LAUNCH_FAILED".to_string(),
+                message: format!("Failed to open Finder: {}", e),
+            })?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Linux + other Unix: open the parent directory with the freedesktop helper.
+        // Most desktop file managers do not support a generic "select-this-file"
+        // action so we degrade to revealing the folder instead.
         let parent = std::path::Path::new(&path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
@@ -2264,24 +2401,26 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
 pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(), AppError> {
     info!("set_execution_policy called with policy={}", policy);
 
-    // Validate against the allow-list before passing to PowerShell.
-    if !ALLOWED_POLICIES
+    // Validate against the allow-list before passing to PowerShell. Capture
+    // the canonical-cased entry so we never pass a typo'd `byPass` through to
+    // PowerShell — case-insensitive comparison and canonical casing in the
+    // emitted command keep the boundary clean.
+    let canonical = ALLOWED_POLICIES
         .iter()
-        .any(|p| p.eq_ignore_ascii_case(&policy))
-    {
-        return Err(AppError {
+        .find(|p| p.eq_ignore_ascii_case(&policy))
+        .copied()
+        .ok_or_else(|| AppError {
             code: "INVALID_POLICY".to_string(),
             message: format!(
                 "Invalid execution policy '{}'. Allowed: {}",
                 policy,
                 ALLOWED_POLICIES.join(", ")
             ),
-        });
-    }
+        })?;
 
     // Skip the Set-ExecutionPolicy call when the requested value is "Default" --
     // that sentinel means "leave whatever the user has set alone".
-    if policy.eq_ignore_ascii_case("Default") {
+    if canonical == "Default" {
         return Ok(());
     }
 
@@ -2289,7 +2428,7 @@ pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(),
 
     let script = format!(
         "Set-ExecutionPolicy -ExecutionPolicy {} -Scope CurrentUser -Force",
-        policy
+        canonical
     );
 
     let output = tokio::process::Command::new(&ps_path)
@@ -2746,51 +2885,95 @@ mod tests {
 
     #[test]
     fn detect_utf8_no_bom() {
-        let (content, enc) = detect_and_decode(b"Hello, World!");
+        let (content, enc, warning) = detect_and_decode(b"Hello, World!");
         assert_eq!(enc, "utf8");
         assert_eq!(content, "Hello, World!");
+        assert!(warning.is_none());
     }
 
     #[test]
     fn detect_utf8_bom() {
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(b"Hello");
-        let (content, enc) = detect_and_decode(&bytes);
+        let (content, enc, warning) = detect_and_decode(&bytes);
         assert_eq!(enc, "utf8bom");
         assert_eq!(content, "Hello");
+        assert!(warning.is_none());
     }
 
     #[test]
     fn detect_utf8_bom_empty_payload() {
         let bytes = vec![0xEF, 0xBB, 0xBF];
-        let (content, enc) = detect_and_decode(&bytes);
+        let (content, enc, warning) = detect_and_decode(&bytes);
         assert_eq!(enc, "utf8bom");
         assert_eq!(content, "");
+        assert!(warning.is_none());
     }
 
     #[test]
     fn detect_utf16_le_signature() {
         // ASCII 'A' and 'B' as UTF-16 LE with BOM.
         let bytes = vec![0xFF, 0xFE, b'A', 0x00, b'B', 0x00];
-        let (content, enc) = detect_and_decode(&bytes);
+        let (content, enc, warning) = detect_and_decode(&bytes);
         assert_eq!(enc, "utf16le");
         assert_eq!(content, "AB");
+        assert!(warning.is_none());
     }
 
     #[test]
     fn detect_utf16_be_signature() {
         // ASCII 'A' and 'B' as UTF-16 BE with BOM.
         let bytes = vec![0xFE, 0xFF, 0x00, b'A', 0x00, b'B'];
-        let (content, enc) = detect_and_decode(&bytes);
+        let (content, enc, warning) = detect_and_decode(&bytes);
         assert_eq!(enc, "utf16be");
         assert_eq!(content, "AB");
+        assert!(warning.is_none());
     }
 
     #[test]
     fn detect_empty_file_returns_utf8() {
-        let (content, enc) = detect_and_decode(b"");
+        let (content, enc, warning) = detect_and_decode(b"");
         assert_eq!(enc, "utf8");
         assert!(content.is_empty());
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn detect_invalid_utf8_falls_back_to_windows1252() {
+        // Single 0xFF byte is invalid UTF-8 but valid Windows-1252 (decodes to U+00FF).
+        let bytes = vec![0xFF];
+        let (content, enc, warning) = detect_and_decode(&bytes);
+        assert_eq!(enc, "windows1252");
+        assert_eq!(content, "\u{00FF}");
+        assert!(warning.is_some(), "Windows-1252 decode should warn the user");
+    }
+
+    #[test]
+    fn detect_invalid_utf8_round_trips_through_windows1252() {
+        // A byte that is invalid UTF-8 (>= 0x80) but valid Windows-1252.
+        // The decode/encode pair must produce the original byte back so saving
+        // a mis-detected file never corrupts it.
+        let bytes = vec![0xE9]; // Latin small e with acute in Windows-1252
+        let (content, enc, warning) = detect_and_decode(&bytes);
+        assert_eq!(enc, "windows1252");
+        assert!(!content.is_empty(), "Decoder must produce a real character");
+        assert!(warning.is_some(), "Legacy fallback must warn the user");
+        // Round-trip: re-encoding the decoded string should give back the original byte.
+        let (re_encoded, _, _) = encoding_rs::WINDOWS_1252.encode(&content);
+        assert_eq!(
+            re_encoded.as_ref(),
+            &bytes[..],
+            "Windows-1252 round-trip must preserve original bytes"
+        );
+    }
+
+    #[test]
+    fn detect_utf16_le_odd_byte_warns() {
+        // Trailing odd byte: warning should explain truncation.
+        let bytes = vec![0xFF, 0xFE, b'A', 0x00, b'B'];
+        let (_content, enc, warning) = detect_and_decode(&bytes);
+        assert_eq!(enc, "utf16le");
+        assert!(warning.is_some(), "Odd-byte UTF-16 LE must surface a warning");
     }
 
     #[test]

@@ -869,6 +869,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedPsPathRef.current = state.selectedPsPath;
   }, [state.selectedPsPath]);
 
+  // Snapshot of the initial bootstrap tab id(s) so the session restore can
+  // tell user-touched tabs apart from the placeholder untitled tab created
+  // before localStorage is consulted. Anything not in this set is treated
+  // as user content and preserved across the restore.
+  const initialTabIdsRef = useRef<Set<string>>(new Set([initialTab.id]));
+  // Live snapshot of the latest tab list so the restore effect can decide
+  // whether the user has done anything meaningful before the async file
+  // reads finished. We can't read `state` from inside the async closure
+  // (it's stale) and useReducer's dispatch doesn't accept updater functions,
+  // so a ref is the safest bridge.
+  const tabsRef = useRef(state.tabs);
+  useEffect(() => {
+    tabsRef.current = state.tabs;
+  }, [state.tabs]);
+
   // Restore tab/session state from localStorage.
   // File-backed tabs are restored only when the source file still exists.
   // If every saved file is gone, we fall back to a single untitled tab.
@@ -923,26 +938,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (cancelled) return;
 
-      const finalTabs =
-        restoredTabs.length > 0 ? restoredTabs : [createUntitledTab()];
+      // Detect user activity since mount: anything beyond the unmodified
+      // bootstrap tab counts. We preserve user-created tabs and merge
+      // restored tabs in alongside them, rather than replacing.
+      const initialIds = initialTabIdsRef.current;
+      const liveTabs = tabsRef.current;
+      const userTouched = liveTabs.filter((t) => {
+        if (!initialIds.has(t.id)) return true; // tab created since mount
+        // Bootstrap tab: keep only if the user has dirtied it or attached a file.
+        return t.isDirty || !!t.filePath;
+      });
+
+      const seenIds = new Set(userTouched.map((t) => t.id));
+      const merged: EditorTab[] = [...userTouched];
+      for (const tab of restoredTabs) {
+        if (!seenIds.has(tab.id)) merged.push(tab);
+      }
+
+      const finalTabs = merged.length > 0 ? merged : [createUntitledTab()];
       syncTabCounters(finalTabs);
 
       dispatch({ type: "SET_TABS", tabs: finalTabs });
-      dispatch({
-        type: "SET_ACTIVE_TAB",
-        id: finalTabs.some((t) => t.id === persisted.activeTabId)
-          ? persisted.activeTabId
-          : finalTabs[0].id,
-      });
+      // Only switch the active tab when the user hasn't already chosen one
+      // (i.e. when their work since mount is just the bootstrap untitled).
+      if (userTouched.length === 0) {
+        dispatch({
+          type: "SET_ACTIVE_TAB",
+          id: finalTabs.some((t) => t.id === persisted.activeTabId)
+            ? persisted.activeTabId
+            : finalTabs[0].id,
+        });
+      }
       dispatch({ type: "SET_BOTTOM_TAB", tab: persisted.bottomPanelTab });
       dispatch({ type: "SET_WORKING_DIR", dir: persisted.workingDir });
       for (const [tabId, breakpoints] of Object.entries(
         persisted.breakpoints,
       )) {
-        dispatch({ type: "SET_BREAKPOINTS", tabId, breakpoints });
+        if (finalTabs.some((t) => t.id === tabId)) {
+          dispatch({ type: "SET_BREAKPOINTS", tabId, breakpoints });
+        }
       }
       for (const [tabId, lines] of Object.entries(persisted.bookmarks)) {
-        dispatch({ type: "SET_BOOKMARKS", tabId, lines });
+        if (finalTabs.some((t) => t.id === tabId)) {
+          dispatch({ type: "SET_BOOKMARKS", tabId, lines });
+        }
       }
       if (persisted.selectedPsPath) {
         dispatch({ type: "SET_SELECTED_PS", path: persisted.selectedPsPath });
@@ -1042,10 +1081,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     state.settingsLoaded,
   ]);
 
-  // Persist settings whenever they change (after initial load)
+  // Persist settings whenever they change (after initial load).
+  // Failures used to be swallowed silently; route them to the integrated
+  // terminal so the user knows their changes did not stick to disk
+  // (e.g. AppData unwritable, disk full). We dedupe the notice so a
+  // recurring failure does not spam the terminal on every change.
+  const lastSettingsErrorRef = useRef<string | null>(null);
   const saveSettingsDebounced = useCallback(
     debounce((s: AppSettings) => {
-      cmd.saveSettings(s).catch(() => {});
+      cmd
+        .saveSettings(s)
+        .then(() => {
+          lastSettingsErrorRef.current = null;
+        })
+        .catch((err) => {
+          const message =
+            err && typeof err === "object" && "message" in err
+              ? String((err as { message: unknown }).message)
+              : String(err);
+          if (lastSettingsErrorRef.current === message) return;
+          lastSettingsErrorRef.current = message;
+
+          const writeNotice = (
+            window as unknown as Record<string, unknown>
+          ).__psforge_terminal_write_notice as
+            | ((
+                text: string,
+                options?: { reveal?: boolean },
+              ) => Promise<void>)
+            | undefined;
+          if (writeNotice) {
+            void writeNotice(
+              `[PSForge] Could not save settings: ${message}\n`,
+              { reveal: false },
+            );
+          } else {
+            console.error("Settings save failed:", err);
+          }
+        });
     }, 1000),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce returns a stable function; settings are passed as argument
     [],
@@ -1101,10 +1174,66 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ),
     };
 
+    const writeSnapshot = (toWrite: PersistedSession): boolean => {
+      try {
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(toWrite));
+        return true;
+      } catch (err) {
+        const isQuotaError =
+          err instanceof DOMException &&
+          (err.name === "QuotaExceededError" ||
+            err.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+            err.code === 22);
+        if (!isQuotaError) {
+          // Non-quota storage failures (security policy, disk error) leave
+          // session restore degraded; log so users can debug if needed.
+          console.warn("Failed to persist session snapshot:", err);
+        }
+        return false;
+      }
+    };
+
+    if (writeSnapshot(snapshot)) return;
+
+    // Quota exceeded: most likely a few large dirty buffers blew the per-origin
+    // budget. Drop the heaviest content fields for clean (file-backed,
+    // not-dirty) tabs first since those can be reloaded from disk on restart;
+    // keep the metadata so the user still sees their tabs come back.
+    const trimmedTabs = snapshot.tabs.map((tab) =>
+      !tab.isDirty && tab.filePath
+        ? { ...tab, content: "", savedContent: "" }
+        : tab,
+    );
+    if (writeSnapshot({ ...snapshot, tabs: trimmedTabs })) {
+      console.warn(
+        "Session snapshot exceeded storage quota; cleaned tabs persisted as path-only.",
+      );
+      return;
+    }
+
+    // Still too large: keep only the active tab's content. Worst case the
+    // user comes back to a single restored tab plus their other file
+    // references rather than a blank workspace.
+    const aggressivelyTrimmed = snapshot.tabs.map((tab) =>
+      tab.id === snapshot.activeTabId
+        ? tab
+        : tab.filePath
+          ? { ...tab, content: "", savedContent: "" }
+          : { ...tab, content: tab.content.slice(0, 8192), savedContent: "" },
+    );
+    if (writeSnapshot({ ...snapshot, tabs: aggressivelyTrimmed })) {
+      console.warn(
+        "Session snapshot heavily trimmed to fit storage; some unsaved buffers were truncated.",
+      );
+      return;
+    }
+
+    // Still failing: clear the previous snapshot so the next restore at least
+    // boots cleanly rather than rehydrating stale state.
     try {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+      localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
-      // ignore storage errors
+      // give up
     }
   }, [
     state.tabs,

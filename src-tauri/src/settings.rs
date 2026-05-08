@@ -1,8 +1,8 @@
 /// PSForge settings management.
 /// Handles loading, saving, and validating user settings from %APPDATA%/PSForge/settings.json.
 use crate::errors::AppError;
-use crate::utils::with_retry;
-use log::{debug, info, warn};
+use crate::utils::{atomic_write, with_retry};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -16,10 +16,12 @@ const MIN_TAB_SIZE: u32 = 1;
 const MAX_TAB_SIZE: u32 = 16;
 const MIN_OUTPUT_FONT_SIZE: u32 = 8;
 const MAX_OUTPUT_FONT_SIZE: u32 = 72;
+// UI / sidebar fonts cap at 24 to match the frontend Settings panel and to
+// avoid the chrome consuming the entire window when set absurdly high.
 const MIN_UI_FONT_SIZE: u32 = 8;
-const MAX_UI_FONT_SIZE: u32 = 72;
+const MAX_UI_FONT_SIZE: u32 = 24;
 const MIN_SIDEBAR_FONT_SIZE: u32 = 8;
-const MAX_SIDEBAR_FONT_SIZE: u32 = 72;
+const MAX_SIDEBAR_FONT_SIZE: u32 = 24;
 const MIN_MAX_RECENT_FILES: usize = 1;
 const MAX_MAX_RECENT_FILES: usize = 100;
 const MIN_SPLIT_POSITION: f64 = 10.0;
@@ -375,6 +377,9 @@ impl AppSettings {
         });
 
         // De-duplicate and drop blank recent entries while preserving order.
+        // Use case-insensitive matching only on Windows (the native filesystem
+        // is case-insensitive there). On Linux/macOS, paths are case-sensitive
+        // so `/Foo.ps1` and `/foo.ps1` are genuinely different files.
         let mut seen = HashSet::new();
         self.recent_files = self
             .recent_files
@@ -384,7 +389,11 @@ impl AppSettings {
                 if trimmed.is_empty() {
                     return None;
                 }
-                let key = trimmed.to_lowercase();
+                let key = if cfg!(windows) {
+                    trimmed.to_lowercase()
+                } else {
+                    trimmed.to_string()
+                };
                 if seen.insert(key) {
                     Some(trimmed.to_string())
                 } else {
@@ -395,15 +404,19 @@ impl AppSettings {
             .collect();
     }
 
-    /// Adds a file path to the recent files list, deduplicating and enforcing the max size.
+    /// Adds a file path to the recent files list, deduplicating and enforcing the user's max-size setting.
     #[allow(dead_code)]
     pub fn add_recent_file(&mut self, path: &str) {
         // Remove if already present
         self.recent_files.retain(|p| p != path);
         // Insert at front
         self.recent_files.insert(0, path.to_string());
-        // Enforce max size
-        self.recent_files.truncate(MAX_RECENT_FILES);
+        // Enforce the user's configured cap rather than a hard-coded constant
+        // so changes to `max_recent_files` actually take effect immediately.
+        let cap = self
+            .max_recent_files
+            .clamp(MIN_MAX_RECENT_FILES, MAX_MAX_RECENT_FILES);
+        self.recent_files.truncate(cap);
     }
 }
 
@@ -444,19 +457,37 @@ pub fn load_from(path: &std::path::PathBuf) -> Result<AppSettings, AppError> {
     debug!("Loading settings from {:?}", path);
     // Use retry for transient I/O failures (e.g. file lock during concurrent write) (Rule 11).
     let content = with_retry("settings::load_from", || std::fs::read_to_string(path))?;
-    // Corrupted JSON is a permanent error; fall back to defaults and log (Rule 11).
+    // Corrupted JSON is a permanent error; back up the bad file before falling
+    // back to defaults so the user can recover their customisations later
+    // rather than losing them silently (Rule 11).
     let mut settings = match serde_json::from_str::<AppSettings>(&content) {
         Ok(s) => s,
         Err(e) => {
-            warn!(
-                "settings file is corrupted ({}); resetting to defaults. Backup path: {:?}",
-                e, path
-            );
+            let backup_path = backup_path_for(path);
+            match std::fs::copy(path, &backup_path) {
+                Ok(_) => warn!(
+                    "settings file is corrupted ({}); backed up to {:?} and resetting to defaults",
+                    e, backup_path
+                ),
+                Err(copy_err) => error!(
+                    "settings file is corrupted ({}); failed to back up to {:?}: {}. Resetting to defaults",
+                    e, backup_path, copy_err
+                ),
+            }
             AppSettings::default()
         }
     };
     settings.sanitize();
     Ok(settings)
+}
+
+/// Returns the sibling backup path for a corrupted file, e.g.
+/// `settings.json` → `settings.json.bak`. Used to preserve user state when
+/// the JSON parse fails so they can recover manually.
+pub(crate) fn backup_path_for(path: &std::path::Path) -> std::path::PathBuf {
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(".bak");
+    std::path::PathBuf::from(backup)
 }
 
 /// Saves settings to disk, creating the directory if needed.
@@ -480,10 +511,8 @@ pub fn save_to(path: &std::path::PathBuf, settings: &AppSettings) -> Result<(), 
     let mut sanitized = settings.clone();
     sanitized.sanitize();
     let json = serde_json::to_string_pretty(&sanitized)?;
-    // Write UTF-8 without BOM, retrying on transient I/O failures (Rule 11).
-    with_retry("settings::save_to", || {
-        std::fs::write(path, json.as_bytes())
-    })?;
+    // Atomic write so a crash mid-write never produces a corrupted settings file.
+    with_retry("settings::save_to", || atomic_write(path, json.as_bytes()))?;
     debug!("Settings saved to {:?}", path);
     Ok(())
 }

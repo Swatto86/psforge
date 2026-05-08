@@ -7,11 +7,12 @@
  *  (no administrator rights required).
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { AssociationStatus, ThemeName } from "../types";
 import { PS_EXTENSIONS } from "../types";
+import { useFocusTrap } from "./use-focus-trap";
 
 /** Section identifiers. */
 type Section =
@@ -52,8 +53,22 @@ const POLICY_DESCRIPTIONS: Record<string, string> = {
   Bypass: "No restrictions or warnings (for automation -- use with caution)",
 };
 
-function isLikelyAbsoluteWindowsPath(path: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+/**
+ * Returns true when `path` looks like an absolute path on any supported OS.
+ *
+ * Accepted:
+ * - Windows: `C:\Users\...`, `D:/Users/...`, UNC `\\server\share\...`
+ * - Unix:    `/home/me/...`, `/`
+ *
+ * The previous version rejected Unix paths outright, which made the Settings
+ * panel unusable on Linux/macOS for the "Custom working directory" field.
+ */
+function isLikelyAbsolutePath(path: string): boolean {
+  return (
+    /^[A-Za-z]:[\\/]/.test(path) ||
+    path.startsWith("\\\\") ||
+    path.startsWith("/")
+  );
 }
 
 export function SettingsPanel() {
@@ -145,9 +160,11 @@ export function SettingsPanel() {
     validationErrors.tabSize = "Tab size must be between 1 and 16.";
   }
   const maxRecent = state.settings.maxRecentFiles ?? 20;
-  if (!Number.isFinite(maxRecent) || maxRecent < 1 || maxRecent > 50) {
+  if (!Number.isFinite(maxRecent) || maxRecent < 1 || maxRecent > 100) {
+    // Range matches the backend `MAX_MAX_RECENT_FILES` cap so values entered
+    // here cannot be silently clamped to a different number on next load.
     validationErrors.maxRecentFiles =
-      "Max recent files must be between 1 and 50.";
+      "Max recent files must be between 1 and 100.";
   }
   if (
     state.settings.workingDirMode === "custom" &&
@@ -158,7 +175,7 @@ export function SettingsPanel() {
       "A working directory path is required when mode is Custom.";
   } else if (
     state.settings.workingDirMode === "custom" &&
-    !isLikelyAbsoluteWindowsPath(state.settings.customWorkingDir.trim())
+    !isLikelyAbsolutePath(state.settings.customWorkingDir.trim())
   ) {
     validationErrors.customWorkingDir =
       "Custom working directory must be an absolute path.";
@@ -269,6 +286,9 @@ export function SettingsPanel() {
   const isDefaultPolicy =
     (state.settings.executionPolicy ?? "Default") === "Default";
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, true);
+
   return (
     <div
       data-testid="settings-panel"
@@ -279,6 +299,10 @@ export function SettingsPanel() {
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
         className="rounded-lg shadow-2xl flex overflow-hidden"
         style={{
           backgroundColor: "var(--bg-secondary)",

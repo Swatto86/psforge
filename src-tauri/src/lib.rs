@@ -9,7 +9,7 @@ pub mod utils;
 pub mod win_compat;
 
 use log::{info, warn};
-use tauri::Manager;
+use tauri::{Listener, Manager};
 
 /// Entry point for the Tauri application.
 /// Registers all plugins and command handlers.
@@ -18,16 +18,6 @@ pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
-
-    match utils::cleanup_psforge_temp_files() {
-        Ok(removed) if removed > 0 => {
-            info!("Removed {} stale PSForge temp file(s)", removed);
-        }
-        Ok(_) => {}
-        Err(err) => {
-            warn!("Failed to clean up stale PSForge temp files: {}", err);
-        }
-    }
 
     info!("PSForge starting up");
 
@@ -82,21 +72,47 @@ pub fn run() {
             terminal::stop_terminal,
         ])
         .setup(|app| {
-            // Window starts hidden (`visible: false` in tauri.conf.json) to prevent the
-            // white flash that occurs when the OS window appears before the WebView
-            // has rendered. This setup hook reveals the window from the Rust side
-            // (CSP-immune) after the WebView has had time to initialise.
-            //
-            // The complementary CSS `.psforge-loading` class (added by preload.js,
-            // removed by React after first mount) provides FOUC protection within the
-            // WebView while the JS bundle hydrates.
+            // Stale temp file cleanup runs off the main thread so a slow tmpfs
+            // (network share, encrypted volume) cannot delay window display.
+            tauri::async_runtime::spawn_blocking(|| match utils::cleanup_psforge_temp_files() {
+                Ok(removed) if removed > 0 => {
+                    info!("Removed {} stale PSForge temp file(s)", removed);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    warn!("Failed to clean up stale PSForge temp files: {}", err);
+                }
+            });
+
+            // Window starts hidden (`visible: false` in tauri.conf.json) to
+            // prevent the white flash that occurs when the OS window appears
+            // before the WebView has rendered. The frontend emits
+            // `psforge-ready` after first mount; we show the window in
+            // response so we never depend on a hard-coded delay (which is
+            // either too short on slow boxes or wastes time on fast ones).
             let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            let listener_handle = handle.clone();
+            let listener_id = listener_handle.listen("psforge-ready", move |_event| {
                 if let Some(win) = handle.get_webview_window("main") {
                     let _ = win.show();
                     let _ = win.set_focus();
                 }
+            });
+
+            // Safety net: if the WebView fails to load or the JS bundle never
+            // boots (extreme: corrupt install), reveal the window after a
+            // generous timeout so the user is never stuck staring at nothing.
+            let safety_handle = listener_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                if let Some(win) = safety_handle.get_webview_window("main") {
+                    if !win.is_visible().unwrap_or(false) {
+                        warn!("WebView did not signal ready within 3s; revealing window anyway");
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                }
+                safety_handle.unlisten(listener_id);
             });
             Ok(())
         })

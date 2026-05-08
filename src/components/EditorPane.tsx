@@ -177,9 +177,18 @@ function onlyPathLikeCandidates(items: PsCompletion[]): boolean {
   );
 }
 
+/** Skip dash-context retries when the first completion call took longer than this. */
+const COMPLETION_RETRY_LATENCY_BUDGET_MS = 800;
+
 /**
  * Fetch completions and retry nearby offsets in dash-prefixed parameter
  * contexts when TabExpansion2 returns only provider/file candidates.
+ *
+ * Retries are bounded by latency, not iteration count: if the first call
+ * already took most of a second, additional sequential calls would push the
+ * suggestion-list latency past the point where it's helpful (the user has
+ * usually moved on by then). Cold/slow shells therefore skip the extra calls
+ * and accept the path-like candidates rather than freeze the suggest widget.
  */
 async function fetchCompletionsForContext(
   psPath: string,
@@ -188,10 +197,20 @@ async function fetchCompletionsForContext(
   tokenStart: number,
   completionOffset: number,
 ): Promise<PsCompletion[]> {
+  const startedAt =
+    typeof performance !== "undefined" ? performance.now() : Date.now();
   const base = await getCompletions(psPath, scriptContent, completionOffset);
   if (scriptContent[tokenStart] !== "-") return base;
   if (hasParameterCandidates(base)) return base;
   if (!onlyPathLikeCandidates(base)) return base;
+
+  const elapsed =
+    (typeof performance !== "undefined" ? performance.now() : Date.now()) -
+    startedAt;
+  if (elapsed > COMPLETION_RETRY_LATENCY_BUDGET_MS) {
+    // Slow shell: keep the user typing rather than waiting on a second roundtrip.
+    return base;
+  }
 
   const retryOffsets = Array.from(
     new Set([offset, tokenStart + 1, tokenStart + 2]),
@@ -361,30 +380,34 @@ export function EditorPane() {
       }
       return cleaned;
     };
-    w.__psforge_setEditorText = (text: string) => {
-      const editor = editorRef.current;
-      const model = editor?.getModel();
-      if (!editor || !model) return false;
+    // E2E-only: replaces the editor buffer in one shot. Gated to dev so it
+    // never appears on production users' window object.
+    if (import.meta.env.DEV) {
+      w.__psforge_setEditorText = (text: string) => {
+        const editor = editorRef.current;
+        const model = editor?.getModel();
+        if (!editor || !model) return false;
 
-      editor.executeEdits("psforge-e2e", [
-        {
-          range: model.getFullModelRange(),
-          text,
-          forceMoveMarkers: true,
-        },
-      ]);
-      editor.pushUndoStop();
+        editor.executeEdits("psforge-e2e", [
+          {
+            range: model.getFullModelRange(),
+            text,
+            forceMoveMarkers: true,
+          },
+        ]);
+        editor.pushUndoStop();
 
-      const lastLine = model.getLineCount();
-      const lastColumn = model.getLineMaxColumn(lastLine);
-      editor.setPosition({ lineNumber: lastLine, column: lastColumn });
-      editor.revealPositionInCenter({
-        lineNumber: lastLine,
-        column: lastColumn,
-      });
-      editor.focus();
-      return true;
-    };
+        const lastLine = model.getLineCount();
+        const lastColumn = model.getLineMaxColumn(lastLine);
+        editor.setPosition({ lineNumber: lastLine, column: lastColumn });
+        editor.revealPositionInCenter({
+          lineNumber: lastLine,
+          column: lastColumn,
+        });
+        editor.focus();
+        return true;
+      };
+    }
     return () => {
       delete w.__psforge_triggerFindReplace;
       delete w.__psforge_triggerGoToLine;
@@ -637,98 +660,11 @@ export function EditorPane() {
         },
       });
 
-      // --- Feature 3: PowerShell IntelliSense via TabExpansion2 ---
-      // Disposed when enable_intellisense is toggled off; re-registered when turned back on.
-      // The outer useEffect below handles toggling; this block registers on first mount.
-      if (state.settings.enableIntelliSense) {
-        completionDisposableRef.current?.dispose();
-        completionDisposableRef.current =
-          monaco.languages.registerCompletionItemProvider("powershell", {
-            // Trigger on common PS prefix characters so the list appears contextually.
-            // Note: space (" ") fires the provider so that file-path completions
-            // appear after a cmdlet name (e.g. "Get-ChildItem ").  The provider
-            // also fires for "-" to show parameter completions.
-            triggerCharacters: PS_COMPLETION_TRIGGER_CHARACTERS,
-            provideCompletionItems: async (
-              model: MonacoEditor.ITextModel,
-              position: MonacoPosition,
-              context: MonacoLanguages.CompletionContext,
-            ) => {
-              const psPath = psPathRef.current;
-              if (!psPath) return { suggestions: [] };
-
-              let scriptContent = model.getValue();
-              // Monaco getOffsetAt gives a 0-based character offset, which is
-              // what TabExpansion2 expects for -cursorColumn.
-              let offset = model.getOffsetAt(position);
-              let rangeEndColumn = position.column;
-
-              // Monaco fires the completion provider when a trigger character is
-              // typed, but may call provideCompletionItems before the trigger
-              // character has been committed to the model (i.e. model.getValue()
-              // may return content that does not yet include the trigger char).
-              // If the context carries a trigger character that is absent from
-              // the model at the cursor position, splice it in so that PS
-              // receives the correct script content for TabExpansion2.
-              if (
-                context.triggerCharacter &&
-                (offset === 0 ||
-                  scriptContent[offset - 1] !== context.triggerCharacter)
-              ) {
-                scriptContent =
-                  scriptContent.slice(0, offset) +
-                  context.triggerCharacter +
-                  scriptContent.slice(offset);
-                offset += context.triggerCharacter.length;
-                rangeEndColumn += context.triggerCharacter.length;
-              }
-
-              const tokenStart = findTokenStart(scriptContent, offset);
-              const completionOffset = completionCursorOffset(
-                scriptContent,
-                offset,
-                tokenStart,
-              );
-
-              try {
-                const items = await fetchCompletionsForContext(
-                  psPath,
-                  scriptContent,
-                  offset,
-                  tokenStart,
-                  completionOffset,
-                );
-                const tokenStartPos = model.getPositionAt(tokenStart);
-                const completionRange = {
-                  startLineNumber: tokenStartPos.lineNumber,
-                  startColumn: tokenStartPos.column,
-                  endLineNumber: position.lineNumber,
-                  endColumn: rangeEndColumn,
-                };
-
-                const suggestions = items.map((c) => ({
-                  label: c.listItemText || c.completionText,
-                  kind: completionKind(monaco, c.resultType),
-                  insertText: c.completionText,
-                  // filterText ensures Monaco matches against the full completion
-                  // text (e.g. "-Path") rather than just the display label
-                  // (e.g. "Path"), which would cause parameter suggestions to be
-                  // hidden when the trigger character "-" is already in the range.
-                  filterText: c.completionText,
-                  sortText: `${completionSortWeight(c.resultType)}_${(
-                    c.listItemText || c.completionText
-                  ).toLowerCase()}`,
-                  detail: c.resultType,
-                  documentation: c.toolTip || undefined,
-                  range: completionRange,
-                }));
-                return { suggestions, incomplete: true };
-              } catch {
-                return { suggestions: [], incomplete: true };
-              }
-            },
-          });
-      }
+      // PowerShell IntelliSense provider lifecycle is owned by the
+      // `state.settings.enableIntelliSense` effect below. We deliberately do
+      // NOT register it here on mount — the previous code registered, the
+      // effect disposed it, and the effect re-registered, leaking one
+      // provider per remount on every tab switch.
 
       // Focus editor
       editor.focus();
@@ -737,8 +673,6 @@ export function EditorPane() {
     },
     [
       activeTab,
-      state.settings.theme,
-      state.settings.enableIntelliSense,
       dispatch,
       refreshBreakpointDecorations,
       refreshBookmarkDecorations,

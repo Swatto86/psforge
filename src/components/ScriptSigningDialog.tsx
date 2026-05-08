@@ -11,13 +11,16 @@
  *  - Rule 11: graceful degradation (empty list + informative message when no certs).
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { CertInfo } from "../types";
+import { useFocusTrap } from "./use-focus-trap";
 
 export function ScriptSigningDialog() {
   const { state, dispatch, activeTab } = useAppState();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, state.showSigningDialog);
   const [certs, setCerts] = useState<CertInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedThumbprint, setSelectedThumbprint] = useState("");
@@ -97,6 +100,31 @@ export function ScriptSigningDialog() {
         selectedThumbprint,
       );
       setStatus(result);
+
+      // `Set-AuthenticodeSignature` appends a signature block to the file on
+      // disk. Without re-reading, the editor's `content` and `savedContent`
+      // would still reflect the pre-sign bytes, so the next save would
+      // overwrite (and invalidate) the signature without warning. Refresh
+      // the tab from disk now so the in-memory state matches reality.
+      try {
+        const refreshed = await cmd.readFileContent(activeTab.filePath);
+        dispatch({
+          type: "UPDATE_TAB",
+          id: activeTab.id,
+          changes: {
+            content: refreshed.content,
+            savedContent: refreshed.content,
+            encoding: refreshed.encoding,
+            isDirty: false,
+          },
+        });
+      } catch {
+        // If we can't re-read, surface a non-blocking warning so the user
+        // knows to reload before editing.
+        setError(
+          "Signing succeeded but the file could not be re-read; reload it before editing or your next save will overwrite the signature.",
+        );
+      }
     } catch (err: unknown) {
       setError(
         typeof err === "string"
@@ -125,6 +153,8 @@ export function ScriptSigningDialog() {
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         data-testid="signing-dialog"
         role="dialog"
         aria-modal="true"

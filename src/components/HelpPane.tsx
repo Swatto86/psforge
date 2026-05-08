@@ -7,6 +7,20 @@ import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { CommandHelpInfo } from "../types";
 
+/**
+ * Returns `uri` only when it has a safe http(s) scheme. Help-text URIs come
+ * from arbitrary `Get-Help` content (including third-party modules), so
+ * blindly rendering them inside an `<a href>` would let a malicious help
+ * file run JavaScript via `javascript:alert(1)` when the user clicks it.
+ */
+function safeExternalLink(uri: string): string | null {
+  if (typeof uri !== "string") return null;
+  const trimmed = uri.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return null;
+}
+
 type HelpRequestEvent = CustomEvent<{ query?: string }>;
 
 export function HelpPane() {
@@ -126,16 +140,20 @@ export function HelpPane() {
             <div style={{ color: "var(--text-accent)", fontWeight: 600 }}>
               {result.name}
             </div>
-            {result.onlineUri && (
-              <a
-                href={result.onlineUri}
-                target="_blank"
-                rel="noreferrer"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {result.onlineUri}
-              </a>
-            )}
+            {(() => {
+              const safeUri = safeExternalLink(result.onlineUri);
+              if (!safeUri) return null;
+              return (
+                <a
+                  href={safeUri}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "var(--text-secondary)" }}
+                >
+                  {safeUri}
+                </a>
+              );
+            })()}
           </div>
 
           <section>

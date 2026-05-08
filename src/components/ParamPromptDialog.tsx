@@ -23,6 +23,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import type { ScriptParameter } from "../types";
+import { useFocusTrap } from "./use-focus-trap";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -123,6 +124,8 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
   });
 
   const firstInputRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(dialogRef, true);
 
   // Focus the first non-boolean field (or the first field if all boolean) on mount.
   useEffect(() => {
@@ -148,7 +151,11 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
     if (value.trim() === "") return "Required";
     if (
       isNumericType(param.typeName) &&
-      !/^-?\d+(\.\d+)?$/.test(value.trim())
+      // Accept integers, decimals, and scientific notation (1e5, 1.5e-3) so
+      // any value PowerShell would parse as a [double]/[int] is also accepted
+      // by this dialog. The previous regex rejected scientific notation that
+      // any production script using `[double]$Threshold = 1e9` would expect.
+      !/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value.trim())
     ) {
       return "Must be a number";
     }
@@ -210,6 +217,8 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         data-testid="param-prompt-dialog"
         role="dialog"
         aria-modal="true"

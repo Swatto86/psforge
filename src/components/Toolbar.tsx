@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from "react";
+import { basename } from "../path-utils";
 import { useAppState } from "../store";
 import type { ThemeName } from "../types";
 
@@ -150,7 +151,7 @@ export function Toolbar({
             }}
           >
             {state.settings.recentFiles.slice(0, 15).map((path) => {
-              const name = path.split("\\").pop() ?? path;
+              const name = basename(path);
               return (
                 <div
                   key={path}

@@ -2,7 +2,7 @@
 /// Provides retry logic for transient I/O failures (Rule 11 - Resilience).
 use log::warn;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
@@ -102,6 +102,83 @@ pub(crate) fn write_secure_temp_file(
     ))
 }
 
+/// Writes `bytes` to `path` atomically: serialises to a sibling temp file,
+/// fsyncs, then renames over the destination. Prevents the user-visible
+/// "file is empty after a power loss / crash mid-write" failure mode that
+/// `std::fs::write` can produce because it truncates first.
+///
+/// Behaviour:
+/// - Creates the parent directory if missing (best-effort).
+/// - Uses `create_new(true)` for the temp file so we never clobber an
+///   unrelated sibling.
+/// - Calls `sync_all` on the temp file before rename (ensures bytes hit disk).
+/// - Tries to fsync the parent directory after rename on Unix; ignored on
+///   Windows where directory fsync is not exposed and `ReplaceFileW`-style
+///   semantics for `rename` are durable enough for our editor-save workload.
+/// - On rename failure, removes the temp file so we never leave litter.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("psforge_atomic");
+
+    // Pick a unique sibling temp file. Sibling (not /tmp) so the rename is
+    // guaranteed to be on the same filesystem and therefore atomic.
+    let mut last_err: Option<std::io::Error> = None;
+    for _ in 0..16 {
+        let tmp_path = parent.join(format!(".{}.psforge_tmp_{}", file_name, Uuid::new_v4()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+        {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(bytes) {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return Err(e);
+                }
+                if let Err(e) = f.sync_all() {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return Err(e);
+                }
+                drop(f);
+
+                if let Err(e) = std::fs::rename(&tmp_path, path) {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return Err(e);
+                }
+
+                #[cfg(unix)]
+                {
+                    if let Ok(dir) = std::fs::File::open(parent) {
+                        let _ = dir.sync_all();
+                    }
+                }
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_err = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "Failed to allocate unique atomic-write temp file",
+        )
+    }))
+}
+
 /// Removes stale PSForge-owned temp files left behind by interrupted runs.
 ///
 /// Files newer than STALE_TEMP_FILE_MAX_AGE_SECS are preserved so a second app
@@ -114,6 +191,7 @@ pub(crate) fn cleanup_psforge_temp_files() -> std::io::Result<usize> {
         "psforge_invoke_",
         "psforge_host_bootstrap_",
         "psforge_terminal_bootstrap_",
+        "psforge_terminal_run_",
     ];
 
     let dir = psforge_temp_dir()?;
