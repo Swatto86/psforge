@@ -32,6 +32,28 @@ import * as cmd from "./commands";
 
 const SESSION_STORAGE_KEY = "psforge.session.v1";
 
+/**
+ * Font family strings used as defaults in earlier PSForge releases. Settings
+ * matching these exactly are silently upgraded to the current default on load
+ * so users gain emoji/symbol fallback coverage without manual intervention.
+ * Customised values are left untouched.
+ */
+const LEGACY_DEFAULT_FONT_FAMILIES = ["Cascadia Code, Consolas, monospace"];
+
+function migrateLoadedSettings(loaded: AppSettings): AppSettings {
+  let migrated = loaded;
+  if (LEGACY_DEFAULT_FONT_FAMILIES.includes(loaded.fontFamily)) {
+    migrated = { ...migrated, fontFamily: DEFAULT_SETTINGS.fontFamily };
+  }
+  if (LEGACY_DEFAULT_FONT_FAMILIES.includes(loaded.outputFontFamily)) {
+    migrated = {
+      ...migrated,
+      outputFontFamily: DEFAULT_SETTINGS.outputFontFamily,
+    };
+  }
+  return migrated;
+}
+
 type BottomPanelTab =
   | "variables"
   | "terminal"
@@ -939,7 +961,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (async () => {
       let loadedSettings = DEFAULT_SETTINGS;
       try {
-        const settings = await cmd.loadSettings();
+        const settings = migrateLoadedSettings(await cmd.loadSettings());
         loadedSettings = settings;
         dispatch({ type: "SET_SETTINGS", settings });
 

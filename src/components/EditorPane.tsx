@@ -983,6 +983,14 @@ export function EditorPane() {
         // cmdlet completion and close the suggest widget before the "-" trigger
         // fires, resulting in no parameter completions appearing.
         acceptSuggestionOnCommitCharacter: false,
+        // Only confirm a suggestion with Enter when the user has explicitly
+        // navigated the list with arrow keys. If the widget auto-opened (e.g.
+        // triggered by space or "-"), Enter inserts a newline as expected.
+        acceptSuggestionOnEnter: "smart",
+        // Don't draw confusable-character squiggles on text pasted from
+        // external sources (Teams, browsers) that use curly quotes, em-dashes,
+        // or emoji — those are valid content, not encoding errors.
+        unicodeHighlight: { ambiguousCharacters: false },
       }}
       loading={
         <div
