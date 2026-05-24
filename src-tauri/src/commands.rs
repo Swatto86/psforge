@@ -1147,8 +1147,7 @@ pub async fn save_file_content(
             // Round-trip files originally detected as Windows-1252 (the common
             // legacy Notepad/ANSI encoding on en-US Windows) without forcing a
             // conversion to UTF-8 the user did not ask for.
-            let (encoded, _, had_unmappable) =
-                encoding_rs::WINDOWS_1252.encode(content.as_str());
+            let (encoded, _, had_unmappable) = encoding_rs::WINDOWS_1252.encode(content.as_str());
             if had_unmappable {
                 warn!(
                     "save_file_content: content contains characters not representable in Windows-1252; \
@@ -1192,10 +1191,10 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String, Option<String>) {
         // Windows-1252 path below so we still give the user a faithful
         // round-trip rather than silently substituting U+FFFD.
         if let Ok(s) = std::str::from_utf8(&bytes[3..]) {
-            return (s.to_string(), "utf8bom".to_string(), None);
+            (s.to_string(), "utf8bom".to_string(), None)
+        } else {
+            decode_no_bom_fallback(&bytes[3..])
         }
-        // fall through to no-BOM detection (using full bytes minus BOM)
-        return decode_no_bom_fallback(&bytes[3..]);
     } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
         // UTF-16 LE
         let payload = &bytes[2..];
@@ -1445,14 +1444,11 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
 
     #[cfg(not(target_os = "windows"))]
     {
-        // Trailing Ok(()) below is unreachable on non-Windows so the explicit
-        // return suppresses the unreachable_code warning the compiler emits
-        // when only one of the cfg branches keeps going.
         let _ = extension;
-        return Err(AppError {
+        Err(AppError {
             code: "UNSUPPORTED_PLATFORM".to_string(),
             message: "File associations are only supported on Windows".to_string(),
-        });
+        })
     }
 
     #[cfg(target_os = "windows")]
@@ -2945,7 +2941,10 @@ mod tests {
         let (content, enc, warning) = detect_and_decode(&bytes);
         assert_eq!(enc, "windows1252");
         assert_eq!(content, "\u{00FF}");
-        assert!(warning.is_some(), "Windows-1252 decode should warn the user");
+        assert!(
+            warning.is_some(),
+            "Windows-1252 decode should warn the user"
+        );
     }
 
     #[test]
@@ -2973,7 +2972,10 @@ mod tests {
         let bytes = vec![0xFF, 0xFE, b'A', 0x00, b'B'];
         let (_content, enc, warning) = detect_and_decode(&bytes);
         assert_eq!(enc, "utf16le");
-        assert!(warning.is_some(), "Odd-byte UTF-16 LE must surface a warning");
+        assert!(
+            warning.is_some(),
+            "Odd-byte UTF-16 LE must surface a warning"
+        );
     }
 
     #[test]
