@@ -127,16 +127,37 @@ export function TabBar() {
   };
 
   const closeOthers = async (tabId: string) => {
-    // BUG-NEW-5 fix: check isDirty before closing each tab.
-    for (const t of state.tabs) {
-      if (t.id === tabId) continue;
-      if (t.isDirty) {
-        const confirmed = await confirmDiscard(t.title);
+    const others = state.tabs.filter((t) => t.id !== tabId);
+    const dirtyTabs = others.filter((t) => t.isDirty);
+    // Confirm before closing any tab so cancelling does not leave a subset
+    // already closed (same batch semantics as Close All).
+    if (dirtyTabs.length === 1) {
+      const confirmed = await confirmDiscard(dirtyTabs[0].title);
+      if (!confirmed) {
+        setContextMenu(null);
+        return;
+      }
+    } else if (dirtyTabs.length > 1) {
+      const names = dirtyTabs.map((t) => `"${t.title}"`).join(", ");
+      const message = `${dirtyTabs.length} file(s) have unsaved changes: ${names}.\n\nClose without saving?`;
+      try {
+        const { confirm } = await import("@tauri-apps/plugin-dialog");
+        const confirmed = await confirm(message, {
+          title: "PSForge",
+          kind: "warning",
+          okLabel: "Close",
+          cancelLabel: "Cancel",
+        });
         if (!confirmed) {
           setContextMenu(null);
           return;
         }
+      } catch {
+        setContextMenu(null);
+        return;
       }
+    }
+    for (const t of others) {
       dispatch({ type: "CLOSE_TAB", id: t.id });
     }
     setContextMenu(null);
