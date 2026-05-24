@@ -75,6 +75,9 @@ export default defineConfig(async () => ({
           ) {
             return "react-vendor";
           }
+          if (id.includes("@xterm/") || id.includes("node_modules/@xterm")) {
+            return "xterm";
+          }
         },
       },
     },

@@ -8,12 +8,17 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Terminal } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
+import type { Terminal } from "@xterm/xterm";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
+import {
+  createTerminalWithAddons,
+  type TerminalPerformanceAddons,
+} from "../terminal/xterm-setup";
+
+const MAX_TERMINAL_WRITE_PER_FRAME = 256 * 1024;
 
 function highlightPs(text: string): string {
   const K = "\x1b[38;2;86;156;214m";
@@ -265,9 +270,16 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
   ) {
     const containerRef = useRef<HTMLDivElement>(null);
     const termRef = useRef<Terminal | null>(null);
-    const fitRef = useRef<FitAddon | null>(null);
+    const fitRef = useRef<TerminalPerformanceAddons["fit"] | null>(null);
+    const performanceAddonsDisposeRef = useRef<(() => void) | null>(null);
 
     const isReadyRef = useRef(false);
+    const activeRef = useRef(active);
+    activeRef.current = active;
+
+    const pendingOutputRef = useRef("");
+    const outputFlushRafRef = useRef<number | null>(null);
+
     const isStoppingRef = useRef(false);
     const startInFlightRef = useRef(false);
     const sessionIdRef = useRef(0);
@@ -332,21 +344,21 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       isStoppingRef.current = false;
       let cancelled = false;
 
-      const term = new Terminal({
-        cursorBlink: true,
-        cursorStyle: "block",
-        cursorInactiveStyle: "block",
-        scrollback: 10_000,
-        fontFamily,
-        fontSize,
-        theme: terminalThemeFromCss(),
-      });
-
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(containerRef.current);
+      const { terminal: term, addons } = createTerminalWithAddons(
+        containerRef.current,
+        {
+          cursorBlink: true,
+          cursorStyle: "block",
+          cursorInactiveStyle: "block",
+          fontFamily,
+          fontSize,
+          theme: terminalThemeFromCss(),
+        },
+      );
+      const fitAddon = addons.fit;
       termRef.current = term;
       fitRef.current = fitAddon;
+      performanceAddonsDisposeRef.current = addons.dispose;
 
       const safeFit = () => {
         const host = containerRef.current;
@@ -424,6 +436,11 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         isReadyRef.current = false;
         writeQueueRef.current = "";
         writeInFlightRef.current = false;
+        pendingOutputRef.current = "";
+        if (outputFlushRafRef.current !== null) {
+          cancelAnimationFrame(outputFlushRafRef.current);
+          outputFlushRafRef.current = null;
+        }
         outputTailRef.current = "";
         suggestedCommandsRef.current.clear();
         suggestInFlightRef.current.clear();
@@ -547,11 +564,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       });
       resizeObserver.observe(containerRef.current);
 
-      const onTerminalOutput = (event: { payload: TerminalOutputEvent }) => {
-        if (event.payload.sessionId !== sessionIdRef.current) return;
-        const chunk = event.payload.data;
-        term.write(chunk);
-
+      const processOutputChunk = (chunk: string) => {
         for (const match of chunk.matchAll(/\x1b]633;D;(-?\d+)(?:\x07|\x1b\\)/g)) {
           const exitCode = Number.parseInt(match[1] ?? "", 10);
           const pending = pendingCommandExecutionsRef.current.shift();
@@ -561,7 +574,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         }
 
         const psPath = shellPathRef.current;
-        if (psPath) {
+        if (psPath && activeRef.current) {
           const plainChunk = stripAnsi(chunk);
           outputTailRef.current = (outputTailRef.current + plainChunk).slice(
             -12000,
@@ -619,6 +632,34 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         }
       };
 
+      const flushTerminalOutput = () => {
+        outputFlushRafRef.current = null;
+        let pending = pendingOutputRef.current;
+        if (!pending) return;
+        if (pending.length > MAX_TERMINAL_WRITE_PER_FRAME) {
+          const slice = pending.slice(0, MAX_TERMINAL_WRITE_PER_FRAME);
+          pendingOutputRef.current = pending.slice(MAX_TERMINAL_WRITE_PER_FRAME);
+          term.write(slice);
+          processOutputChunk(slice);
+          outputFlushRafRef.current = requestAnimationFrame(flushTerminalOutput);
+          return;
+        }
+        pendingOutputRef.current = "";
+        term.write(pending);
+        processOutputChunk(pending);
+      };
+
+      const scheduleTerminalOutputFlush = () => {
+        if (outputFlushRafRef.current !== null) return;
+        outputFlushRafRef.current = requestAnimationFrame(flushTerminalOutput);
+      };
+
+      const onTerminalOutput = (event: { payload: TerminalOutputEvent }) => {
+        if (event.payload.sessionId !== sessionIdRef.current) return;
+        pendingOutputRef.current += event.payload.data;
+        scheduleTerminalOutputFlush();
+      };
+
       const onTerminalExit = (event: { payload: TerminalExitEvent }) => {
         if (event.payload.sessionId !== sessionIdRef.current) return;
         isReadyRef.current = false;
@@ -669,6 +710,14 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           cancelAnimationFrame(fitRafRef.current);
           fitRafRef.current = null;
         }
+        if (outputFlushRafRef.current !== null) {
+          cancelAnimationFrame(outputFlushRafRef.current);
+          outputFlushRafRef.current = null;
+        }
+        pendingOutputRef.current = "";
+
+        performanceAddonsDisposeRef.current?.();
+        performanceAddonsDisposeRef.current = null;
 
         queueInputFnRef.current = null;
         startSessionFnRef.current = null;
@@ -1094,6 +1143,16 @@ export function TerminalPane() {
         >
           Restart
         </button>
+        <span
+          style={{
+            color: "var(--text-muted)",
+            fontSize: "var(--ui-font-size-sm)",
+            whiteSpace: "nowrap",
+          }}
+          title="Hold Alt while scrolling the terminal to move quickly through scrollback"
+        >
+          Alt+scroll: fast scroll
+        </span>
       </div>
 
       {showRemoteDialog && (
