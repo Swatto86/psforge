@@ -491,6 +491,17 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Clean on paste"
+                tooltip="Fixes smart quotes, markdown fences, line-number gutters, and PS prompts whenever you paste into the editor."
+              >
+                <Toggle
+                  checked={state.settings.sanitizePasteOnPaste !== false}
+                  onChange={(v) => updateSetting("sanitizePasteOnPaste", v)}
+                  label="Always clean clipboard text on paste (Ctrl+V)"
+                />
+              </SettingRow>
+
+              <SettingRow
                 label="Render Whitespace"
                 tooltip="Controls how whitespace characters are visually marked in the editor."
               >
@@ -662,6 +673,17 @@ export function SettingsPanel() {
                   checked={state.settings.clearOutputOnRun !== false}
                   onChange={(v) => updateSetting("clearOutputOnRun", v)}
                   label="Clear the terminal before each run"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Debugger Tools"
+                tooltip="Shows breakpoint gutter controls, debugger toolbar buttons, and the Debugger bottom tab. Turn on only when you need step-through debugging."
+              >
+                <Toggle
+                  checked={state.settings.showDebuggerTools === true}
+                  onChange={(v) => updateSetting("showDebuggerTools", v)}
+                  label="Show debugger toolbar, breakpoints, and Debugger tab"
                 />
               </SettingRow>
 

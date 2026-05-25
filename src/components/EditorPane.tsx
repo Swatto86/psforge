@@ -414,6 +414,8 @@ export function EditorPane() {
       delete w.__psforge_navigateTo;
       delete w.__psforge_getRunText;
       delete w.__psforge_getHelpQuery;
+      delete w.__psforge_insertTextAtSelection;
+      delete w.__psforge_getEditorText;
       delete w.__psforge_setEditorText;
     };
   }, []);

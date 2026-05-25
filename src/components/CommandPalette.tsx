@@ -185,6 +185,20 @@ export function CommandPalette() {
           close();
         },
       });
+
+      result.push({
+        id: "cmd-paste-clean-format",
+        label: "Paste Clean + Format",
+        category: "Editor",
+        description:
+          "Paste from clipboard, remove web junk, then Invoke-Formatter",
+        action: () => {
+          close();
+          (
+            window as unknown as Record<string, (() => void) | undefined>
+          ).__psforge_pasteCleanAndFormat?.();
+        },
+      });
     }
 
     return result;

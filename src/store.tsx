@@ -22,6 +22,8 @@ import type {
   DebugStackFrame,
   DebugWatch,
   PssaDiagnostic,
+  ReferenceSubview,
+  LastRunResult,
 } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import * as cmd from "./commands";
@@ -57,10 +59,42 @@ function migrateLoadedSettings(loaded: AppSettings): AppSettings {
 type BottomPanelTab =
   | "variables"
   | "terminal"
-  | "problems"
+  | "reference"
   | "debugger"
+  | "problems"
   | "show-command"
   | "help";
+
+function legacyBottomTabToReferenceSubview(tab: string): ReferenceSubview {
+  if (tab === "show-command") return "show-command";
+  if (tab === "help") return "help";
+  return "problems";
+}
+
+function normalizeBottomPanelTab(tab: unknown): {
+  tab: BottomPanelTab;
+  referenceSubview: ReferenceSubview;
+} {
+  if (tab === "output" || tab === "terminal") {
+    return { tab: "terminal", referenceSubview: "problems" };
+  }
+  if (tab === "variables") {
+    return { tab: "variables", referenceSubview: "problems" };
+  }
+  if (tab === "reference") {
+    return { tab: "reference", referenceSubview: "problems" };
+  }
+  if (tab === "debugger") {
+    return { tab: "debugger", referenceSubview: "problems" };
+  }
+  if (tab === "problems" || tab === "show-command" || tab === "help") {
+    return {
+      tab: "reference",
+      referenceSubview: legacyBottomTabToReferenceSubview(String(tab)),
+    };
+  }
+  return { tab: "terminal", referenceSubview: "problems" };
+}
 type BreakpointMap = Record<string, DebugBreakpoint[]>;
 type BookmarkMap = Record<string, number[]>;
 
@@ -68,22 +102,13 @@ interface PersistedSession {
   tabs: EditorTab[];
   activeTabId: string;
   bottomPanelTab: BottomPanelTab;
+  referenceSubview?: ReferenceSubview;
   workingDir: string;
   selectedPsPath: string;
   breakpoints: BreakpointMap;
   bookmarks: BookmarkMap;
 }
 
-function isBottomPanelTab(value: unknown): value is BottomPanelTab {
-  return (
-    value === "variables" ||
-    value === "terminal" ||
-    value === "problems" ||
-    value === "debugger" ||
-    value === "show-command" ||
-    value === "help"
-  );
-}
 
 function createUntitledTab(id = "tab-1", title = "Untitled-1"): EditorTab {
   return {
@@ -273,18 +298,23 @@ function loadPersistedSession(): PersistedSession | null {
     if (uniqueTabs.length === 0) return null;
     const validTabIds = new Set(uniqueTabs.map((t) => t.id));
 
+    const panel = normalizeBottomPanelTab(rec.bottomPanelTab);
+    const referenceSubview =
+      typeof rec.referenceSubview === "string" &&
+      (rec.referenceSubview === "problems" ||
+        rec.referenceSubview === "show-command" ||
+        rec.referenceSubview === "help")
+        ? rec.referenceSubview
+        : panel.referenceSubview;
+
     return {
       tabs: uniqueTabs,
       activeTabId:
         typeof rec.activeTabId === "string"
           ? rec.activeTabId
           : uniqueTabs[0].id,
-      bottomPanelTab:
-        rec.bottomPanelTab === "output" || rec.bottomPanelTab === "problems"
-          ? "terminal"
-          : isBottomPanelTab(rec.bottomPanelTab)
-            ? rec.bottomPanelTab
-            : "terminal",
+      bottomPanelTab: panel.tab,
+      referenceSubview,
       workingDir: typeof rec.workingDir === "string" ? rec.workingDir : "",
       selectedPsPath:
         typeof rec.selectedPsPath === "string" ? rec.selectedPsPath : "",
@@ -316,8 +346,10 @@ export interface AppState {
   /** Which side of the editor the module browser panel is docked to. */
   sidebarPosition: "left" | "right";
   bottomPanelTab: BottomPanelTab;
+  referenceSubview: ReferenceSubview;
   /** Per-tab pre-run diagnostics sourced from PSScriptAnalyzer. */
   problems: Record<string, PssaDiagnostic[]>;
+  lastRunResult: LastRunResult | null;
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
   /** Command palette mode: full command list or snippets-only picker. */
@@ -393,10 +425,12 @@ const initialState: AppState = {
   variables: [],
   modules: [],
   modulesLoading: false,
-  sidebarVisible: true,
+  sidebarVisible: false,
   sidebarPosition: "left" as const,
   bottomPanelTab: "terminal",
+  referenceSubview: "problems",
   problems: {},
+  lastRunResult: null,
   settingsOpen: false,
   commandPaletteOpen: false,
   commandPaletteMode: "all",
@@ -444,7 +478,10 @@ type Action =
   | {
       type: "SET_BOTTOM_TAB";
       tab: BottomPanelTab;
+      referenceSubview?: ReferenceSubview;
     }
+  | { type: "SET_REFERENCE_SUBVIEW"; subview: ReferenceSubview }
+  | { type: "SET_LAST_RUN_RESULT"; result: LastRunResult | null }
   | { type: "TOGGLE_SETTINGS" }
   | { type: "OPEN_COMMAND_PALETTE"; mode?: "all" | "snippets" }
   | { type: "CLOSE_COMMAND_PALETTE" }
@@ -590,7 +627,21 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case "SET_BOTTOM_TAB":
-      return { ...state, bottomPanelTab: action.tab };
+      return {
+        ...state,
+        bottomPanelTab: action.tab,
+        referenceSubview:
+          action.referenceSubview ??
+          (action.tab === "reference"
+            ? state.referenceSubview
+            : state.referenceSubview),
+      };
+
+    case "SET_REFERENCE_SUBVIEW":
+      return { ...state, referenceSubview: action.subview };
+
+    case "SET_LAST_RUN_RESULT":
+      return { ...state, lastRunResult: action.result };
 
     case "TOGGLE_SETTINGS":
       return { ...state, settingsOpen: !state.settingsOpen };
@@ -969,7 +1020,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             : finalTabs[0].id,
         });
       }
-      dispatch({ type: "SET_BOTTOM_TAB", tab: persisted.bottomPanelTab });
+      dispatch({
+        type: "SET_BOTTOM_TAB",
+        tab: persisted.bottomPanelTab,
+        referenceSubview: persisted.referenceSubview,
+      });
       dispatch({ type: "SET_WORKING_DIR", dir: persisted.workingDir });
       for (const [tabId, breakpoints] of Object.entries(
         persisted.breakpoints,
@@ -1160,6 +1215,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ? state.activeTabId
         : tabs[0].id,
       bottomPanelTab: state.bottomPanelTab,
+      referenceSubview: state.referenceSubview,
       workingDir: state.workingDir,
       selectedPsPath: state.selectedPsPath,
       breakpoints: Object.fromEntries(

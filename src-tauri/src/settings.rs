@@ -87,6 +87,10 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub enable_intelli_sense: bool,
 
+    /// When true, every editor paste is cleaned for web/terminal clipboard junk.
+    #[serde(default = "default_true")]
+    pub sanitize_paste_on_paste: bool,
+
     /// Save the active file automatically before running (F5).
     #[serde(default)]
     pub auto_save_on_run: bool,
@@ -253,7 +257,7 @@ fn default_max_recent_files() -> usize {
 }
 
 fn default_split_position() -> f64 {
-    65.0
+    40.0
 }
 
 impl Default for AppSettings {
@@ -273,6 +277,7 @@ impl Default for AppSettings {
             sticky_scroll: false,
             enable_pssa: true,
             enable_intelli_sense: true,
+            sanitize_paste_on_paste: true,
             auto_save_on_run: false,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,

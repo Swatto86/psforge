@@ -16,6 +16,8 @@ import type {
 import { TerminalPane } from "./TerminalPane";
 import { ShowCommandPane } from "./ShowCommandPane";
 import { HelpPane } from "./HelpPane";
+import { ReferencePane } from "./ReferencePane";
+import type { ReferenceSubview } from "../types";
 
 function breakpointLabel(bp: DebugBreakpoint): string {
   if (typeof bp.line === "number") return `Ln ${bp.line}`;
@@ -73,9 +75,10 @@ function formatProblemLocation(problem: PssaDiagnostic): string {
 
 type BottomTabId =
   | "terminal"
-  | "problems"
-  | "debugger"
   | "variables"
+  | "reference"
+  | "debugger"
+  | "problems"
   | "show-command"
   | "help";
 
@@ -153,6 +156,24 @@ export function OutputPane({
       v.value.toLowerCase().includes(varFilter.toLowerCase()),
   );
   const pssaEnabled = state.settings.enablePssa !== false;
+  const showDebuggerTools = state.settings.showDebuggerTools === true;
+
+  useEffect(() => {
+    if (!showDebuggerTools && state.bottomPanelTab === "debugger") {
+      dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
+    }
+  }, [showDebuggerTools, state.bottomPanelTab, dispatch]);
+  useEffect(() => {
+    const tab = state.bottomPanelTab;
+    if (tab === "problems" || tab === "show-command" || tab === "help") {
+      dispatch({
+        type: "SET_BOTTOM_TAB",
+        tab: "reference",
+        referenceSubview: tab === "show-command" ? "show-command" : tab === "help" ? "help" : "problems",
+      });
+    }
+  }, [state.bottomPanelTab, dispatch]);
+
   const activeProblems =
     activeTab && activeTab.tabType !== "welcome"
       ? [...(state.problems[activeTab.id] ?? [])].sort((a, b) => {
@@ -168,6 +189,9 @@ export function OutputPane({
   const hasProblemErrors = activeProblems.some(
     (problem) => problemSeverity(problem.severity) === "error",
   );
+  const errorProblemCount = activeProblems.filter(
+    (problem) => problemSeverity(problem.severity) === "error",
+  ).length;
   const hasProblemWarnings = activeProblems.some(
     (problem) => problemSeverity(problem.severity) === "warning",
   );
@@ -228,14 +252,14 @@ export function OutputPane({
 
   const primaryBottomTabs: BottomTabDescriptor[] = [
     { id: "terminal", label: "Terminal" },
-    { id: "problems", label: "Problems" },
+    { id: "variables", label: "Variables" },
   ];
 
   const utilityBottomTabs: BottomTabDescriptor[] = [
-    { id: "variables", label: "Variables", secondary: true },
-    { id: "debugger", label: "Debugger", secondary: true },
-    { id: "show-command", label: "Show Command", secondary: true },
-    { id: "help", label: "Help", secondary: true },
+    { id: "reference", label: "Reference", secondary: true },
+    ...(showDebuggerTools
+      ? [{ id: "debugger" as const, label: "Debugger", secondary: true }]
+      : []),
   ];
 
   const variableCountText = formatCount(state.variables.length, "variable");
@@ -246,8 +270,8 @@ export function OutputPane({
         return {
           title: "Interactive Terminal",
           subtitle:
-            "Run scripts, inspect errors, and use ad-hoc PowerShell commands in the same terminal session.",
-          chipLabel: state.isRunning ? "Running" : "Terminal-first",
+            "Run scripts with F5 and use the same session for quick commands and output.",
+          chipLabel: state.isRunning ? "Running" : "",
           chipTone: "accent",
         };
       case "problems":
@@ -288,6 +312,34 @@ export function OutputPane({
           chipLabel:
             state.variables.length === 0 ? "No variables" : variableCountText,
           chipTone: state.variables.length === 0 ? "default" : "accent",
+        };
+      case "reference":
+        return {
+          title: "Reference",
+          subtitle:
+            state.referenceSubview === "show-command"
+              ? "Build command invocations and insert them into the editor."
+              : state.referenceSubview === "help"
+                ? "Look up PowerShell command help without leaving the workspace."
+                : !activeTab || activeTab.tabType === "welcome"
+                  ? "Open a script to review pre-run diagnostics."
+                  : !pssaEnabled
+                    ? "Enable PSScriptAnalyzer in Settings for pre-run diagnostics."
+                    : errorProblemCount === 0
+                      ? `No blocking issues for ${activeTab.title}.`
+                      : `${formatCount(errorProblemCount, "error")} for ${activeTab.title} before run.`,
+          chipLabel:
+            state.referenceSubview === "help"
+              ? "Help"
+              : state.referenceSubview === "show-command"
+                ? "Builder"
+                : errorProblemCount > 0
+                  ? formatCount(errorProblemCount, "error")
+                  : "Clear",
+          chipTone:
+            state.referenceSubview !== "problems" || errorProblemCount === 0
+              ? "default"
+              : "danger",
         };
       case "debugger":
         return {
@@ -382,13 +434,9 @@ export function OutputPane({
       badgeText = state.variables.length.toLocaleString();
       badgeClassName = "bottom-pane-badge bottom-pane-badge-accent";
     }
-    if (tab.id === "problems" && activeProblems.length > 0) {
-      badgeText = activeProblems.length.toLocaleString();
-      badgeClassName = hasProblemErrors
-        ? "bottom-pane-badge bottom-pane-badge-danger"
-        : hasProblemWarnings
-          ? "bottom-pane-badge bottom-pane-badge-warn"
-          : "bottom-pane-badge bottom-pane-badge-accent";
+    if (tab.id === "reference" && errorProblemCount > 0) {
+      badgeText = errorProblemCount.toLocaleString();
+      badgeClassName = "bottom-pane-badge bottom-pane-badge-danger";
     }
     if (tab.id === "debugger" && state.isDebugging) {
       badgeText = state.debugPaused ? "Paused" : "Active";
@@ -438,7 +486,9 @@ export function OutputPane({
         <div className="bottom-pane-heading">
           <div className="bottom-pane-title-row">
             <span className="bottom-pane-title">{activePaneMeta.title}</span>
-            <span className={chipClassName}>{activePaneMeta.chipLabel}</span>
+            {activePaneMeta.chipLabel ? (
+              <span className={chipClassName}>{activePaneMeta.chipLabel}</span>
+            ) : null}
           </div>
           <div className="bottom-pane-subtitle">{activePaneMeta.subtitle}</div>
         </div>
@@ -582,27 +632,6 @@ export function OutputPane({
           WebkitUserSelect: "text",
         }}
       >
-        {state.bottomPanelTab === "problems" && (
-          <div
-            data-testid="problems-panel"
-            className="flex-1 min-h-0 overflow-auto"
-          >
-            <ProblemsPane
-              diagnostics={activeProblems}
-              activeTabName={
-                activeTab?.tabType === "code" ? activeTab.title : undefined
-              }
-              pssaEnabled={pssaEnabled}
-              onNavigate={navigateTo}
-              fontSize={state.settings.outputFontSize ?? 13}
-              fontFamily={
-                state.settings.outputFontFamily ??
-                "Cascadia Code, Consolas, monospace"
-              }
-            />
-          </div>
-        )}
-
         {state.bottomPanelTab === "variables" && (
           <div className="flex-1 min-h-0 overflow-auto">
             <VariableTable
@@ -613,6 +642,34 @@ export function OutputPane({
                 state.settings.outputFontFamily ??
                 "Cascadia Code, Consolas, monospace"
               }
+            />
+          </div>
+        )}
+
+        {state.bottomPanelTab === "reference" && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <ReferencePane
+              subview={state.referenceSubview}
+              onSubviewChange={(subview) =>
+                dispatch({ type: "SET_REFERENCE_SUBVIEW", subview })
+              }
+              problems={
+                <ProblemsPane
+                  diagnostics={activeProblems}
+                  activeTabName={
+                    activeTab?.tabType === "code" ? activeTab.title : undefined
+                  }
+                  pssaEnabled={pssaEnabled}
+                  onNavigate={navigateTo}
+                  fontSize={state.settings.outputFontSize ?? 13}
+                  fontFamily={
+                    state.settings.outputFontFamily ??
+                    "Cascadia Code, Consolas, monospace"
+                  }
+                />
+              }
+              showCommand={<ShowCommandPane />}
+              help={<HelpPane />}
             />
           </div>
         )}
