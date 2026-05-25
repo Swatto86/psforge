@@ -480,6 +480,17 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Clean Paste (Ctrl+V)"
+                tooltip="Removes markdown fences, smart quotes, line gutters, and chat prose when you paste into the editor."
+              >
+                <Toggle
+                  checked={state.settings.sanitizePasteOnPaste !== false}
+                  onChange={(v) => updateSetting("sanitizePasteOnPaste", v)}
+                  label="Clean clipboard text on every editor paste"
+                />
+              </SettingRow>
+
+              <SettingRow
                 label="Sticky Scroll"
                 tooltip="Pins the current scope header near the top while you scroll."
               >
@@ -662,6 +673,30 @@ export function SettingsPanel() {
                   checked={state.settings.clearOutputOnRun !== false}
                   onChange={(v) => updateSetting("clearOutputOnRun", v)}
                   label="Clear the terminal before each run"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Run After Paste Clean + Format"
+                tooltip="Runs the active script (F5) after Ctrl+Shift+Alt+V finishes cleaning and formatting the clipboard."
+              >
+                <Toggle
+                  checked={state.settings.runAfterPasteCleanFormat !== false}
+                  onChange={(v) =>
+                    updateSetting("runAfterPasteCleanFormat", v)
+                  }
+                  label="Run script after Paste Clean + Format"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Run After Clean Paste (Ctrl+V)"
+                tooltip="Runs F5 when a normal paste was cleaned (fences, smart quotes, etc.). Off by default to avoid surprise runs."
+              >
+                <Toggle
+                  checked={state.settings.runAfterSanitizedPaste === true}
+                  onChange={(v) => updateSetting("runAfterSanitizedPaste", v)}
+                  label="Run script when Ctrl+V paste was cleaned"
                 />
               </SettingRow>
 

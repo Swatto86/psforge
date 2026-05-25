@@ -2039,11 +2039,17 @@ function AppInner() {
         { reveal: true },
       );
     }
+
+    if (state.settings.runAfterPasteCleanFormat !== false) {
+      runOrDebugScript();
+    }
   }, [
     activeTab,
     state.selectedPsPath,
+    state.settings.runAfterPasteCleanFormat,
     dispatch,
     writeTerminalNotice,
+    runOrDebugScript,
   ]);
 
   useEffect(() => {
@@ -2055,6 +2061,18 @@ function AppInner() {
       delete w.__psforge_pasteCleanAndFormat;
     };
   }, [pasteCleanAndFormat]);
+
+  useEffect(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__psforge_afterPasteSanitized = () => {
+      if (state.settings.runAfterSanitizedPaste === true) {
+        runOrDebugScript();
+      }
+    };
+    return () => {
+      delete w.__psforge_afterPasteSanitized;
+    };
+  }, [runOrDebugScript, state.settings.runAfterSanitizedPaste]);
 
 
   /** Open the current user's $PROFILE script for editing, creating it if absent. */
