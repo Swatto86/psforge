@@ -6,7 +6,55 @@ on:
       - 'v*'
 
 jobs:
+  # Create the draft release once so matrix jobs do not race creating/updating
+  # latest.json (see tauri-apps/tauri-action#1270).
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create or reuse draft release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            try {
+              const { data } = await github.rest.repos.getReleaseByTag({
+                owner,
+                repo,
+                tag,
+              });
+              core.info(`Reusing existing release ${data.id} for ${tag}`);
+              return data.id;
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+            }
+
+            const { data } = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              name: tag,
+              draft: true,
+              prerelease: false,
+              generate_release_notes: true,
+            });
+            core.info(`Created draft release ${data.id} for ${tag}`);
+            return data.id;
+
   build:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -56,8 +104,29 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+          retryAttempts: 5
+          # Only one matrix leg updates latest.json to avoid parallel delete/upload races.
+          includeUpdaterJson: ${{ matrix.platform == 'windows-latest' }}
+
+  publish-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    needs: [create-release, build]
+
+    steps:
+      - name: Publish release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: process.env.RELEASE_ID,
+              draft: false,
+              prerelease: false,
+            });
