@@ -2,6 +2,10 @@ name: cleanup-failed-runs
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/cleanup-failed-runs.yml
 
 permissions:
   actions: write
