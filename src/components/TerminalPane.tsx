@@ -279,6 +279,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
 
     const pendingOutputRef = useRef("");
     const outputFlushRafRef = useRef<number | null>(null);
+    /** Bytes of pendingOutput already scanned for exit codes / suggestions. */
+    const outputSideEffectOffsetRef = useRef(0);
 
     const isStoppingRef = useRef(false);
     const startInFlightRef = useRef(false);
@@ -437,6 +439,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         writeQueueRef.current = "";
         writeInFlightRef.current = false;
         pendingOutputRef.current = "";
+        outputSideEffectOffsetRef.current = 0;
         if (outputFlushRafRef.current !== null) {
           cancelAnimationFrame(outputFlushRafRef.current);
           outputFlushRafRef.current = null;
@@ -634,19 +637,28 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
 
       const flushTerminalOutput = () => {
         outputFlushRafRef.current = null;
-        let pending = pendingOutputRef.current;
+        const pending = pendingOutputRef.current;
         if (!pending) return;
-        if (pending.length > MAX_TERMINAL_WRITE_PER_FRAME) {
-          const slice = pending.slice(0, MAX_TERMINAL_WRITE_PER_FRAME);
-          pendingOutputRef.current = pending.slice(MAX_TERMINAL_WRITE_PER_FRAME);
-          term.write(slice);
-          processOutputChunk(slice);
+
+        const sideEffectOffset = outputSideEffectOffsetRef.current;
+        if (sideEffectOffset < pending.length) {
+          processOutputChunk(pending.slice(sideEffectOffset));
+          outputSideEffectOffsetRef.current = pending.length;
+        }
+
+        const writeLen = Math.min(
+          pending.length,
+          MAX_TERMINAL_WRITE_PER_FRAME,
+        );
+        term.write(pending.slice(0, writeLen));
+        if (writeLen < pending.length) {
+          pendingOutputRef.current = pending.slice(writeLen);
+          outputSideEffectOffsetRef.current = 0;
           outputFlushRafRef.current = requestAnimationFrame(flushTerminalOutput);
           return;
         }
         pendingOutputRef.current = "";
-        term.write(pending);
-        processOutputChunk(pending);
+        outputSideEffectOffsetRef.current = 0;
       };
 
       const scheduleTerminalOutputFlush = () => {
@@ -714,7 +726,16 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           cancelAnimationFrame(outputFlushRafRef.current);
           outputFlushRafRef.current = null;
         }
+        const pendingFlush = pendingOutputRef.current;
+        if (pendingFlush) {
+          const sideEffectOffset = outputSideEffectOffsetRef.current;
+          if (sideEffectOffset < pendingFlush.length) {
+            processOutputChunk(pendingFlush.slice(sideEffectOffset));
+          }
+          term.write(pendingFlush);
+        }
         pendingOutputRef.current = "";
+        outputSideEffectOffsetRef.current = 0;
 
         performanceAddonsDisposeRef.current?.();
         performanceAddonsDisposeRef.current = null;
