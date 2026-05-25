@@ -213,6 +213,20 @@ export function CommandPalette() {
       });
 
       result.push({
+        id: "cmd-copy-debug-bundle",
+        label: "Copy Debug Bundle",
+        category: "Script Runner",
+        description:
+          "Copy markdown with last run output, exit code, PSSA errors, and script",
+        action: () => {
+          close();
+          void (
+            window as unknown as Record<string, (() => Promise<void>) | undefined>
+          ).__psforge_copy_debug_bundle?.();
+        },
+      });
+
+      result.push({
         id: "cmd-clear-recent-runs",
         label: "Clear Recent Runs",
         category: "Script Runner",

@@ -217,6 +217,8 @@ export interface AppSettings {
   runAfterPasteCleanFormat: boolean;
   /** Run the active script after Ctrl+V when paste cleanup changed the buffer. */
   runAfterSanitizedPaste: boolean;
+  /** When true, paste/run/scratch settings match the Assistant mode profile. */
+  assistantMode: boolean;
 
   // ---- Execution ----
   /** Save the active file automatically before running (F5). */
@@ -301,6 +303,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sanitizePasteOnPaste: true,
   runAfterPasteCleanFormat: true,
   runAfterSanitizedPaste: false,
+  assistantMode: false,
   autoSaveOnRun: true,
   clearOutputOnRun: true,
   persistRunspaceBetweenRuns: true,
@@ -332,6 +335,20 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarVisible: false,
   sidebarPosition: "left",
 };
+
+/** Counts recorded while sanitizing a paste (for user-visible summary). */
+export interface PasteSanitizeSummary {
+  changed: boolean;
+  typographyReplacements: number;
+  markdownFenceStripped: boolean;
+  embeddedFenceExtracted: boolean;
+  proseLinesRemoved: number;
+  lineGuttersStripped: number;
+  promptPrefixesStripped: number;
+  htmlTagsStripped: number;
+  controlCharsRemoved: number;
+  newlinesNormalized: boolean;
+}
 
 /** Sub-views inside the Reference bottom tab. */
 export type ReferenceSubview = "problems" | "show-command" | "help";

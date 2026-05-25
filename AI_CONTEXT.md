@@ -22,6 +22,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Welcome quick start | `src/components/WelcomePane.tsx` (paste, recent runs, re-run) |
 | Scratch / project runner | `src/scratch-utils.ts`, `src/project-config.ts`, `src/run-dir-presets.ts` |
 | Phase 3 dialogs | `src/components/ScratchRecoveryDialog.tsx`, `CloseScratchDialog.tsx`, `PssaRunGateDialog.tsx` |
+| Assistant / debug | `src/assistant-mode.ts`, `src/debug-bundle.ts`, `src/paste-summary.ts`, `src/components/ToastStack.tsx` |
 | Status bar | `src/components/StatusBar.tsx` (run CWD pin, font, last run) |
 | Settings | `src/components/SettingsPanel.tsx`, `src-tauri/src/settings.rs` |
 | Types / defaults | `src/types.ts` |
@@ -36,11 +37,12 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 
 ## Primary user workflow
 
-Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl+Shift+Alt+V`) or Welcome paste → **F5** → **Copy Last Run** / Problems → feedback to AI. README documents recommended settings and Phase 4 ideas (debug bundle, paste summary, assistant profile).
+Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl+Shift+Alt+V`) or Welcome paste → **F5** → **Copy Debug Bundle** / Problems → feedback to AI. **Assistant mode** (`assistant-mode.ts`), **paste summary** toasts (`ToastStack`, `sanitizePastedTextWithSummary`), **debug bundle** (`debug-bundle.ts`, `__psforge_copy_debug_bundle`).
 
 ## Recent Context & Decisions
 
-- **2026-05-25:** README rewritten for AI paste-and-run workflow, releases link, shortcut table, Phase 4 roadmap (not implemented).
+- **2026-05-25:** Phase 4 assistant workflow: `assistantMode` setting, paste summary toasts, Copy Debug Bundle, `ToastStack`. Version **1.2.15**.
+- **2026-05-25:** README rewritten for AI paste-and-run workflow, releases link, shortcut table.
 - **2026-05-25:** Phase 3 script-runner: scratch recovery dialog, untitled close (save/keep/discard), recent-run re-run/open folder/clear, `.psforge.json` + run-dir presets, in-app PSSA warn dialog, copy last run output, Vitest for `sanitize-paste`/`run-utils`. Version **1.2.14**.
 - **2026-05-24:** Phase 2 script-runner: scratch folder, copy output, welcome paste, PSSA run gate, pinned run dir, recent runs log; editor/terminal font presets with persistence and status bar quick control. Version **1.2.13**.
 - **2026-05-24:** `src-tauri/rust-toolchain.toml` pins **stable** + rustfmt/clippy (matches CI; fixes edition2024/zbus_names on older default Rust). Local `./scripts/ci-local.sh` uses it automatically.

@@ -21,6 +21,11 @@ import {
   applyRunDirPreset,
   normalizeRunDirPresets,
 } from "../run-dir-presets";
+import {
+  applyAssistantMode,
+  clearAssistantModeFlag,
+  isAssistantModeEnabled,
+} from "../assistant-mode";
 import type { RunDirPreset } from "../types";
 
 /** Section identifiers. */
@@ -702,6 +707,30 @@ export function SettingsPanel() {
           {activeSection === "execution" && (
             <div className="flex flex-col gap-4">
               <SectionHeading>Execution</SectionHeading>
+
+              <SettingRow
+                label="Assistant mode"
+                tooltip="Optimizes PSForge for AI paste-and-run: clean paste, run after Paste Clean + Format, scratch auto-save, clear terminal on F5, PSSA warn, large terminal pane."
+              >
+                <div className="flex flex-col gap-1">
+                  <Toggle
+                    checked={isAssistantModeEnabled(state.settings)}
+                    onChange={(enabled) => {
+                      dispatch({
+                        type: "SET_SETTINGS",
+                        settings: enabled
+                          ? applyAssistantMode(state.settings)
+                          : clearAssistantModeFlag(state.settings),
+                      });
+                    }}
+                    label="Enable Assistant mode (paste → run → debug)"
+                  />
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Turns off run-after-ordinary-paste and hides debugger tools.
+                    You can still tweak individual settings afterward.
+                  </p>
+                </div>
+              </SettingRow>
 
               <SettingRow
                 label="Default PowerShell"

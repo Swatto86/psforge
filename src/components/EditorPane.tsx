@@ -30,8 +30,10 @@ import { WelcomePane } from "./WelcomePane";
 import { analyzeScript, getCompletions } from "../commands";
 import {
   pasteSanitizeOptionsFromSettings,
-  sanitizePastedText,
+  sanitizePastedTextWithSummary,
 } from "../sanitize-paste";
+import { formatPasteSummaryMessage } from "../paste-summary";
+import { showAppToast } from "./ToastStack";
 
 // ---------------------------------------------------------------------------
 // Helpers — kept module-level so they are not recreated on every render.
@@ -553,7 +555,7 @@ export function EditorPane() {
         const model = editor.getModel();
         if (!model) return;
         const pasted = model.getValueInRange(event.range);
-        const cleaned = sanitizePastedText(
+        const { text: cleaned, summary } = sanitizePastedTextWithSummary(
           pasted,
           pasteSanitizeOptionsFromSettings(settingsRef.current),
         );
@@ -561,6 +563,7 @@ export function EditorPane() {
         editor.executeEdits("psforge-paste-sanitize", [
           { range: event.range, text: cleaned },
         ]);
+        showAppToast(formatPasteSummaryMessage(summary));
         const afterPaste = (
           window as unknown as Record<string, unknown>
         ).__psforge_afterPasteSanitized as (() => void) | undefined;
