@@ -1,0 +1,5 @@
+# Match .github/workflows/ci.yml (dtolnay/rust-toolchain@stable).
+# Avoids edition2024 / zbus_names failures on older default toolchains.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
