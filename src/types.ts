@@ -217,6 +217,8 @@ export interface AppSettings {
   clearOutputOnRun: boolean;
   /** Keep script/debug runspace state between runs in the backend host process. */
   persistRunspaceBetweenRuns: boolean;
+  /** Show debugger toolbar, gutter breakpoints, and Debugger bottom tab. */
+  showDebuggerTools: boolean;
   /** PowerShell execution policy override ("Default" means no override). */
   executionPolicy: string;
   /** Working directory mode: "file" = use file's folder, "custom" = use customWorkingDir. */
@@ -278,6 +280,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSaveOnRun: false,
   clearOutputOnRun: true,
   persistRunspaceBetweenRuns: true,
+  showDebuggerTools: false,
   executionPolicy: "Default",
   workingDirMode: "file",
   customWorkingDir: "",

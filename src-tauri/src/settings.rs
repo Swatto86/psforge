@@ -276,6 +276,7 @@ impl Default for AppSettings {
             auto_save_on_run: false,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,
+            show_debugger_tools: false,
             execution_policy: default_execution_policy(),
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
