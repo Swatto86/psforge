@@ -64,5 +64,5 @@ npm run tauri build
 
 ## Version
 
-Current project version: **1.2.2**
+Current project version: **1.2.7**
 
