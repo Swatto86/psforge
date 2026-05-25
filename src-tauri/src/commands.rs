@@ -2657,6 +2657,16 @@ pub async fn get_ps_profile_path(ps_path: String) -> Result<String, AppError> {
     Ok(path)
 }
 
+/// Returns the scratch directory path for auto-saved untitled scripts, creating it if needed.
+#[tauri::command]
+pub async fn get_scratch_dir() -> Result<String, AppError> {
+    let dir = settings::scratch_dir()?;
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)?;
+    }
+    Ok(dir.to_string_lossy().into())
+}
+
 // ---------------------------------------------------------------------------
 // Script Signing
 // ---------------------------------------------------------------------------

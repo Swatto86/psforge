@@ -187,6 +187,19 @@ export function CommandPalette() {
       });
 
       result.push({
+        id: "cmd-copy-terminal-output",
+        label: "Copy Terminal Output",
+        category: "Terminal",
+        description: "Copy integrated terminal scrollback to the clipboard",
+        action: () => {
+          close();
+          void (
+            window as unknown as Record<string, (() => Promise<void>) | undefined>
+          ).__psforge_copy_terminal_output?.();
+        },
+      });
+
+      result.push({
         id: "cmd-paste-clean-format",
         label: "Paste Clean + Format",
         category: "Editor",

@@ -24,8 +24,22 @@ const MIN_SIDEBAR_FONT_SIZE: u32 = 8;
 const MAX_SIDEBAR_FONT_SIZE: u32 = 24;
 const MIN_MAX_RECENT_FILES: usize = 1;
 const MAX_MAX_RECENT_FILES: usize = 100;
+const MIN_MAX_RECENT_RUNS: usize = 1;
+const MAX_MAX_RECENT_RUNS: usize = 100;
 const MIN_SPLIT_POSITION: f64 = 10.0;
 const MAX_SPLIT_POSITION: f64 = 90.0;
+
+/// A single script run recorded in settings history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptRunRecord {
+    pub script_path: String,
+    pub tab_title: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    pub run_at: String,
+    pub working_dir: String,
+}
 
 /// All user-persisted settings for PSForge.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +60,10 @@ pub struct AppSettings {
     /// Editor font family CSS value.
     #[serde(default = "default_font_family")]
     pub font_family: String,
+
+    /// When true, editor and terminal share the same monospace font family.
+    #[serde(default = "default_true")]
+    pub link_editor_output_fonts: bool,
 
     /// Whether word wrap is enabled in the editor.
     #[serde(default)]
@@ -111,6 +129,14 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub persist_runspace_between_runs: bool,
 
+    /// Block or warn before F5 when PSScriptAnalyzer reports errors.
+    #[serde(default = "default_pssa_run_gate")]
+    pub pssa_run_gate: String,
+
+    /// Auto-save untitled scripts to the scratch folder while editing.
+    #[serde(default = "default_true")]
+    pub auto_save_scratch_scripts: bool,
+
     /// PowerShell execution policy override ("Default" means no override).
     #[serde(default = "default_execution_policy")]
     pub execution_policy: String,
@@ -122,6 +148,10 @@ pub struct AppSettings {
     /// Custom working directory path when working_dir_mode is "custom".
     #[serde(default)]
     pub custom_working_dir: String,
+
+    /// Pinned run directory when working_dir_mode is "pinned".
+    #[serde(default)]
+    pub pinned_run_dir: String,
 
     /// Show PS7 install recommendation banner when only Windows PowerShell 5.1 is detected.
     #[serde(default = "default_true")]
@@ -170,6 +200,14 @@ pub struct AppSettings {
     /// Maximum number of files in the recent files dropdown.
     #[serde(default = "default_max_recent_files")]
     pub max_recent_files: usize,
+
+    /// Recent script run history (newest first).
+    #[serde(default)]
+    pub recent_runs: Vec<ScriptRunRecord>,
+
+    /// Maximum entries kept in recent_runs.
+    #[serde(default = "default_max_recent_runs")]
+    pub max_recent_runs: usize,
 
     /// Editor/output split position as a percentage (0-100).
     #[serde(default = "default_split_position")]
@@ -264,6 +302,14 @@ fn default_max_recent_files() -> usize {
     20
 }
 
+fn default_max_recent_runs() -> usize {
+    20
+}
+
+fn default_pssa_run_gate() -> String {
+    "warn".to_string()
+}
+
 fn default_split_position() -> f64 {
     28.0
 }
@@ -275,6 +321,7 @@ impl Default for AppSettings {
             theme: default_theme(),
             font_size: default_font_size(),
             font_family: default_font_family(),
+            link_editor_output_fonts: true,
             word_wrap: false,
             tab_size: default_tab_size(),
             insert_spaces: true,
@@ -291,9 +338,12 @@ impl Default for AppSettings {
             auto_save_on_run: false,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,
+            pssa_run_gate: default_pssa_run_gate(),
+            auto_save_scratch_scripts: true,
             execution_policy: default_execution_policy(),
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
+            pinned_run_dir: String::new(),
             show_ps7_install_reminder: true,
             check_for_updates_on_startup: true,
             terminal_load_profile: false,
@@ -306,6 +356,8 @@ impl Default for AppSettings {
             sidebar_font_size: default_sidebar_font_size(),
             output_word_wrap: false,
             max_recent_files: default_max_recent_files(),
+            recent_runs: Vec::new(),
+            max_recent_runs: default_max_recent_runs(),
             split_position: default_split_position(),
             recent_files: Vec::new(),
             file_associations: HashMap::new(),
@@ -358,8 +410,11 @@ impl AppSettings {
         ) {
             self.execution_policy = default_execution_policy();
         }
-        if !matches!(self.working_dir_mode.as_str(), "file" | "custom") {
+        if !matches!(self.working_dir_mode.as_str(), "file" | "custom" | "pinned") {
             self.working_dir_mode = default_working_dir_mode();
+        }
+        if !matches!(self.pssa_run_gate.as_str(), "off" | "warn" | "block") {
+            self.pssa_run_gate = default_pssa_run_gate();
         }
         if !matches!(self.sidebar_position.as_str(), "left" | "right") {
             self.sidebar_position = default_sidebar_position();
@@ -376,6 +431,10 @@ impl AppSettings {
         self.max_recent_files = self
             .max_recent_files
             .clamp(MIN_MAX_RECENT_FILES, MAX_MAX_RECENT_FILES);
+        self.max_recent_runs = self
+            .max_recent_runs
+            .clamp(MIN_MAX_RECENT_RUNS, MAX_MAX_RECENT_RUNS);
+        self.recent_runs.truncate(self.max_recent_runs);
         self.split_position = if self.split_position.is_finite() {
             self.split_position
                 .clamp(MIN_SPLIT_POSITION, MAX_SPLIT_POSITION)
@@ -442,6 +501,11 @@ pub fn settings_dir() -> Result<PathBuf, AppError> {
         message: "Could not determine APPDATA directory".to_string(),
     })?;
     Ok(app_data.join("PSForge"))
+}
+
+/// Returns the path to the scratch directory for auto-saved untitled scripts.
+pub fn scratch_dir() -> Result<PathBuf, AppError> {
+    Ok(settings_dir()?.join("scratch"))
 }
 
 /// Returns the full path to settings.json.

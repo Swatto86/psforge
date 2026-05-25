@@ -8,6 +8,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { UpdateStatus } from "../types";
+import { FontQuickControls } from "./FontQuickControls";
+import { resolveExecutionWorkDir } from "../run-utils";
 
 interface StatusBarProps {
   updateStatus: UpdateStatus;
@@ -91,6 +93,18 @@ export function StatusBar({
         : lastRun.exitCode === 0
           ? `Exit 0 · ${formatRunDuration(lastRun.durationMs)}`
           : `Exit ${lastRun.exitCode} · ${formatRunDuration(lastRun.durationMs)}`
+      : null;
+
+  const runCwd =
+    activeTab && activeTab.tabType !== "welcome"
+      ? resolveExecutionWorkDir(
+          activeTab,
+          state.workingDir,
+          state.settings.workingDirMode,
+          state.settings.customWorkingDir,
+          state.settings.pinnedRunDir ?? "",
+          () => (typeof navigator !== "undefined" && /win/i.test(navigator.platform) ? "C:\\" : "/"),
+        )
       : null;
 
   /** Link controls on the status bar — do not use --accent (same hue as --bg-statusbar). */
@@ -361,6 +375,33 @@ export function StatusBar({
           )
         )}
         {renderUpdateControl()}
+        {runCwd && (
+          <button
+            data-testid="status-run-cwd"
+            onClick={() => {
+              dispatch({
+                type: "SET_SETTINGS",
+                settings: {
+                  ...state.settings,
+                  workingDirMode: "pinned",
+                  pinnedRunDir: runCwd,
+                },
+              });
+            }}
+            title={`Run directory: ${runCwd}. Click to pin for all runs.`}
+            style={{
+              ...statusBarLinkStyle,
+              maxWidth: "220px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {state.settings.workingDirMode === "pinned" ? "Pinned: " : "Run: "}
+            {runCwd}
+          </button>
+        )}
+        <FontQuickControls />
         {psVersion && <span>{psVersion.name}</span>}
         {activeTab && activeTab.tabType !== "welcome" && (
           <span

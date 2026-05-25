@@ -195,6 +195,11 @@ export async function loadSettings(): Promise<AppSettings> {
   return invoke<AppSettings>("load_settings");
 }
 
+/** Returns the scratch directory for auto-saved untitled scripts. */
+export async function getScratchDir(): Promise<string> {
+  return invoke<string>("get_scratch_dir");
+}
+
 /** Save user settings. */
 export async function saveSettings(settings: AppSettings): Promise<void> {
   return invoke("save_settings", { settings });

@@ -190,6 +190,8 @@ export interface AppSettings {
   theme: string;
   fontSize: number;
   fontFamily: string;
+  /** When true, editor and terminal share the same monospace font family. */
+  linkEditorOutputFonts: boolean;
   wordWrap: boolean;
   /** Number of spaces per tab stop in the editor. */
   tabSize: number;
@@ -223,14 +225,20 @@ export interface AppSettings {
   clearOutputOnRun: boolean;
   /** Keep script/debug runspace state between runs in the backend host process. */
   persistRunspaceBetweenRuns: boolean;
+  /** Block or warn before F5 when PSScriptAnalyzer reports errors. */
+  pssaRunGate: "off" | "warn" | "block";
+  /** Auto-save untitled scripts to the scratch folder while editing. */
+  autoSaveScratchScripts: boolean;
   /** Show debugger toolbar, gutter breakpoints, and Debugger bottom tab. */
   showDebuggerTools: boolean;
   /** PowerShell execution policy override ("Default" means no override). */
   executionPolicy: string;
-  /** Working directory mode: "file" = use file's folder, "custom" = use customWorkingDir. */
-  workingDirMode: "file" | "custom";
+  /** Working directory mode for script runs. */
+  workingDirMode: "file" | "custom" | "pinned";
   /** Custom working directory path when workingDirMode is "custom". */
   customWorkingDir: string;
+  /** Pinned run directory when workingDirMode is "pinned". */
+  pinnedRunDir: string;
   /** Show PS7 install recommendation banner when only Windows PowerShell 5.1 is detected. */
   showPs7InstallReminder: boolean;
   /** Check the public GitHub release feed for application updates on startup. */
@@ -256,6 +264,10 @@ export interface AppSettings {
   sidebarFontSize: number;
   /** Maximum recent files in dropdown. */
   maxRecentFiles: number;
+  /** Recent script run history (newest first). */
+  recentRuns: ScriptRunRecord[];
+  /** Maximum entries kept in recentRuns. */
+  maxRecentRuns: number;
 
   // ---- Layout ----
   splitPosition: number;
@@ -273,6 +285,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
   fontSize: 14,
   fontFamily: "Cascadia Code, Consolas, 'Segoe UI Emoji', 'Segoe UI Symbol', 'Apple Color Emoji', 'Noto Color Emoji', monospace",
+  linkEditorOutputFonts: true,
   wordWrap: false,
   tabSize: 4,
   insertSpaces: true,
@@ -289,10 +302,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSaveOnRun: true,
   clearOutputOnRun: true,
   persistRunspaceBetweenRuns: true,
+  pssaRunGate: "warn",
+  autoSaveScratchScripts: true,
   showDebuggerTools: false,
   executionPolicy: "Default",
   workingDirMode: "file",
   customWorkingDir: "",
+  pinnedRunDir: "",
   showPs7InstallReminder: true,
   checkForUpdatesOnStartup: true,
   terminalLoadProfile: false,
@@ -305,6 +321,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarFontFamily: "Segoe UI, sans-serif",
   sidebarFontSize: 13,
   maxRecentFiles: 20,
+  recentRuns: [],
+  maxRecentRuns: 20,
   splitPosition: 28,
   recentFiles: [],
   fileAssociations: {},
@@ -314,6 +332,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 /** Sub-views inside the Reference bottom tab. */
 export type ReferenceSubview = "problems" | "show-command" | "help";
+
+/** A single entry in the recent script runs log. */
+export interface ScriptRunRecord {
+  scriptPath: string;
+  tabTitle: string;
+  exitCode: number | null;
+  durationMs: number;
+  runAt: string;
+  workingDir: string;
+}
 
 /** Result of the most recent script run in the integrated terminal. */
 export interface LastRunResult {
