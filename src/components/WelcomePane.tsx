@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react";
 import { useAppState, newTabId, untitledCounter } from "../store";
-import type { EditorTab } from "../types";
+import type { EditorTab, ScriptRunRecord } from "../types";
 import { isPowerShellScriptPath } from "../script-utils";
 import { basename } from "../path-utils";
 
@@ -12,6 +12,11 @@ export function WelcomePane() {
   const recentScripts = useMemo(
     () => state.settings.recentFiles.filter(isPowerShellScriptPath).slice(0, 12),
     [state.settings.recentFiles],
+  );
+
+  const recentRuns = useMemo(
+    () => (state.settings.recentRuns ?? []).slice(0, 10),
+    [state.settings.recentRuns],
   );
 
   const createNewFile = () => {
@@ -104,6 +109,15 @@ export function WelcomePane() {
           <div className="flex flex-wrap gap-2">
             <ActionButton onClick={createNewFile} label="New script" hint="Ctrl+N" />
             <ActionButton onClick={handleOpenFile} label="Open script" hint="Ctrl+O" />
+            <ActionButton
+              onClick={() => {
+                (
+                  window as unknown as Record<string, (() => void) | undefined>
+                ).__psforge_pasteFromClipboardAsNewScript?.();
+              }}
+              label="Paste from clipboard"
+              hint="Ctrl+Shift+Alt+V on an open script"
+            />
             <ActionButton
               onClick={handleOpenFolder}
               label="Open folder"
@@ -205,6 +219,36 @@ export function WelcomePane() {
           )}
         </div>
 
+        <div
+          className="mt-4 rounded-lg p-4"
+          style={{
+            backgroundColor: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+          }}
+        >
+          <h2
+            className="mb-3 text-xs font-semibold uppercase"
+            style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
+          >
+            Recent runs
+          </h2>
+          {recentRuns.length === 0 ? (
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              F5 runs appear here with exit code and duration.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {recentRuns.map((run) => (
+                <RecentRunRow
+                  key={`${run.runAt}-${run.tabTitle}`}
+                  run={run}
+                  onOpen={run.scriptPath ? () => openPath(run.scriptPath) : undefined}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+
         <p
           className="mt-4 text-xs"
           style={{ color: "var(--text-muted)" }}
@@ -214,6 +258,66 @@ export function WelcomePane() {
         </p>
       </div>
     </div>
+  );
+}
+
+function RecentRunRow({
+  run,
+  onOpen,
+}: {
+  run: ScriptRunRecord;
+  onOpen?: () => void;
+}) {
+  const label =
+    run.exitCode === null
+      ? "Failed"
+      : run.exitCode === 0
+        ? "Exit 0"
+        : `Exit ${run.exitCode}`;
+  const duration =
+    run.durationMs < 1000
+      ? `${run.durationMs} ms`
+      : `${(run.durationMs / 1000).toFixed(2)} s`;
+  const title = run.scriptPath
+    ? basename(run.scriptPath)
+    : run.tabTitle || "Untitled script";
+
+  return (
+    <li
+      className="rounded p-2 text-sm"
+      style={{
+        backgroundColor: "var(--bg-primary)",
+        border: "1px solid var(--border-primary)",
+      }}
+    >
+      {onOpen ? (
+        <button
+          onClick={onOpen}
+          className="text-left w-full"
+          style={{
+            backgroundColor: "transparent",
+            color: "var(--text-accent)",
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+          title={run.scriptPath}
+        >
+          {title}
+        </button>
+      ) : (
+        <div style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+          {title}
+        </div>
+      )}
+      <div
+        className="mt-1 flex flex-wrap gap-3 text-xs"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        <span>{label}</span>
+        <span>{duration}</span>
+        <span>{new Date(run.runAt).toLocaleString()}</span>
+      </div>
+    </li>
   );
 }
 

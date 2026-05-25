@@ -30,9 +30,16 @@ import {
   FULL_PASTE_SANITIZE_OPTIONS,
   sanitizePastedText,
 } from "./sanitize-paste";
+import {
+  isPssaErrorSeverity,
+  resolveExecutionWorkDir,
+} from "./run-utils";
+import { copyTerminalOutputToClipboard } from "./terminal-utils";
 import type {
   OutputLine,
   EditorTab,
+  ScriptRunRecord,
+  AppSettings,
   ScriptParameter,
   DebugBreakpoint,
   DebugLocal,
@@ -178,19 +185,18 @@ function platformHomeFallback(): string {
   return "/";
 }
 
-function resolveExecutionWorkDir(
-  activeTab: EditorTab,
-  stateWorkingDir: string,
-  workingDirMode: "file" | "custom",
-  customWorkingDir: string,
-): string {
-  if (workingDirMode === "custom" && customWorkingDir.trim()) {
-    return customWorkingDir.trim();
-  }
+function appendRunRecord(
+  settings: AppSettings,
+  record: ScriptRunRecord,
+): AppSettings {
+  const cap = settings.maxRecentRuns ?? 20;
+  const recentRuns = [record, ...(settings.recentRuns ?? [])].slice(0, cap);
+  return { ...settings, recentRuns };
+}
 
-  const fileDir = activeTab.filePath ? dirname(activeTab.filePath) : "";
-
-  return stateWorkingDir || fileDir || platformHomeFallback();
+function scratchPathForTab(scratchDir: string, tabId: string): string {
+  const sep = scratchDir.includes("\\") ? "\\" : "/";
+  return `${scratchDir}${sep}${tabId}.ps1`;
 }
 
 function resolveFallbackWorkDir(activeTab: EditorTab): string {
@@ -405,6 +411,8 @@ function AppInner() {
     useRef<Awaited<ReturnType<typeof checkForAppUpdate>>>(null);
   const updateStatusResetTimerRef = useRef<number | null>(null);
   const autoUpdateCheckStartedRef = useRef(false);
+  const scratchDirRef = useRef("");
+  const scratchSaveTimersRef = useRef<Map<string, number>>(new Map());
   const clampSplitForCurrentLayout = useCallback(
     (nextPercent: number): number => {
       const containerHeight =
@@ -1398,24 +1406,34 @@ function AppInner() {
     dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
 
     // Auto-save before running when the setting is enabled (Rule 11 -- pre-flight).
-    if (
-      state.settings.autoSaveOnRun &&
-      activeTab.isDirty &&
-      activeTab.filePath
-    ) {
-      try {
-        await cmd.saveFileContent(
-          activeTab.filePath,
-          activeTab.content,
-          activeTab.encoding,
-        );
-        dispatch({
-          type: "UPDATE_TAB",
-          id: activeTab.id,
-          changes: { savedContent: activeTab.content, isDirty: false },
-        });
-      } catch {
-        // Save failed -- continue running with unsaved content
+    if (state.settings.autoSaveOnRun && activeTab.isDirty) {
+      let savePath = activeTab.filePath;
+      if (!savePath && state.settings.autoSaveScratchScripts !== false) {
+        const scratchDir = scratchDirRef.current;
+        if (scratchDir) {
+          savePath = scratchPathForTab(scratchDir, activeTab.id);
+        }
+      }
+      if (savePath) {
+        try {
+          await cmd.saveFileContent(
+            savePath,
+            activeTab.content,
+            activeTab.encoding,
+          );
+          dispatch({
+            type: "UPDATE_TAB",
+            id: activeTab.id,
+            changes: {
+              filePath: savePath,
+              title: activeTab.filePath ? activeTab.title : basename(savePath),
+              savedContent: activeTab.content,
+              isDirty: false,
+            },
+          });
+        } catch {
+          // Save failed -- continue running with unsaved content
+        }
       }
     }
 
@@ -1430,6 +1448,8 @@ function AppInner() {
       state.workingDir,
       state.settings.workingDirMode,
       state.settings.customWorkingDir,
+      state.settings.pinnedRunDir ?? "",
+      platformHomeFallback,
     );
 
     // ------------------------------------------------------------------
@@ -1484,6 +1504,37 @@ function AppInner() {
       // Degrade gracefully: run the script as-is and let PS handle it.
     }
 
+    const pssaErrors = (state.problems[activeTab.id] ?? []).filter((d) =>
+      isPssaErrorSeverity(d.severity),
+    );
+    const pssaGate = state.settings.pssaRunGate ?? "warn";
+    if (
+      pssaErrors.length > 0 &&
+      state.settings.enablePssa !== false &&
+      pssaGate !== "off"
+    ) {
+      if (pssaGate === "block") {
+        runGuardRef.current = false;
+        await writeTerminalNotice(
+          `[PSForge] Run blocked: ${pssaErrors.length} PSScriptAnalyzer error(s). See Reference → Problems.`,
+          { reveal: true },
+        );
+        dispatch({
+          type: "SET_BOTTOM_TAB",
+          tab: "reference",
+          referenceSubview: "problems",
+        });
+        return;
+      }
+      const runAnyway = window.confirm(
+        `PSScriptAnalyzer found ${pssaErrors.length} error(s). Run anyway?`,
+      );
+      if (!runAnyway) {
+        runGuardRef.current = false;
+        return;
+      }
+    }
+
     dispatch({ type: "SET_VARIABLES", variables: [] });
     dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
@@ -1503,18 +1554,39 @@ function AppInner() {
     };
 
     const runStartedAt = performance.now();
-    try {
-      const exitCode = await executeInTerminal(workDir);
+    const recordRunOutcome = (
+      exitCode: number | null,
+      workingDirForRecord: string,
+    ) => {
+      const tabForRecord = activeTabRef.current ?? activeTab;
+      const durationMs = Math.max(
+        0,
+        Math.round(performance.now() - runStartedAt),
+      );
       dispatch({
         type: "SET_LAST_RUN_RESULT",
-        result: {
-          exitCode,
-          durationMs: Math.max(0, Math.round(performance.now() - runStartedAt)),
-        },
+        result: { exitCode, durationMs },
       });
+      dispatch({
+        type: "SET_SETTINGS",
+        settings: appendRunRecord(state.settings, {
+          scriptPath: tabForRecord.filePath,
+          tabTitle: tabForRecord.title,
+          exitCode,
+          durationMs,
+          runAt: new Date().toISOString(),
+          workingDir: workingDirForRecord,
+        }),
+      });
+    };
+
+    try {
+      const exitCode = await executeInTerminal(workDir);
+      recordRunOutcome(exitCode, workDir);
     } catch (err) {
       if (
         state.settings.workingDirMode !== "custom" &&
+        state.settings.workingDirMode !== "pinned" &&
         isInvalidWorkingDirError(err)
       ) {
         const fallbackWorkDir = resolveFallbackWorkDir(activeTab);
@@ -1525,7 +1597,8 @@ function AppInner() {
           );
           dispatch({ type: "SET_WORKING_DIR", dir: fallbackWorkDir });
           try {
-            await executeInTerminal(fallbackWorkDir);
+            const exitCode = await executeInTerminal(fallbackWorkDir);
+            recordRunOutcome(exitCode, fallbackWorkDir);
             return;
           } catch (retryErr) {
             err = retryErr;
@@ -1538,13 +1611,7 @@ function AppInner() {
       await writeTerminalNotice(`[PSForge] Run failed: ${message}`, {
         reveal: true,
       });
-      dispatch({
-        type: "SET_LAST_RUN_RESULT",
-        result: {
-          exitCode: null,
-          durationMs: Math.max(0, Math.round(performance.now() - runStartedAt)),
-        },
-      });
+      recordRunOutcome(null, workDir);
     } finally {
       runGuardRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
@@ -1618,6 +1685,8 @@ function AppInner() {
       state.workingDir,
       state.settings.workingDirMode,
       state.settings.customWorkingDir,
+      state.settings.pinnedRunDir ?? "",
+      platformHomeFallback,
     );
 
     let scriptArgs: string[] = [];
@@ -1901,6 +1970,8 @@ function AppInner() {
       state.workingDir,
       state.settings.workingDirMode,
       state.settings.customWorkingDir,
+      state.settings.pinnedRunDir ?? "",
+      platformHomeFallback,
     );
 
     try {
@@ -2061,6 +2132,128 @@ function AppInner() {
       delete w.__psforge_pasteCleanAndFormat;
     };
   }, [pasteCleanAndFormat]);
+
+  const pasteFromClipboardAsNewScript = useCallback(async () => {
+    if (!state.selectedPsPath) return;
+    let clip = "";
+    try {
+      clip = await navigator.clipboard.readText();
+    } catch {
+      void writeTerminalNotice(
+        "[PSForge] Could not read the clipboard. Allow clipboard access and try again.",
+        { reveal: true },
+      );
+      return;
+    }
+    if (!clip.trim()) return;
+
+    const cleaned = sanitizePastedText(clip, FULL_PASTE_SANITIZE_OPTIONS);
+    let formatted = cleaned;
+    try {
+      formatted = await cmd.formatScript(state.selectedPsPath, cleaned);
+    } catch {
+      // Formatting is optional; cleaned paste is still usable.
+    }
+
+    const id = newTabId();
+    const tab: EditorTab = {
+      id,
+      title: `Untitled-${untitledCounter()}`,
+      filePath: "",
+      content: formatted,
+      savedContent: "",
+      encoding: "utf8",
+      language: "powershell",
+      isDirty: true,
+      tabType: "code",
+    };
+    dispatch({ type: "ADD_TAB", tab });
+    const welcomeTab = state.tabs.find((t) => t.tabType === "welcome");
+    if (welcomeTab) {
+      dispatch({ type: "CLOSE_TAB", id: welcomeTab.id });
+    }
+
+    if (state.settings.runAfterPasteCleanFormat !== false) {
+      window.setTimeout(() => runOrDebugScript(), 50);
+    }
+  }, [
+    state.selectedPsPath,
+    state.tabs,
+    state.settings.runAfterPasteCleanFormat,
+    dispatch,
+    writeTerminalNotice,
+    runOrDebugScript,
+  ]);
+
+  useEffect(() => {
+    void cmd.getScratchDir().then((dir) => {
+      scratchDirRef.current = dir;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (
+      !state.settingsLoaded ||
+      state.settings.autoSaveScratchScripts === false
+    ) {
+      return;
+    }
+    const scratchDir = scratchDirRef.current;
+    if (!scratchDir) return;
+
+    for (const tab of state.tabs) {
+      if (tab.tabType === "welcome" || tab.filePath || !tab.isDirty) continue;
+
+      const existing = scratchSaveTimersRef.current.get(tab.id);
+      if (existing) window.clearTimeout(existing);
+
+      const timer = window.setTimeout(() => {
+        scratchSaveTimersRef.current.delete(tab.id);
+        const path = scratchPathForTab(scratchDir, tab.id);
+        void cmd
+          .saveFileContent(path, tab.content, tab.encoding)
+          .then(() => {
+            dispatch({
+              type: "UPDATE_TAB",
+              id: tab.id,
+              changes: {
+                filePath: path,
+                title: basename(path),
+                savedContent: tab.content,
+                isDirty: false,
+              },
+            });
+          })
+          .catch(() => {});
+      }, 1200);
+      scratchSaveTimersRef.current.set(tab.id, timer);
+    }
+  }, [
+    state.tabs,
+    state.settings.autoSaveScratchScripts,
+    state.settingsLoaded,
+    dispatch,
+  ]);
+
+  useEffect(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__psforge_pasteFromClipboardAsNewScript = () => {
+      void pasteFromClipboardAsNewScript();
+    };
+    w.__psforge_copy_terminal_output = async () => {
+      const copied = await copyTerminalOutputToClipboard();
+      if (!copied) {
+        void writeTerminalNotice(
+          "[PSForge] Nothing to copy from the terminal.",
+          { reveal: false },
+        );
+      }
+    };
+    return () => {
+      delete w.__psforge_pasteFromClipboardAsNewScript;
+      delete w.__psforge_copy_terminal_output;
+    };
+  }, [pasteFromClipboardAsNewScript, writeTerminalNotice]);
 
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
@@ -2363,23 +2556,33 @@ function AppInner() {
         trigger?.();
       }
 
-      // Ctrl+= or Ctrl+Plus: Increase editor/UI font size
+      // Ctrl+= or Ctrl+Plus: Increase editor (and terminal when linked) font size
       if (e.ctrlKey && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
+        const linked = state.settings.linkEditorOutputFonts !== false;
         const next = Math.min(72, (state.settings.fontSize ?? 14) + 1);
         dispatch({
           type: "SET_SETTINGS",
-          settings: { ...state.settings, fontSize: next },
+          settings: {
+            ...state.settings,
+            fontSize: next,
+            outputFontSize: linked ? next : state.settings.outputFontSize,
+          },
         });
       }
 
-      // Ctrl+- (Minus): Decrease editor/UI font size
+      // Ctrl+- (Minus): Decrease editor (and terminal when linked) font size
       if (e.ctrlKey && e.key === "-") {
         e.preventDefault();
+        const linked = state.settings.linkEditorOutputFonts !== false;
         const next = Math.max(8, (state.settings.fontSize ?? 14) - 1);
         dispatch({
           type: "SET_SETTINGS",
-          settings: { ...state.settings, fontSize: next },
+          settings: {
+            ...state.settings,
+            fontSize: next,
+            outputFontSize: linked ? next : state.settings.outputFontSize,
+          },
         });
       }
     };

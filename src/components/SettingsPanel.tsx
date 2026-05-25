@@ -13,6 +13,10 @@ import * as cmd from "../commands";
 import type { AssociationStatus, ThemeName } from "../types";
 import { PS_EXTENSIONS } from "../types";
 import { useFocusTrap } from "./use-focus-trap";
+import {
+  MONOSPACE_FONT_PRESETS,
+  presetIdForFamily,
+} from "../font-presets";
 
 /** Section identifiers. */
 type Section =
@@ -180,6 +184,19 @@ export function SettingsPanel() {
     validationErrors.customWorkingDir =
       "Custom working directory must be an absolute path.";
   }
+  if (
+    state.settings.workingDirMode === "pinned" &&
+    (!state.settings.pinnedRunDir || state.settings.pinnedRunDir.trim() === "")
+  ) {
+    validationErrors.pinnedRunDir =
+      "A pinned run directory is required when mode is Pinned.";
+  } else if (
+    state.settings.workingDirMode === "pinned" &&
+    !isLikelyAbsolutePath((state.settings.pinnedRunDir ?? "").trim())
+  ) {
+    validationErrors.pinnedRunDir =
+      "Pinned run directory must be an absolute path.";
+  }
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -189,10 +206,47 @@ export function SettingsPanel() {
     key: K,
     value: (typeof state.settings)[K],
   ) => {
+    let next = { ...state.settings, [key]: value };
+    if (state.settings.linkEditorOutputFonts !== false) {
+      if (key === "fontFamily") {
+        next = { ...next, outputFontFamily: value as string };
+      } else if (key === "outputFontFamily") {
+        next = { ...next, fontFamily: value as string };
+      }
+    }
     dispatch({
       type: "SET_SETTINGS",
-      settings: { ...state.settings, [key]: value },
+      settings: next,
     });
+  };
+
+  const applyMonospacePreset = (family: string, target: "editor" | "output") => {
+    if (target === "editor" || state.settings.linkEditorOutputFonts !== false) {
+      dispatch({
+        type: "SET_SETTINGS",
+        settings: {
+          ...state.settings,
+          fontFamily: family,
+          outputFontFamily: family,
+        },
+      });
+      return;
+    }
+    updateSetting("outputFontFamily", family);
+  };
+
+  const pickWorkingDirectory = async (
+    field: "customWorkingDir" | "pinnedRunDir",
+  ) => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected === "string" && selected.trim()) {
+        updateSetting(field, selected);
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const handleDefaultPsChange = (value: string) => {
@@ -388,6 +442,30 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Font Preset"
+                tooltip="Quick monospace font picker. Changes persist for the editor (and terminal when linked)."
+              >
+                <select
+                  data-testid="settings-editor-font-preset"
+                  value={presetIdForFamily(state.settings.fontFamily)}
+                  onChange={(e) => {
+                    const preset = MONOSPACE_FONT_PRESETS.find(
+                      (p) => p.id === e.target.value,
+                    );
+                    if (preset) applyMonospacePreset(preset.family, "editor");
+                  }}
+                  className="w-56 text-sm"
+                >
+                  {MONOSPACE_FONT_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                  <option value="custom">Custom (edit below)</option>
+                </select>
+              </SettingRow>
+
+              <SettingRow
                 label="Font Family"
                 tooltip="Comma-separated font fallback list for the script editor."
               >
@@ -397,6 +475,28 @@ export function SettingsPanel() {
                   placeholder="Cascadia Code, Consolas, monospace"
                   error={validationErrors.fontFamily}
                   width="w-72"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Link Editor & Terminal Fonts"
+                tooltip="When enabled, editor and terminal share the same monospace font family (sizes can still differ)."
+              >
+                <Toggle
+                  checked={state.settings.linkEditorOutputFonts !== false}
+                  onChange={(v) => {
+                    dispatch({
+                      type: "SET_SETTINGS",
+                      settings: {
+                        ...state.settings,
+                        linkEditorOutputFonts: v,
+                        outputFontFamily: v
+                          ? state.settings.fontFamily
+                          : state.settings.outputFontFamily,
+                      },
+                    });
+                  }}
+                  label="Use the same monospace font in editor and terminal"
                 />
               </SettingRow>
 
@@ -701,6 +801,38 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="PSSA Run Gate"
+                tooltip="Warn or block F5 when PSScriptAnalyzer reports errors in the active script."
+              >
+                <select
+                  data-testid="settings-pssa-run-gate"
+                  value={state.settings.pssaRunGate ?? "warn"}
+                  onChange={(e) =>
+                    updateSetting(
+                      "pssaRunGate",
+                      e.target.value as "off" | "warn" | "block",
+                    )
+                  }
+                  className="w-48 text-sm"
+                >
+                  <option value="off">Off — run regardless</option>
+                  <option value="warn">Warn — confirm before run</option>
+                  <option value="block">Block — fix errors first</option>
+                </select>
+              </SettingRow>
+
+              <SettingRow
+                label="Scratch Auto-Save"
+                tooltip="Untitled scripts are saved under %APPDATA%/PSForge/scratch while you edit."
+              >
+                <Toggle
+                  checked={state.settings.autoSaveScratchScripts !== false}
+                  onChange={(v) => updateSetting("autoSaveScratchScripts", v)}
+                  label="Auto-save untitled scripts to the scratch folder"
+                />
+              </SettingRow>
+
+              <SettingRow
                 label="Runspace Persistence"
                 tooltip="Controls whether script/debug runs reuse one backend runspace or start from a fresh runspace each time."
               >
@@ -743,6 +875,18 @@ export function SettingsPanel() {
                       <input
                         type="radio"
                         name="workingDirMode"
+                        value="pinned"
+                        checked={state.settings.workingDirMode === "pinned"}
+                        onChange={() =>
+                          updateSetting("workingDirMode", "pinned")
+                        }
+                      />
+                      Pinned folder
+                    </label>
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="workingDirMode"
                         value="custom"
                         checked={state.settings.workingDirMode === "custom"}
                         onChange={() =>
@@ -753,14 +897,50 @@ export function SettingsPanel() {
                     </label>
                   </div>
 
+                  {state.settings.workingDirMode === "pinned" && (
+                    <div className="flex items-center gap-2">
+                      <TextInput
+                        value={state.settings.pinnedRunDir ?? ""}
+                        onChange={(v) => updateSetting("pinnedRunDir", v)}
+                        placeholder="C:\Scripts"
+                        error={validationErrors.pinnedRunDir}
+                        width="w-72"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void pickWorkingDirectory("pinnedRunDir")}
+                        className="px-2 py-1 text-xs rounded"
+                        style={{
+                          border: "1px solid var(--border-primary)",
+                          backgroundColor: "var(--bg-tertiary)",
+                        }}
+                      >
+                        Browse…
+                      </button>
+                    </div>
+                  )}
+
                   {state.settings.workingDirMode === "custom" && (
-                    <TextInput
-                      value={state.settings.customWorkingDir ?? ""}
-                      onChange={(v) => updateSetting("customWorkingDir", v)}
-                      placeholder="C:\Scripts"
-                      error={validationErrors.customWorkingDir}
-                      width="w-72"
-                    />
+                    <div className="flex items-center gap-2">
+                      <TextInput
+                        value={state.settings.customWorkingDir ?? ""}
+                        onChange={(v) => updateSetting("customWorkingDir", v)}
+                        placeholder="C:\Scripts"
+                        error={validationErrors.customWorkingDir}
+                        width="w-72"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void pickWorkingDirectory("customWorkingDir")}
+                        className="px-2 py-1 text-xs rounded"
+                        style={{
+                          border: "1px solid var(--border-primary)",
+                          backgroundColor: "var(--bg-tertiary)",
+                        }}
+                      >
+                        Browse…
+                      </button>
+                    </div>
                   )}
                 </div>
               </SettingRow>
@@ -915,6 +1095,34 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Terminal Font Preset"
+                tooltip="Quick monospace font picker for the integrated terminal."
+              >
+                <select
+                  data-testid="settings-output-font-preset"
+                  value={presetIdForFamily(
+                    state.settings.outputFontFamily ??
+                      "Cascadia Code, Consolas, monospace",
+                  )}
+                  onChange={(e) => {
+                    const preset = MONOSPACE_FONT_PRESETS.find(
+                      (p) => p.id === e.target.value,
+                    );
+                    if (preset) applyMonospacePreset(preset.family, "output");
+                  }}
+                  className="w-56 text-sm"
+                  disabled={state.settings.linkEditorOutputFonts !== false}
+                >
+                  {MONOSPACE_FONT_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                  <option value="custom">Custom (edit below)</option>
+                </select>
+              </SettingRow>
+
+              <SettingRow
                 label="Output Font Family"
                 tooltip="Font stack used for Variables, Debugger, Help, and terminal panes."
               >
@@ -940,6 +1148,19 @@ export function SettingsPanel() {
                   value={state.settings.maxRecentFiles ?? 20}
                   onChange={(v) => updateSetting("maxRecentFiles", v)}
                   error={validationErrors.maxRecentFiles}
+                  width="w-20"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Max Recent Runs"
+                tooltip="How many F5 runs to keep in the welcome page history."
+              >
+                <NumberInput
+                  min={1}
+                  max={100}
+                  value={state.settings.maxRecentRuns ?? 20}
+                  onChange={(v) => updateSetting("maxRecentRuns", v)}
                   width="w-20"
                 />
               </SettingRow>

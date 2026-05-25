@@ -510,6 +510,18 @@ export function OutputPane({
           {state.bottomPanelTab === "terminal" && (
             <>
               <button
+                data-testid="terminal-copy-output-button"
+                onClick={() => {
+                  void (
+                    window as unknown as Record<string, () => Promise<void>>
+                  ).__psforge_copy_terminal_output?.();
+                }}
+                className={actionButtonClassName()}
+                title="Copy terminal output to clipboard"
+              >
+                Copy Output
+              </button>
+              <button
                 data-testid="terminal-clear-button"
                 onClick={() =>
                   (
