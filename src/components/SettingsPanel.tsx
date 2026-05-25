@@ -491,6 +491,17 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Clean on paste"
+                tooltip="Fixes smart quotes, markdown fences, line-number gutters, and PS prompts whenever you paste into the editor."
+              >
+                <Toggle
+                  checked={state.settings.sanitizePasteOnPaste !== false}
+                  onChange={(v) => updateSetting("sanitizePasteOnPaste", v)}
+                  label="Always clean clipboard text on paste (Ctrl+V)"
+                />
+              </SettingRow>
+
+              <SettingRow
                 label="Render Whitespace"
                 tooltip="Controls how whitespace characters are visually marked in the editor."
               >

@@ -209,6 +209,8 @@ export interface AppSettings {
   enablePssa: boolean;
   /** Whether PowerShell IntelliSense (TabExpansion2) is enabled. */
   enableIntelliSense: boolean;
+  /** Clean clipboard junk on every editor paste (Ctrl+V). */
+  sanitizePasteOnPaste: boolean;
 
   // ---- Execution ----
   /** Save the active file automatically before running (F5). */
@@ -277,6 +279,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   stickyScroll: false,
   enablePssa: true,
   enableIntelliSense: true,
+  sanitizePasteOnPaste: true,
   autoSaveOnRun: true,
   clearOutputOnRun: true,
   persistRunspaceBetweenRuns: true,

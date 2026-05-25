@@ -1,44 +1,32 @@
-# PSForge — AI Context
+# PSForge — AI context
 
 ## System Overview
 
-PSForge is a Tauri 2 desktop IDE for PowerShell: Monaco editor, integrated terminal, PSScriptAnalyzer diagnostics, and optional debugger tooling. Primary use case: run scripts with F5 and read terminal output.
+PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, running, and debugging `.ps1` scripts with an integrated terminal, PSScriptAnalyzer diagnostics, and TabExpansion2 IntelliSense.
 
 ## Tech Stack & Architecture
 
-- **Frontend:** React 19, TypeScript, Vite, Tailwind, Monaco, xterm (`@xterm/xterm`)
-- **Backend:** Rust (`src-tauri/`), PowerShell session host, settings in `%APPDATA%/PSForge/settings.json`
-- **State:** `src/store.tsx` (React context + reducer), settings synced via Tauri commands
+- **Frontend:** React 19, Vite, Monaco (`@monaco-editor/react`), Tailwind 4, xterm.js
+- **Backend:** Rust (`src-tauri/`), Tauri commands for PowerShell host, settings, files
+- **State:** `src/store.tsx` (React context + reducer), settings persisted via `load_settings` / `save_settings`
 
 ## Component Map
 
 | Area | Path |
 |------|------|
-| App shell, run/debug | `src/App.tsx` |
-| Bottom pane tabs | `src/components/OutputPane.tsx` |
-| Reference (Problems / Show Command / Help) | `src/components/ReferencePane.tsx` |
-| Toolbar | `src/components/Toolbar.tsx` |
-| Welcome | `src/components/WelcomePane.tsx` |
-| Status bar | `src/components/StatusBar.tsx` |
-| Settings (Rust) | `src-tauri/src/settings.rs` |
-| CI workflow | `.github/workflows/ci.yml` |
+| Shell / shortcuts | `src/App.tsx` |
+| Editor + paste sanitize | `src/components/EditorPane.tsx`, `src/sanitize-paste.ts` |
+| Toolbar (compact + overflow) | `src/components/Toolbar.tsx` |
+| Settings | `src/components/SettingsPanel.tsx`, `src-tauri/src/settings.rs` |
+| Types / defaults | `src/types.ts` |
+| Format script | `src/commands.ts` → `format_script` in `src-tauri/src/commands.rs` |
 
-## Data Flow
+## Data Flow — paste cleanup
 
-- F5 → `runScript` → terminal command → `SET_LAST_RUN_RESULT` with exit code and duration
-- PSSA debounce → `SET_PROBLEMS` → Reference tab auto-switch on new **errors** only
-- Settings load/save: `AppSettings` in `src/types.ts` ↔ `src-tauri/src/settings.rs` (camelCase JSON)
-
-## Pre-commit / CI
-
-Before committing, run **`./scripts/ci-local.sh`** (mirrors GitHub Actions `ci` job):
-
-1. `npm ci` + `npm run build`
-2. `cargo fmt --all -- --check` in `src-tauri`
-3. `cargo clippy --all-targets -- -D warnings`
-4. `cargo test`
+1. **Ctrl+V:** Monaco `onDidPaste` in `EditorPane` reads pasted range; if `settings.sanitizePasteOnPaste` (default **true**), `sanitizePastedText()` rewrites only that range.
+2. **Ctrl+Shift+Alt+V:** `pasteCleanAndFormat` in `App.tsx` reads clipboard → full sanitize → `__psforge_insertTextAtSelection` → `formatScript` on full buffer → `UPDATE_TAB`.
+3. Options built in `pasteSanitizeOptionsFromSettings()`; rules in `src/sanitize-paste.ts` (typography, markdown fences, line gutters, `PS>`/`>>` prefixes, newlines, control chars).
 
 ## Recent Context & Decisions
 
-- **2026-05-25:** Script-runner UI — 40/60 split default, Reference tab, compact toolbar, debugger tools off by default (`showDebuggerTools` / `show_debugger_tools`).
-- **2026-05-25:** Added `scripts/ci-local.sh` so agents run CI parity before push.
+- **2026-05-24:** Paste from web: `sanitizePasteOnPaste` setting (default on); **Paste Clean + Format** command (overflow menu, context menu, palette, Ctrl+Shift+Alt+V). Run `./scripts/ci-local.sh` before commit.
