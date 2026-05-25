@@ -249,6 +249,16 @@ export function EditorPane() {
 
   // Timer ref for debouncing PSScriptAnalyzer invocations on each keystroke.
   const pssaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const problemsRef = useRef(state.problems);
+  const isRunningRef = useRef(state.isRunning);
+
+  useEffect(() => {
+    problemsRef.current = state.problems;
+  }, [state.problems]);
+
+  useEffect(() => {
+    isRunningRef.current = state.isRunning;
+  }, [state.isRunning]);
 
   // Clear stale PSSA debounce timer whenever the active tab changes so a
   // pending analysis from the previous tab does not fire after the switch,
@@ -267,17 +277,6 @@ export function EditorPane() {
   const breakpointDecorationsRef = useRef<string[]>([]);
   const bookmarkDecorationsRef = useRef<string[]>([]);
   const contextMenuLineRef = useRef<number | null>(null);
-  const showDebuggerToolsRef = useRef(state.settings.showDebuggerTools === true);
-
-  useEffect(() => {
-    showDebuggerToolsRef.current = state.settings.showDebuggerTools === true;
-    if (!showDebuggerToolsRef.current && editorRef.current) {
-      breakpointDecorationsRef.current = editorRef.current.deltaDecorations(
-        breakpointDecorationsRef.current,
-        [],
-      );
-    }
-  }, [state.settings.showDebuggerTools]);
 
   // Dispose the completion provider when the component unmounts.
   useEffect(() => {

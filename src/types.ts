@@ -277,7 +277,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   stickyScroll: false,
   enablePssa: true,
   enableIntelliSense: true,
-  autoSaveOnRun: false,
+  autoSaveOnRun: true,
   clearOutputOnRun: true,
   persistRunspaceBetweenRuns: true,
   showDebuggerTools: false,
@@ -296,12 +296,21 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarFontFamily: "Segoe UI, sans-serif",
   sidebarFontSize: 13,
   maxRecentFiles: 20,
-  splitPosition: 65,
+  splitPosition: 40,
   recentFiles: [],
   fileAssociations: {},
-  sidebarVisible: true,
+  sidebarVisible: false,
   sidebarPosition: "left",
 };
+
+/** Sub-views inside the Reference bottom tab. */
+export type ReferenceSubview = "problems" | "show-command" | "help";
+
+/** Result of the most recent script run in the integrated terminal. */
+export interface LastRunResult {
+  exitCode: number | null;
+  durationMs: number;
+}
 
 /** Theme names. */
 export type ThemeName = "dark" | "light" | "ise-classic";

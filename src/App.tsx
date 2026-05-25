@@ -1113,6 +1113,44 @@ function AppInner() {
     [state.tabs, state.settings, dispatch],
   );
 
+  const openScriptFolder = useCallback(async () => {
+    try {
+      const { open, message } = await import("@tauri-apps/plugin-dialog");
+      const { readDir } = await import("@tauri-apps/plugin-fs");
+      const selected = await open({ directory: true, multiple: false });
+      if (!selected || typeof selected !== "string") return;
+
+      const base = selected.replace(/[/\\]+$/, "");
+      const entries = await readDir(selected);
+      const scriptPaths = entries
+        .filter((entry) => entry.isFile)
+        .map((entry) => `${base}/${entry.name}`.replace(/\\/g, "/"))
+        .filter((path) => /\.(ps1|psm1|psd1)$/i.test(path))
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+      if (scriptPaths.length === 0) {
+        await message(
+          "No PowerShell scripts (.ps1, .psm1, .psd1) were found in that folder.",
+          { title: "Open Folder", kind: "info" },
+        );
+        return;
+      }
+
+      for (const path of scriptPaths.slice(0, 12)) {
+        await openFile(path);
+      }
+      if (scriptPaths.length > 12) {
+        await writeTerminalNotice(
+          `[PSForge] Opened the first 12 scripts from the folder (${scriptPaths.length} total).`,
+          { reveal: false },
+        );
+      }
+      dispatch({ type: "SET_WORKING_DIR", dir: selected });
+    } catch (err) {
+      console.error("openScriptFolder failed:", err);
+    }
+  }, [openFile, dispatch, writeTerminalNotice]);
+
   /** Open (or focus) the Welcome tab so users can restore onboarding content. */
   const openWelcomePage = useCallback(() => {
     const existing = state.tabs.find((t) => t.tabType === "welcome");
@@ -1146,6 +1184,7 @@ function AppInner() {
     // User-facing helpers: the WelcomePane and CommandPalette read these.
     w.__psforge_openFile = () => void openFile();
     w.__psforge_openFileByPath = (p: string) => void openFile(p);
+    w.__psforge_openFolder = () => void openScriptFolder();
     w.__psforge_openWelcome = () => openWelcomePage();
     // E2E-only helpers. We expose `dispatch` and `reset_variables` only in
     // dev builds so production users cannot stumble onto them via the
@@ -1440,6 +1479,7 @@ function AppInner() {
     }
 
     dispatch({ type: "SET_VARIABLES", variables: [] });
+    dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
 
     const executeInTerminal = async (workingDir: string) => {
@@ -1456,8 +1496,16 @@ function AppInner() {
       });
     };
 
+    const runStartedAt = performance.now();
     try {
-      await executeInTerminal(workDir);
+      const exitCode = await executeInTerminal(workDir);
+      dispatch({
+        type: "SET_LAST_RUN_RESULT",
+        result: {
+          exitCode,
+          durationMs: Math.max(0, Math.round(performance.now() - runStartedAt)),
+        },
+      });
     } catch (err) {
       if (
         state.settings.workingDirMode !== "custom" &&
@@ -1483,6 +1531,13 @@ function AppInner() {
       const message = extractInvokeErrorMessage(err);
       await writeTerminalNotice(`[PSForge] Run failed: ${message}`, {
         reveal: true,
+      });
+      dispatch({
+        type: "SET_LAST_RUN_RESULT",
+        result: {
+          exitCode: null,
+          durationMs: Math.max(0, Math.round(performance.now() - runStartedAt)),
+        },
       });
     } finally {
       runGuardRef.current = false;
@@ -1601,6 +1656,7 @@ function AppInner() {
     dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: 0 });
     dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     dispatch({ type: "SET_VARIABLES", variables: [] });
+    dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
 
     try {
@@ -1831,6 +1887,7 @@ function AppInner() {
     const psPath = state.selectedPsPath;
 
     dispatch({ type: "SET_VARIABLES", variables: [] });
+    dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
 
     const workDir = resolveExecutionWorkDir(
@@ -2072,19 +2129,17 @@ function AppInner() {
       }
 
       // F10/F11/Shift+F11: Debug step controls while paused.
-      if (state.settings.showDebuggerTools === true) {
-        if (e.key === "F10") {
-          e.preventDefault();
-          void debugStepOver();
-        }
-        if (e.key === "F11" && !e.shiftKey) {
-          e.preventDefault();
-          void debugStepInto();
-        }
-        if (e.key === "F11" && e.shiftKey) {
-          e.preventDefault();
-          void debugStepOut();
-        }
+      if (e.key === "F10") {
+        e.preventDefault();
+        void debugStepOver();
+      }
+      if (e.key === "F11" && !e.shiftKey) {
+        e.preventDefault();
+        void debugStepInto();
+      }
+      if (e.key === "F11" && e.shiftKey) {
+        e.preventDefault();
+        void debugStepOut();
       }
 
       // F8: Run selection, or current line when no selection (ISE behavior)
