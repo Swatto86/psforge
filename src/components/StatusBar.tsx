@@ -359,19 +359,27 @@ export function StatusBar({
           </span>
         ) : (
           lastRunLabel && (
-            <span
+            <button
+              type="button"
               data-testid="status-last-run"
+              onClick={() => {
+                void (
+                  window as unknown as Record<string, (() => Promise<void>) | undefined>
+                ).__psforge_copy_debug_bundle?.();
+              }}
               style={{
+                ...statusBarLinkStyle,
                 fontVariantNumeric: "tabular-nums",
                 color:
                   lastRun?.exitCode === 0
                     ? "var(--text-inverse)"
                     : "var(--stream-stderr)",
+                textDecoration: "underline",
               }}
-              title="Last script run (F5)"
+              title="Copy debug bundle for AI (last run output, exit code, PSSA)"
             >
               {lastRunLabel}
-            </span>
+            </button>
           )
         )}
         {renderUpdateControl()}

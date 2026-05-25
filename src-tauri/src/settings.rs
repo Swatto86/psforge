@@ -125,6 +125,10 @@ pub struct AppSettings {
     #[serde(default)]
     pub run_after_sanitized_paste: bool,
 
+    /// Assistant mode profile enabled (paste-and-run defaults).
+    #[serde(default)]
+    pub assistant_mode: bool,
+
     /// Save the active file automatically before running (F5).
     #[serde(default)]
     pub auto_save_on_run: bool,
@@ -347,6 +351,7 @@ impl Default for AppSettings {
             sanitize_paste_on_paste: true,
             run_after_paste_clean_format: true,
             run_after_sanitized_paste: false,
+            assistant_mode: false,
             auto_save_on_run: false,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,

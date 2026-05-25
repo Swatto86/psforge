@@ -534,6 +534,18 @@ export function OutputPane({
                 Copy Last Run
               </button>
               <button
+                data-testid="terminal-copy-debug-bundle-button"
+                onClick={() => {
+                  void (
+                    window as unknown as Record<string, () => Promise<void>>
+                  ).__psforge_copy_debug_bundle?.();
+                }}
+                className={actionButtonClassName()}
+                title="Copy markdown debug bundle for AI chat (output, exit code, PSSA)"
+              >
+                Copy Debug Bundle
+              </button>
+              <button
                 data-testid="terminal-clear-button"
                 onClick={() =>
                   (

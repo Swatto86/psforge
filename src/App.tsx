@@ -28,8 +28,11 @@ import {
 } from "./path-state-store";
 import {
   FULL_PASTE_SANITIZE_OPTIONS,
-  sanitizePastedText,
+  sanitizePastedTextWithSummary,
 } from "./sanitize-paste";
+import { formatPasteSummaryMessage } from "./paste-summary";
+import { copyDebugBundleWithRunOutput } from "./debug-bundle";
+import { showAppToast, ToastStack } from "./components/ToastStack";
 import {
   isPssaErrorSeverity,
   resolveExecutionWorkDir,
@@ -1770,6 +1773,47 @@ function AppInner() {
     });
   }, [dispatch, state.settings]);
 
+  const copyDebugBundle = useCallback(async () => {
+    const tab = activeTabRef.current;
+    if (!tab || tab.tabType === "welcome") {
+      void writeTerminalNotice(
+        "[PSForge] Open a script tab before copying a debug bundle.",
+        { reveal: false },
+      );
+      return;
+    }
+    const workDir = resolveExecutionWorkDirWithOverride(
+      tab,
+      state.workingDir,
+      state.settings,
+      platformHomeFallback,
+    );
+    const copied = await copyDebugBundleWithRunOutput(
+      {
+        tab,
+        lastRun: state.lastRunResult,
+        workingDir: workDir,
+        problems: state.problems[tab.id] ?? [],
+        getRunOutput: () => "",
+      },
+      lastRunOutputStartLineRef.current,
+    );
+    if (copied) {
+      showAppToast("Debug bundle copied — paste into your AI chat.");
+    } else {
+      void writeTerminalNotice(
+        "[PSForge] Nothing to copy yet. Run the script with F5 first.",
+        { reveal: true },
+      );
+    }
+  }, [
+    state.workingDir,
+    state.settings,
+    state.lastRunResult,
+    state.problems,
+    writeTerminalNotice,
+  ]);
+
   const recoverScratchFiles = useCallback(
     async (selected: ScratchRecoveryCandidate[]) => {
       for (const candidate of selected) {
@@ -2250,7 +2294,11 @@ function AppInner() {
     }
     if (!clip.trim()) return;
 
-    const cleaned = sanitizePastedText(clip, FULL_PASTE_SANITIZE_OPTIONS);
+    const { text: cleaned, summary } = sanitizePastedTextWithSummary(
+      clip,
+      FULL_PASTE_SANITIZE_OPTIONS,
+    );
+    showAppToast(formatPasteSummaryMessage(summary));
     const w = window as unknown as Record<string, unknown>;
     const insert = w.__psforge_insertTextAtSelection as
       | ((text: string) => boolean)
@@ -2316,7 +2364,11 @@ function AppInner() {
     }
     if (!clip.trim()) return;
 
-    const cleaned = sanitizePastedText(clip, FULL_PASTE_SANITIZE_OPTIONS);
+    const { text: cleaned, summary } = sanitizePastedTextWithSummary(
+      clip,
+      FULL_PASTE_SANITIZE_OPTIONS,
+    );
+    showAppToast(formatPasteSummaryMessage(summary));
     let formatted = cleaned;
     try {
       formatted = await cmd.formatScript(state.selectedPsPath, cleaned);
@@ -2457,6 +2509,9 @@ function AppInner() {
     w.__psforge_openRunDirectory = (dir: string) => {
       if (dir.trim()) void cmd.revealInExplorer(dir.trim());
     };
+    w.__psforge_copy_debug_bundle = () => {
+      void copyDebugBundle();
+    };
     return () => {
       delete w.__psforge_pasteFromClipboardAsNewScript;
       delete w.__psforge_copy_terminal_output;
@@ -2465,6 +2520,7 @@ function AppInner() {
       delete w.__psforge_rerunFromRecord;
       delete w.__psforge_clearRecentRuns;
       delete w.__psforge_openRunDirectory;
+      delete w.__psforge_copy_debug_bundle;
     };
   }, [
     pasteFromClipboardAsNewScript,
@@ -2472,6 +2528,7 @@ function AppInner() {
     requestCloseTab,
     rerunFromRecord,
     clearRecentRuns,
+    copyDebugBundle,
   ]);
 
   useEffect(() => {
@@ -3285,6 +3342,7 @@ function AppInner() {
           onDismiss={() => setScratchRecoveryCandidates(null)}
         />
       )}
+      <ToastStack />
     </div>
   );
 }

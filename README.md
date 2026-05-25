@@ -14,7 +14,7 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.2.14](https://github.com/Swatto86/psforge/releases/tag/v1.2.14)
+**Current version:** [1.2.15](https://github.com/Swatto86/psforge/releases/tag/v1.2.15)
 
 ## AI-assisted workflow (paste → run → debug)
 
@@ -27,7 +27,7 @@ Typical use with an assistant writing PowerShell for you:
    - **`Ctrl+V`** — Normal paste with light cleanup when **Clean Paste** is enabled (Settings → Editor).
 3. **Run** — **`F5`** (auto-save + scratch for untitled tabs when enabled).
 4. **Inspect** — Terminal output below the editor; **Reference → Problems** for PSScriptAnalyzer errors.
-5. **Share back** — **Copy Last Run** (terminal toolbar) or **Copy Output** for the full buffer; paste exit code/output into the AI thread.
+5. **Share back** — **Copy Debug Bundle** (markdown: output + exit code + PSSA + script), **Copy Last Run**, or full **Copy Output**; paste into the AI thread.
 6. **Iterate** — Edit, F5 again, or **Re-run** from Welcome **Recent runs** (restores working directory).
 
 ### Recommended settings for paste-and-run
@@ -36,6 +36,7 @@ In **Settings → Editor / Execution**:
 
 | Setting | Suggested | Why |
 |---------|-----------|-----|
+| **Assistant mode** (Settings → Execution) | On | Applies all rows below in one toggle |
 | Clean Paste (`Ctrl+V`) | On | Fixes smart quotes, markdown fences, `PS>` prompts from copied terminals |
 | Run after Paste Clean + Format | On | One gesture after `Ctrl+Shift+Alt+V` |
 | Run when Ctrl+V was cleaned | Off | Avoid accidental F5 on small edits |
@@ -64,18 +65,23 @@ Optional repo file **`.psforge.json`** next to your scripts (walks up from opene
 | `F5` | Run script (or debug if breakpoints exist) |
 | `F8` | Run selection or current line |
 | `Shift+F5` | Stop |
-| `Ctrl+Shift+P` | Command palette (copy output, clear recent runs, …) |
+| `Ctrl+Shift+P` | Command palette (copy debug bundle, output, …) |
 | `Ctrl+F1` | Full shortcut list |
+
+After paste, a **toast** summarizes cleanup (fences removed, smart quotes fixed, etc.).
 
 More shortcuts: **Help** style panel via `Ctrl+F1` or the toolbar **?** button.
 
-## Script runner features (v1.2.14)
+## Script runner features (v1.2.15)
 
 - **Scratch auto-save** — Untitled scripts under `%APPDATA%\PSForge\scratch\{tabId}.ps1` (Windows); orphan files offered on startup.
 - **Close untitled tabs** — Save as, keep in scratch, or discard.
 - **PSSA run gate** — In-app dialog on warn; block mode stops F5 until Problems are fixed.
 - **Run directory** — Per-file folder, custom path, pinned folder, named **presets** in Settings.
 - **Recent runs** — Welcome history: re-run, open run folder, clear, failed-run highlight.
+- **Assistant mode** — One setting applies paste/run/scratch/PSSA defaults for AI workflows.
+- **Paste summary** — Toast after cleanup (`Ctrl+V` or Paste Clean + Format).
+- **Copy Debug Bundle** — Markdown for AI chat (terminal output, exit code, analyzer errors, script).
 - **Terminal** — Copy full scrollback or **last F5 run only**; restart session from toolbar.
 - **Fonts** — Editor/terminal presets + status bar quick control.
 
@@ -116,19 +122,11 @@ npm run tauri build    # desktop installers
 
 Machine-readable architecture notes for agents: [`AI_CONTEXT.md`](AI_CONTEXT.md).
 
-## What to improve next (paste-and-run focus)
+## Possible next steps
 
-Ideas that fit **AI writes code → you paste → run → paste output back**:
-
-| Priority | Improvement | Benefit |
-|----------|-------------|---------|
-| High | **Copy debug bundle** — One action: last run output + exit code + path + top 5 PSSA errors as markdown | Faster handoff back to the AI |
-| High | **Paste summary toast** — “Removed fence, 8 smart quotes, 2 prompt lines” | Trust that cleanup ran |
-| High | **Settings profile: “Assistant mode”** | One toggle applies paste/run/scratch/PSSA defaults |
-| Medium | **Problems → Copy all errors** | Paste analyzer text into chat |
-| Medium | **Run marker in terminal** — Visible `--- Run ---` / `--- Exit N ---` lines | Easier to eyeball last run when scrollback is long |
-| Medium | **Open folder from CLI** — `psforge path\to\script.ps1` documented + optional `--paste` | Agent/tooling can launch a run-ready window |
-| Lower | **Per-project scratch subfolder** — `scratch/{repo-hash}/` | Less collision when many untitled AI snippets |
-| Lower | **Export recent run as `.log`** | Attach to tickets or threads |
-
-These are not implemented yet; they are the natural Phase 4 direction if you want the product optimized for assistant-driven scripting rather than classic ISE parity alone.
+| Idea | Benefit |
+|------|---------|
+| **Problems → Copy all errors** | One-click analyzer text for chat |
+| **Run markers in terminal** | Visible `--- Run ---` / `--- Exit N ---` boundaries |
+| **CLI launch** — `psforge script.ps1` | Open a run-ready window from tooling |
+| **Per-project scratch folders** | Isolate untitled AI snippets by repo |

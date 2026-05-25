@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { sanitizePastedText, FULL_PASTE_SANITIZE_OPTIONS } from "../sanitize-paste";
+import {
+  sanitizePastedText,
+  sanitizePastedTextWithSummary,
+  FULL_PASTE_SANITIZE_OPTIONS,
+} from "../sanitize-paste";
 
 describe("sanitizePastedText", () => {
   it("strips markdown fences", () => {
@@ -21,5 +25,16 @@ describe("sanitizePastedText", () => {
     expect(sanitizePastedText(input, FULL_PASTE_SANITIZE_OPTIONS)).toBe(
       "Get-Process\nSort-Object Name",
     );
+  });
+
+  it("records summary when fence is stripped", () => {
+    const { summary } = sanitizePastedTextWithSummary(
+      "```powershell\nGet-ChildItem\n```",
+      FULL_PASTE_SANITIZE_OPTIONS,
+    );
+    expect(summary.changed).toBe(true);
+    expect(
+      summary.markdownFenceStripped || summary.embeddedFenceExtracted,
+    ).toBe(true);
   });
 });

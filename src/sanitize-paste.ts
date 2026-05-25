@@ -1,4 +1,4 @@
-import type { AppSettings } from "./types";
+import type { AppSettings, PasteSanitizeSummary } from "./types";
 
 /** Options for cleaning text pasted from the web, Teams, or terminal captures. */
 export interface PasteSanitizeOptions {
@@ -200,46 +200,116 @@ function stripControlChars(input: string): string {
   return input.replace(CONTROL_CHAR_RE, "");
 }
 
+function countTypographyReplacements(input: string): number {
+  return input.match(TYPOGRAPHY_PATTERN)?.length ?? 0;
+}
+
+function countHtmlTags(input: string): number {
+  return input.match(SIMPLE_HTML_RE)?.length ?? 0;
+}
+
+function countControlChars(input: string): number {
+  return input.match(CONTROL_CHAR_RE)?.length ?? 0;
+}
+
+function countLineGutters(input: string): number {
+  return input.split("\n").filter((line) => LINE_NUMBER_GUTTER_RE.test(line))
+    .length;
+}
+
+function countPromptPrefixes(input: string): number {
+  return input.split("\n").filter((line) => PROMPT_PREFIX_RE.test(line)).length;
+}
+
+function countProseLinesRemoved(before: string, after: string): number {
+  const beforeLines = before.split("\n").length;
+  const afterLines = after.split("\n").length;
+  return Math.max(0, beforeLines - afterLines);
+}
+
+function emptySummary(): PasteSanitizeSummary {
+  return {
+    changed: false,
+    typographyReplacements: 0,
+    markdownFenceStripped: false,
+    embeddedFenceExtracted: false,
+    proseLinesRemoved: 0,
+    lineGuttersStripped: 0,
+    promptPrefixesStripped: 0,
+    htmlTagsStripped: 0,
+    controlCharsRemoved: 0,
+    newlinesNormalized: false,
+  };
+}
+
+/**
+ * Cleans clipboard or paste buffer text and returns what changed.
+ */
+export function sanitizePastedTextWithSummary(
+  input: string,
+  options?: Partial<PasteSanitizeOptions>,
+): { text: string; summary: PasteSanitizeSummary } {
+  const opts: PasteSanitizeOptions = {
+    ...FULL_PASTE_SANITIZE_OPTIONS,
+    ...options,
+  };
+  const summary = emptySummary();
+  let text = input;
+
+  if (opts.normalizeNewlines) {
+    const next = normalizeNewlines(text);
+    if (next !== text) summary.newlinesNormalized = true;
+    text = next;
+  }
+  if (opts.stripControlChars) {
+    summary.controlCharsRemoved = countControlChars(text);
+    text = stripControlChars(text);
+  }
+  if (opts.stripSimpleHtml) {
+    summary.htmlTagsStripped = countHtmlTags(text);
+    text = stripSimpleHtml(text);
+  }
+  if (opts.extractEmbeddedFences) {
+    const next = extractEmbeddedMarkdownFences(text);
+    if (next !== text) summary.embeddedFenceExtracted = true;
+    text = next;
+  }
+  if (opts.stripMarkdownFences) {
+    const trimmed = text.trim();
+    const next = stripMarkdownFences(text);
+    if (MARKDOWN_FENCE_RE.test(trimmed) || next.trim() !== trimmed) {
+      summary.markdownFenceStripped = true;
+    }
+    text = next;
+  }
+  if (opts.stripLineNumberGutters) {
+    summary.lineGuttersStripped = countLineGutters(text);
+    text = stripLineNumberGutters(text);
+  }
+  if (opts.stripPromptPrefixes) {
+    summary.promptPrefixesStripped = countPromptPrefixes(text);
+    text = stripPromptPrefixes(text);
+  }
+  if (opts.stripProseWrappers) {
+    const before = text;
+    text = stripProseWrappers(text);
+    summary.proseLinesRemoved = countProseLinesRemoved(before, text);
+  }
+  if (opts.fixTypography) {
+    summary.typographyReplacements = countTypographyReplacements(text);
+    text = fixTypography(text);
+  }
+
+  summary.changed = text !== input;
+  return { text, summary };
+}
+
 /**
  * Cleans clipboard or paste buffer text for PowerShell editing.
- * When `options` is omitted, only typographic character fixes run (legacy behavior).
  */
 export function sanitizePastedText(
   input: string,
   options?: Partial<PasteSanitizeOptions>,
 ): string {
-  const opts: PasteSanitizeOptions = {
-    ...FULL_PASTE_SANITIZE_OPTIONS,
-    ...options,
-  };
-
-  let text = input;
-  if (opts.normalizeNewlines) {
-    text = normalizeNewlines(text);
-  }
-  if (opts.stripControlChars) {
-    text = stripControlChars(text);
-  }
-  if (opts.stripSimpleHtml) {
-    text = stripSimpleHtml(text);
-  }
-  if (opts.extractEmbeddedFences) {
-    text = extractEmbeddedMarkdownFences(text);
-  }
-  if (opts.stripMarkdownFences) {
-    text = stripMarkdownFences(text);
-  }
-  if (opts.stripLineNumberGutters) {
-    text = stripLineNumberGutters(text);
-  }
-  if (opts.stripPromptPrefixes) {
-    text = stripPromptPrefixes(text);
-  }
-  if (opts.stripProseWrappers) {
-    text = stripProseWrappers(text);
-  }
-  if (opts.fixTypography) {
-    text = fixTypography(text);
-  }
-  return text;
+  return sanitizePastedTextWithSummary(input, options).text;
 }
