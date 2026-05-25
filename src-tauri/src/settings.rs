@@ -99,10 +99,6 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub persist_runspace_between_runs: bool,
 
-    /// Show debugger toolbar controls, breakpoints, and the Debugger bottom tab.
-    #[serde(default)]
-    pub show_debugger_tools: bool,
-
     /// PowerShell execution policy override ("Default" means no override).
     #[serde(default = "default_execution_policy")]
     pub execution_policy: String,
@@ -257,7 +253,7 @@ fn default_max_recent_files() -> usize {
 }
 
 fn default_split_position() -> f64 {
-    65.0
+    40.0
 }
 
 impl Default for AppSettings {
