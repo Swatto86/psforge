@@ -8,6 +8,9 @@ cd "$ROOT"
 echo "==> npm ci"
 npm ci
 
+echo "==> npm test"
+npm test
+
 echo "==> npm run build"
 npm run build
 

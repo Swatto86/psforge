@@ -29,6 +29,14 @@ const MAX_MAX_RECENT_RUNS: usize = 100;
 const MIN_SPLIT_POSITION: f64 = 10.0;
 const MAX_SPLIT_POSITION: f64 = 90.0;
 
+/// A saved run-directory preset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDirPreset {
+    pub name: String,
+    pub path: String,
+}
+
 /// A single script run recorded in settings history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +160,10 @@ pub struct AppSettings {
     /// Pinned run directory when working_dir_mode is "pinned".
     #[serde(default)]
     pub pinned_run_dir: String,
+
+    /// Named run-directory presets (display name + absolute path).
+    #[serde(default)]
+    pub run_dir_presets: Vec<RunDirPreset>,
 
     /// Show PS7 install recommendation banner when only Windows PowerShell 5.1 is detected.
     #[serde(default = "default_true")]
@@ -344,6 +356,7 @@ impl Default for AppSettings {
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
             pinned_run_dir: String::new(),
+            run_dir_presets: Vec::new(),
             show_ps7_install_reminder: true,
             check_for_updates_on_startup: true,
             terminal_load_profile: false,
@@ -435,6 +448,11 @@ impl AppSettings {
             .max_recent_runs
             .clamp(MIN_MAX_RECENT_RUNS, MAX_MAX_RECENT_RUNS);
         self.recent_runs.truncate(self.max_recent_runs);
+        self.run_dir_presets
+            .retain(|preset| !preset.name.trim().is_empty() && !preset.path.trim().is_empty());
+        if self.run_dir_presets.len() > 12 {
+            self.run_dir_presets.truncate(12);
+        }
         self.split_position = if self.split_position.is_finite() {
             self.split_position
                 .clamp(MIN_SPLIT_POSITION, MAX_SPLIT_POSITION)

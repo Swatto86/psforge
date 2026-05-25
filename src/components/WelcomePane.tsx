@@ -226,12 +226,33 @@ export function WelcomePane() {
             border: "1px solid var(--border-primary)",
           }}
         >
-          <h2
-            className="mb-3 text-xs font-semibold uppercase"
-            style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
-          >
-            Recent runs
-          </h2>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2
+              className="text-xs font-semibold uppercase"
+              style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
+            >
+              Recent runs
+            </h2>
+            {recentRuns.length > 0 && (
+              <button
+                type="button"
+                data-testid="welcome-clear-recent-runs"
+                onClick={() => {
+                  (
+                    window as unknown as Record<string, (() => void) | undefined>
+                  ).__psforge_clearRecentRuns?.();
+                }}
+                className="text-xs rounded px-2 py-1"
+                style={{
+                  border: "1px solid var(--border-primary)",
+                  color: "var(--text-secondary)",
+                  backgroundColor: "transparent",
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
           {recentRuns.length === 0 ? (
             <p className="text-sm" style={{ color: "var(--text-muted)" }}>
               F5 runs appear here with exit code and duration.
@@ -243,6 +264,26 @@ export function WelcomePane() {
                   key={`${run.runAt}-${run.tabTitle}`}
                   run={run}
                   onOpen={run.scriptPath ? () => openPath(run.scriptPath) : undefined}
+                  onRerun={() => {
+                    const rerun = (
+                      window as unknown as Record<string, unknown>
+                    ).__psforge_rerunFromRecord as
+                      | ((r: ScriptRunRecord) => void)
+                      | undefined;
+                    rerun?.(run);
+                  }}
+                  onOpenWorkingDir={
+                    run.workingDir
+                      ? () => {
+                          const openDir = (
+                            window as unknown as Record<string, unknown>
+                          ).__psforge_openRunDirectory as
+                            | ((dir: string) => void)
+                            | undefined;
+                          openDir?.(run.workingDir);
+                        }
+                      : undefined
+                  }
                 />
               ))}
             </ul>
@@ -264,10 +305,15 @@ export function WelcomePane() {
 function RecentRunRow({
   run,
   onOpen,
+  onRerun,
+  onOpenWorkingDir,
 }: {
   run: ScriptRunRecord;
   onOpen?: () => void;
+  onRerun: () => void;
+  onOpenWorkingDir?: () => void;
 }) {
+  const failed = run.exitCode === null || (run.exitCode ?? 0) !== 0;
   const label =
     run.exitCode === null
       ? "Failed"
@@ -310,14 +356,58 @@ function RecentRunRow({
         </div>
       )}
       <div
-        className="mt-1 flex flex-wrap gap-3 text-xs"
+        className="mt-1 flex flex-wrap gap-3 text-xs items-center"
         style={{ color: "var(--text-secondary)" }}
       >
-        <span>{label}</span>
+        <span
+          style={{
+            fontWeight: 600,
+            color: failed ? "var(--text-warning, #e8a838)" : undefined,
+          }}
+        >
+          {label}
+        </span>
         <span>{duration}</span>
         <span>{new Date(run.runAt).toLocaleString()}</span>
       </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <SmallAction label="Re-run" onClick={onRerun} testId="welcome-rerun" />
+        {onOpenWorkingDir && (
+          <SmallAction
+            label="Open run folder"
+            onClick={onOpenWorkingDir}
+            testId="welcome-open-run-dir"
+          />
+        )}
+      </div>
     </li>
+  );
+}
+
+function SmallAction({
+  label,
+  onClick,
+  testId,
+}: {
+  label: string;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      className="rounded px-2 py-0.5 text-xs"
+      style={{
+        border: "1px solid var(--border-primary)",
+        backgroundColor: "var(--bg-tertiary)",
+        color: "var(--text-primary)",
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

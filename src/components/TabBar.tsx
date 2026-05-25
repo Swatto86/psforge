@@ -106,6 +106,12 @@ export function TabBar() {
   };
 
   const closeTab = async (tabId: string) => {
+    const bridge = (window as unknown as Record<string, unknown>)
+      .__psforge_requestCloseTab as ((id: string) => Promise<boolean>) | undefined;
+    if (bridge) {
+      await bridge(tabId);
+      return;
+    }
     const tab = state.tabs.find((t) => t.id === tabId);
     if (tab?.isDirty) {
       const confirmed = await confirmDiscard(tab.title);

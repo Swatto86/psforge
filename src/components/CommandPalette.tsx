@@ -200,6 +200,32 @@ export function CommandPalette() {
       });
 
       result.push({
+        id: "cmd-copy-last-run-output",
+        label: "Copy Last Run Output",
+        category: "Terminal",
+        description: "Copy integrated terminal output from the last F5 run",
+        action: () => {
+          close();
+          void (
+            window as unknown as Record<string, (() => Promise<void>) | undefined>
+          ).__psforge_copy_last_run_output?.();
+        },
+      });
+
+      result.push({
+        id: "cmd-clear-recent-runs",
+        label: "Clear Recent Runs",
+        category: "Script Runner",
+        description: "Remove all entries from the recent runs log",
+        action: () => {
+          (
+            window as unknown as Record<string, (() => void) | undefined>
+          ).__psforge_clearRecentRuns?.();
+          close();
+        },
+      });
+
+      result.push({
         id: "cmd-paste-clean-format",
         label: "Paste Clean + Format",
         category: "Editor",

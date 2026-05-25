@@ -17,6 +17,11 @@ import {
   MONOSPACE_FONT_PRESETS,
   presetIdForFamily,
 } from "../font-presets";
+import {
+  applyRunDirPreset,
+  normalizeRunDirPresets,
+} from "../run-dir-presets";
+import type { RunDirPreset } from "../types";
 
 /** Section identifiers. */
 type Section =
@@ -942,6 +947,83 @@ export function SettingsPanel() {
                       </button>
                     </div>
                   )}
+                </div>
+              </SettingRow>
+
+              <SettingRow
+                label="Run Directory Presets"
+                tooltip="Named folders you can apply to pin the script run working directory. Optional .psforge.json in a project folder can override modes when you open scripts."
+              >
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Example project file beside your scripts:{" "}
+                    <code className="font-mono">{`{ "workingDirMode": "custom", "customWorkingDir": "C:\\\\Repo\\\\scripts" }`}</code>
+                  </p>
+                  {(state.settings.runDirPresets ?? []).map((preset, index) => (
+                    <div key={`${preset.name}-${index}`} className="flex flex-wrap gap-2 items-center">
+                      <input
+                        className="text-sm w-28"
+                        value={preset.name}
+                        placeholder="Name"
+                        onChange={(e) => {
+                          const presets = [...(state.settings.runDirPresets ?? [])];
+                          presets[index] = { ...preset, name: e.target.value };
+                          updateSetting("runDirPresets", normalizeRunDirPresets(presets));
+                        }}
+                      />
+                      <input
+                        className="text-sm flex-1 min-w-[12rem]"
+                        value={preset.path}
+                        placeholder="C:\Scripts"
+                        onChange={(e) => {
+                          const presets = [...(state.settings.runDirPresets ?? [])];
+                          presets[index] = { ...preset, path: e.target.value };
+                          updateSetting("runDirPresets", presets);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="px-2 py-1 text-xs rounded"
+                        style={{ border: "1px solid var(--border-primary)" }}
+                        onClick={() => {
+                          dispatch({
+                            type: "SET_SETTINGS",
+                            settings: applyRunDirPreset(state.settings, preset.name),
+                          });
+                        }}
+                      >
+                        Apply
+                      </button>
+                      <button
+                        type="button"
+                        className="px-2 py-1 text-xs rounded"
+                        style={{ border: "1px solid var(--border-primary)" }}
+                        onClick={() => {
+                          const presets = (state.settings.runDirPresets ?? []).filter(
+                            (_, i) => i !== index,
+                          );
+                          updateSetting("runDirPresets", presets);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    data-testid="settings-add-run-dir-preset"
+                    className="px-2 py-1 text-xs rounded self-start"
+                    style={{ border: "1px solid var(--border-primary)" }}
+                    onClick={() => {
+                      const presets: RunDirPreset[] = [
+                        ...(state.settings.runDirPresets ?? []),
+                        { name: `Preset ${(state.settings.runDirPresets?.length ?? 0) + 1}`, path: "" },
+                      ];
+                      updateSetting("runDirPresets", presets);
+                    }}
+                  >
+                    Add preset
+                  </button>
                 </div>
               </SettingRow>
 

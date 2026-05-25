@@ -28,3 +28,10 @@ export function dirname(path: string): string {
   const idx = lastSeparatorIndex(path);
   return idx > 0 ? path.slice(0, idx) : "";
 }
+
+/** Join directory and file segment using the dominant separator in `dir`. */
+export function joinPath(dir: string, name: string): string {
+  const sep = dir.includes("\\") ? "\\" : "/";
+  const trimmed = dir.replace(/[/\\]+$/, "");
+  return `${trimmed}${sep}${name}`;
+}

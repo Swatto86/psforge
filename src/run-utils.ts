@@ -27,3 +27,26 @@ export function resolveExecutionWorkDir(
 export function isPssaErrorSeverity(severity: string): boolean {
   return severity === "Error" || severity === "ParseError";
 }
+
+/** One-shot working directory override for re-run from recent runs. */
+export function resolveExecutionWorkDirWithOverride(
+  activeTab: EditorTab,
+  stateWorkingDir: string,
+  settings: Pick<
+    AppSettings,
+    "workingDirMode" | "customWorkingDir" | "pinnedRunDir"
+  >,
+  platformHomeFallback: () => string,
+  workingDirOverride?: string,
+): string {
+  const trimmed = workingDirOverride?.trim();
+  if (trimmed) return trimmed;
+  return resolveExecutionWorkDir(
+    activeTab,
+    stateWorkingDir,
+    settings.workingDirMode,
+    settings.customWorkingDir,
+    settings.pinnedRunDir,
+    platformHomeFallback,
+  );
+}

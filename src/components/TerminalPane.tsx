@@ -239,6 +239,7 @@ interface TerminalSessionHandle {
   focus: () => void;
   restart: () => void;
   getContent: (lineCount?: number) => string;
+  getLineCount: () => number;
   isReady: () => boolean;
   submitCurrentInput: () => void;
   resetInput: () => void;
@@ -316,6 +317,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
     const focusFnRef = useRef<(() => void) | null>(null);
     const clearFnRef = useRef<(() => void) | null>(null);
     const contentFnRef = useRef<((lineCount?: number) => string) | null>(null);
+    const lineCountFnRef = useRef<(() => number) | null>(null);
     const execFnRef = useRef<
       ((command: string) => Promise<number | null>) | null
     >(null);
@@ -332,6 +334,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         restart: () => startSessionFnRef.current?.(false),
         getContent: (lineCount?: number) =>
           contentFnRef.current?.(lineCount) ?? "",
+        getLineCount: () => lineCountFnRef.current?.() ?? 0,
         isReady: () => isReadyRef.current,
         submitCurrentInput: () => queueInputFnRef.current?.("\r", true),
         resetInput: () => queueInputFnRef.current?.("\u0003", true),
@@ -523,6 +526,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         }
         return lines.join("\n");
       };
+      lineCountFnRef.current = () => term.buffer.active.length;
       execFnRef.current = async (command: string) => {
         if (cancelled || isStoppingRef.current) {
           throw new Error("Terminal session is unavailable.");
@@ -745,6 +749,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         focusFnRef.current = null;
         clearFnRef.current = null;
         contentFnRef.current = null;
+        lineCountFnRef.current = null;
         execFnRef.current = null;
         writeLocalFnRef.current = null;
         rejectPendingCommands("Terminal session was disposed.");
@@ -1033,6 +1038,8 @@ export function TerminalPane() {
     w.__psforge_terminal_restart = () => getActiveHandle()?.restart();
     w.__psforge_terminal_get_content = (lineCount?: number) =>
       getActiveHandle()?.getContent(lineCount as number | undefined) ?? "";
+    w.__psforge_terminal_get_line_count = () =>
+      getActiveHandle()?.getLineCount() ?? 0;
     w.__psforge_terminal_is_ready = () => getActiveHandle()?.isReady() ?? false;
     w.__psforge_terminal_submit_current_input = () =>
       getActiveHandle()?.submitCurrentInput();
@@ -1049,6 +1056,7 @@ export function TerminalPane() {
       delete w.__psforge_terminal_run_command;
       delete w.__psforge_terminal_restart;
       delete w.__psforge_terminal_get_content;
+      delete w.__psforge_terminal_get_line_count;
       delete w.__psforge_terminal_is_ready;
       delete w.__psforge_terminal_submit_current_input;
       delete w.__psforge_terminal_write_notice;

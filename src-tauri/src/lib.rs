@@ -65,6 +65,8 @@ pub fn run() {
             commands::format_script,
             commands::get_ps_profile_path,
             commands::get_scratch_dir,
+            commands::list_scratch_files,
+            commands::delete_scratch_file,
             commands::get_signing_certificates,
             commands::sign_script,
             terminal::start_terminal,

@@ -200,6 +200,21 @@ export async function getScratchDir(): Promise<string> {
   return invoke<string>("get_scratch_dir");
 }
 
+export interface ScratchFileInfo {
+  tabId: string;
+  path: string;
+}
+
+/** Lists auto-saved scratch `.ps1` files keyed by tab id. */
+export async function listScratchFiles(): Promise<ScratchFileInfo[]> {
+  return invoke<ScratchFileInfo[]>("list_scratch_files");
+}
+
+/** Removes a scratch file (discard untitled buffer). */
+export async function deleteScratchFile(path: string): Promise<void> {
+  return invoke("delete_scratch_file", { path });
+}
+
 /** Save user settings. */
 export async function saveSettings(settings: AppSettings): Promise<void> {
   return invoke("save_settings", { settings });
