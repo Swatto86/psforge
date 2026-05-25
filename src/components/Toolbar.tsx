@@ -59,6 +59,7 @@ export function Toolbar({
   onSign,
 }: ToolbarProps) {
   const { state, dispatch, activeTab } = useAppState();
+  const showDebuggerTools = state.settings.showDebuggerTools === true;
   const hasSavableTabs = state.tabs.some(
     (t) => t.tabType !== "welcome" && (t.isDirty || !t.filePath),
   );

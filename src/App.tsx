@@ -2072,17 +2072,19 @@ function AppInner() {
       }
 
       // F10/F11/Shift+F11: Debug step controls while paused.
-      if (e.key === "F10") {
-        e.preventDefault();
-        void debugStepOver();
-      }
-      if (e.key === "F11" && !e.shiftKey) {
-        e.preventDefault();
-        void debugStepInto();
-      }
-      if (e.key === "F11" && e.shiftKey) {
-        e.preventDefault();
-        void debugStepOut();
+      if (state.settings.showDebuggerTools === true) {
+        if (e.key === "F10") {
+          e.preventDefault();
+          void debugStepOver();
+        }
+        if (e.key === "F11" && !e.shiftKey) {
+          e.preventDefault();
+          void debugStepInto();
+        }
+        if (e.key === "F11" && e.shiftKey) {
+          e.preventDefault();
+          void debugStepOut();
+        }
       }
 
       // F8: Run selection, or current line when no selection (ISE behavior)

@@ -153,6 +153,14 @@ export function OutputPane({
       v.value.toLowerCase().includes(varFilter.toLowerCase()),
   );
   const pssaEnabled = state.settings.enablePssa !== false;
+  const showDebuggerTools = state.settings.showDebuggerTools === true;
+
+  useEffect(() => {
+    if (!showDebuggerTools && state.bottomPanelTab === "debugger") {
+      dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
+    }
+  }, [showDebuggerTools, state.bottomPanelTab, dispatch]);
+
   const activeProblems =
     activeTab && activeTab.tabType !== "welcome"
       ? [...(state.problems[activeTab.id] ?? [])].sort((a, b) => {
@@ -233,7 +241,9 @@ export function OutputPane({
 
   const utilityBottomTabs: BottomTabDescriptor[] = [
     { id: "variables", label: "Variables", secondary: true },
-    { id: "debugger", label: "Debugger", secondary: true },
+    ...(showDebuggerTools
+      ? [{ id: "debugger" as const, label: "Debugger", secondary: true }]
+      : []),
     { id: "show-command", label: "Show Command", secondary: true },
     { id: "help", label: "Help", secondary: true },
   ];
@@ -246,8 +256,8 @@ export function OutputPane({
         return {
           title: "Interactive Terminal",
           subtitle:
-            "Run scripts, inspect errors, and use ad-hoc PowerShell commands in the same terminal session.",
-          chipLabel: state.isRunning ? "Running" : "Terminal-first",
+            "Run scripts with F5 and use the same session for quick commands and output.",
+          chipLabel: state.isRunning ? "Running" : "",
           chipTone: "accent",
         };
       case "problems":
@@ -438,7 +448,9 @@ export function OutputPane({
         <div className="bottom-pane-heading">
           <div className="bottom-pane-title-row">
             <span className="bottom-pane-title">{activePaneMeta.title}</span>
-            <span className={chipClassName}>{activePaneMeta.chipLabel}</span>
+            {activePaneMeta.chipLabel ? (
+              <span className={chipClassName}>{activePaneMeta.chipLabel}</span>
+            ) : null}
           </div>
           <div className="bottom-pane-subtitle">{activePaneMeta.subtitle}</div>
         </div>

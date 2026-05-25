@@ -666,6 +666,17 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Debugger Tools"
+                tooltip="Shows breakpoint gutter controls, debugger toolbar buttons, and the Debugger bottom tab. Turn on only when you need step-through debugging."
+              >
+                <Toggle
+                  checked={state.settings.showDebuggerTools === true}
+                  onChange={(v) => updateSetting("showDebuggerTools", v)}
+                  label="Show debugger toolbar, breakpoints, and Debugger tab"
+                />
+              </SettingRow>
+
+              <SettingRow
                 label="Runspace Persistence"
                 tooltip="Controls whether script/debug runs reuse one backend runspace or start from a fresh runspace each time."
               >

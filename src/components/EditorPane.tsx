@@ -267,6 +267,17 @@ export function EditorPane() {
   const breakpointDecorationsRef = useRef<string[]>([]);
   const bookmarkDecorationsRef = useRef<string[]>([]);
   const contextMenuLineRef = useRef<number | null>(null);
+  const showDebuggerToolsRef = useRef(state.settings.showDebuggerTools === true);
+
+  useEffect(() => {
+    showDebuggerToolsRef.current = state.settings.showDebuggerTools === true;
+    if (!showDebuggerToolsRef.current && editorRef.current) {
+      breakpointDecorationsRef.current = editorRef.current.deltaDecorations(
+        breakpointDecorationsRef.current,
+        [],
+      );
+    }
+  }, [state.settings.showDebuggerTools]);
 
   // Dispose the completion provider when the component unmounts.
   useEffect(() => {
