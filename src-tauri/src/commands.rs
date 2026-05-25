@@ -1742,6 +1742,40 @@ pub fn save_user_snippets_to(path: &std::path::Path, snippets: &[Snippet]) -> Re
 pub async fn reveal_in_explorer(path: String) -> Result<(), AppError> {
     info!("reveal_in_explorer: {}", path);
 
+    if std::path::Path::new(&path).is_dir() {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer.exe")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| AppError {
+                    code: "EXPLORER_LAUNCH_FAILED".to_string(),
+                    message: format!("Failed to open Explorer: {}", e),
+                })?;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| AppError {
+                    code: "EXPLORER_LAUNCH_FAILED".to_string(),
+                    message: format!("Failed to open Finder: {}", e),
+                })?;
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| AppError {
+                    code: "EXPLORER_LAUNCH_FAILED".to_string(),
+                    message: format!("Failed to open file manager: {}", e),
+                })?;
+        }
+        return Ok(());
+    }
+
     #[cfg(target_os = "windows")]
     {
         // explorer.exe /select,"<path>" highlights the file in its folder.
@@ -2665,6 +2699,67 @@ pub async fn get_scratch_dir() -> Result<String, AppError> {
         std::fs::create_dir_all(&dir)?;
     }
     Ok(dir.to_string_lossy().into())
+}
+
+/// Metadata for a scratch auto-save file on disk.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScratchFileInfo {
+    pub tab_id: String,
+    pub path: String,
+}
+
+/// Lists `.ps1` scratch files (tab id is the filename stem).
+#[tauri::command]
+pub async fn list_scratch_files() -> Result<Vec<ScratchFileInfo>, AppError> {
+    let dir = settings::scratch_dir()?;
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(stem) = name.strip_suffix(".ps1") else {
+            continue;
+        };
+        if stem.is_empty()
+            || stem.contains(['/', '\\'])
+            || stem.contains("..")
+            || !stem
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            continue;
+        }
+        files.push(ScratchFileInfo {
+            tab_id: stem.to_string(),
+            path: entry.path().to_string_lossy().into(),
+        });
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// Deletes a scratch file when the user discards an untitled buffer.
+#[tauri::command]
+pub async fn delete_scratch_file(path: String) -> Result<(), AppError> {
+    let scratch_dir = settings::scratch_dir()?;
+    let target = std::path::Path::new(path.trim());
+    if !target.starts_with(&scratch_dir) {
+        return Err(AppError {
+            code: "SCRATCH_PATH_OUTSIDE_DIR".to_string(),
+            message: "Scratch file path is outside the scratch directory.".to_string(),
+        });
+    }
+    if target.exists() {
+        std::fs::remove_file(target)?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

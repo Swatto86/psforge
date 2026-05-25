@@ -15,6 +15,29 @@ PSForge helps you:
 - Inspect variables and command/help metadata while you work
 - Manage editor settings, snippets, and recent files
 
+## Script runner (Phase 2–3)
+
+Focused workflow for day-to-day scripting:
+
+- **Paste & run** — Clean clipboard junk on paste; optional run after Paste Clean + Format (`Ctrl+Shift+Alt+V`) or sanitized `Ctrl+V`
+- **Scratch auto-save** — Untitled scripts save under `%APPDATA%/PSForge/scratch`; **recovery on startup** for orphan scratch files
+- **Close untitled tabs** — Save as, keep in scratch, or discard the scratch copy
+- **PSSA run gate** — Warn or block F5 when PSScriptAnalyzer reports errors (in-app dialog in warn mode)
+- **Run directory** — File / custom / pinned CWD; **named presets** in Settings; optional **`.psforge.json`** beside project scripts
+- **Recent runs** — Welcome pane history with re-run, open run folder, clear list, and failed-run highlighting
+- **Terminal output** — Copy full scrollback or **copy last F5 run** only
+- **Fonts** — Editor/terminal presets with status-bar quick controls
+
+Example `.psforge.json` in a repo:
+
+```json
+{
+  "workingDirMode": "custom",
+  "customWorkingDir": "C:\\Repo\\scripts",
+  "pssaRunGate": "warn"
+}
+```
+
 ## Key features
 
 - Multi-tab script editor
@@ -50,6 +73,12 @@ npm ci
 npm run tauri dev
 ```
 
+### Run frontend unit tests
+
+```bash
+npm test
+```
+
 ### Build frontend assets
 
 ```bash
@@ -62,7 +91,12 @@ npm run build
 npm run tauri build
 ```
 
+### Local CI (matches GitHub Actions)
+
+```bash
+./scripts/ci-local.sh
+```
+
 ## Version
 
-Current project version: **1.2.8**
-
+Current project version: **1.2.14**

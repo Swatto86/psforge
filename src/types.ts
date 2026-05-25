@@ -239,6 +239,8 @@ export interface AppSettings {
   customWorkingDir: string;
   /** Pinned run directory when workingDirMode is "pinned". */
   pinnedRunDir: string;
+  /** Saved run-directory presets (name + absolute path). */
+  runDirPresets: RunDirPreset[];
   /** Show PS7 install recommendation banner when only Windows PowerShell 5.1 is detected. */
   showPs7InstallReminder: boolean;
   /** Check the public GitHub release feed for application updates on startup. */
@@ -309,6 +311,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   workingDirMode: "file",
   customWorkingDir: "",
   pinnedRunDir: "",
+  runDirPresets: [],
   showPs7InstallReminder: true,
   checkForUpdatesOnStartup: true,
   terminalLoadProfile: false,
@@ -332,6 +335,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 /** Sub-views inside the Reference bottom tab. */
 export type ReferenceSubview = "problems" | "show-command" | "help";
+
+/** Named working-directory preset for script runs. */
+export interface RunDirPreset {
+  name: string;
+  path: string;
+}
 
 /** A single entry in the recent script runs log. */
 export interface ScriptRunRecord {

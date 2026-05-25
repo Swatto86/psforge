@@ -522,6 +522,18 @@ export function OutputPane({
                 Copy Output
               </button>
               <button
+                data-testid="terminal-copy-last-run-button"
+                onClick={() => {
+                  void (
+                    window as unknown as Record<string, () => Promise<void>>
+                  ).__psforge_copy_last_run_output?.();
+                }}
+                className={actionButtonClassName()}
+                title="Copy output from the last F5 run"
+              >
+                Copy Last Run
+              </button>
+              <button
                 data-testid="terminal-clear-button"
                 onClick={() =>
                   (

@@ -22,3 +22,32 @@ export async function copyTerminalOutputToClipboard(
   await navigator.clipboard.writeText(text);
   return true;
 }
+
+/** Total lines in the active integrated terminal scrollback buffer. */
+export function getTerminalLineCount(): number {
+  const w = window as unknown as Record<string, unknown>;
+  const count = w.__psforge_terminal_get_line_count as (() => number) | undefined;
+  return count?.() ?? 0;
+}
+
+/** Copy terminal lines from `startLine` (0-based) through the end of the buffer. */
+export async function copyTerminalOutputFromLine(
+  startLine: number,
+): Promise<boolean> {
+  const total = getTerminalLineCount();
+  if (total <= startLine) return false;
+  const lineCount = total - startLine;
+  const text = getTerminalPlainContent(lineCount);
+  if (!text.trim()) return false;
+  await navigator.clipboard.writeText(text);
+  return true;
+}
+
+export async function copyLastRunOutputToClipboard(
+  startLine: number | null,
+): Promise<boolean> {
+  if (startLine === null || startLine < 0) {
+    return copyTerminalOutputToClipboard();
+  }
+  return copyTerminalOutputFromLine(startLine);
+}

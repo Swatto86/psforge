@@ -33,8 +33,28 @@ import {
 import {
   isPssaErrorSeverity,
   resolveExecutionWorkDir,
+  resolveExecutionWorkDirWithOverride,
 } from "./run-utils";
-import { copyTerminalOutputToClipboard } from "./terminal-utils";
+import {
+  copyLastRunOutputToClipboard,
+  copyTerminalOutputToClipboard,
+  getTerminalLineCount,
+} from "./terminal-utils";
+import {
+  scratchPathForTab,
+  isScratchBackedTab,
+  isUntitledScratchCandidate,
+} from "./scratch-utils";
+import { findProjectConfig, applyProjectConfig } from "./project-config";
+import { PssaRunGateDialog } from "./components/PssaRunGateDialog";
+import {
+  ScratchRecoveryDialog,
+  type ScratchRecoveryCandidate,
+} from "./components/ScratchRecoveryDialog";
+import {
+  CloseScratchDialog,
+  type CloseScratchChoice,
+} from "./components/CloseScratchDialog";
 import type {
   OutputLine,
   EditorTab,
@@ -46,6 +66,7 @@ import type {
   DebugStackFrame,
   DebugWatch,
   PsVersion,
+  PssaDiagnostic,
   UpdateStatus,
   VariableInfo,
 } from "./types";
@@ -192,11 +213,6 @@ function appendRunRecord(
   const cap = settings.maxRecentRuns ?? 20;
   const recentRuns = [record, ...(settings.recentRuns ?? [])].slice(0, cap);
   return { ...settings, recentRuns };
-}
-
-function scratchPathForTab(scratchDir: string, tabId: string): string {
-  const sep = scratchDir.includes("\\") ? "\\" : "/";
-  return `${scratchDir}${sep}${tabId}.ps1`;
 }
 
 function resolveFallbackWorkDir(activeTab: EditorTab): string {
@@ -413,6 +429,19 @@ function AppInner() {
   const autoUpdateCheckStartedRef = useRef(false);
   const scratchDirRef = useRef("");
   const scratchSaveTimersRef = useRef<Map<string, number>>(new Map());
+  const scratchRecoveryCheckedRef = useRef(false);
+  const lastRunOutputStartLineRef = useRef<number | null>(null);
+  const runWorkingDirOverrideRef = useRef<string | null>(null);
+  const [pssaGatePrompt, setPssaGatePrompt] = React.useState<{
+    errors: PssaDiagnostic[];
+    resolve: (proceed: boolean) => void;
+  } | null>(null);
+  const [closeScratchPrompt, setCloseScratchPrompt] = React.useState<{
+    tab: EditorTab;
+    resolve: (closed: boolean) => void;
+  } | null>(null);
+  const [scratchRecoveryCandidates, setScratchRecoveryCandidates] =
+    React.useState<ScratchRecoveryCandidate[] | null>(null);
   const clampSplitForCurrentLayout = useCallback(
     (nextPercent: number): number => {
       const containerHeight =
@@ -1109,15 +1138,21 @@ function AppInner() {
         const dir = dirname(selected);
         if (dir) dispatch({ type: "SET_WORKING_DIR", dir });
 
+        let nextSettings = { ...state.settings };
+        const project = await findProjectConfig(selected);
+        if (project) {
+          nextSettings = applyProjectConfig(nextSettings, project.config);
+        }
+
         // Update recent files list, respecting maxRecentFiles setting.
-        const maxRecent = state.settings.maxRecentFiles ?? 20;
+        const maxRecent = nextSettings.maxRecentFiles ?? 20;
         const recent = [
           selected,
-          ...state.settings.recentFiles.filter((f) => f !== selected),
+          ...nextSettings.recentFiles.filter((f) => f !== selected),
         ].slice(0, maxRecent);
         dispatch({
           type: "SET_SETTINGS",
-          settings: { ...state.settings, recentFiles: recent },
+          settings: { ...nextSettings, recentFiles: recent },
         });
       } catch (err) {
         // File open failed -- log for diagnostics but don't crash.
@@ -1160,10 +1195,20 @@ function AppInner() {
         );
       }
       dispatch({ type: "SET_WORKING_DIR", dir: selected });
+
+      const project = await findProjectConfig(
+        scriptPaths[0] ?? `${base}/.psforge.json`,
+      );
+      if (project) {
+        dispatch({
+          type: "SET_SETTINGS",
+          settings: applyProjectConfig(state.settings, project.config),
+        });
+      }
     } catch (err) {
       console.error("openScriptFolder failed:", err);
     }
-  }, [openFile, dispatch, writeTerminalNotice]);
+  }, [openFile, dispatch, writeTerminalNotice, state.settings]);
 
   /** Open (or focus) the Welcome tab so users can restore onboarding content. */
   const openWelcomePage = useCallback(() => {
@@ -1335,27 +1380,90 @@ function AppInner() {
     }
   }, [state.tabs, state.settings, saveTab, mergeRecentFiles, dispatch]);
 
+  const finalizeCloseTab = useCallback(
+    async (tab: EditorTab, choice: CloseScratchChoice): Promise<boolean> => {
+      const scratchDir = scratchDirRef.current;
+      const scratchPath =
+        scratchDir && (isUntitledScratchCandidate(tab) || isScratchBackedTab(tab, scratchDir))
+          ? tab.filePath || scratchPathForTab(scratchDir, tab.id)
+          : tab.filePath;
+
+      if (choice === "cancel") return false;
+
+      if (choice === "save-as") {
+        const result = await saveTab(tab);
+        if (!result.saved) return false;
+        if (scratchPath && result.path && result.path !== scratchPath) {
+          try {
+            await cmd.deleteScratchFile(scratchPath);
+          } catch {
+            // best-effort cleanup
+          }
+        }
+      } else if (choice === "discard" && scratchPath) {
+        try {
+          await cmd.deleteScratchFile(scratchPath);
+        } catch {
+          // ignore missing scratch file
+        }
+      }
+
+      if (state.tabs.length > 1) {
+        dispatch({ type: "CLOSE_TAB", id: tab.id });
+      }
+      return true;
+    },
+    [dispatch, saveTab, state.tabs.length],
+  );
+
+  const requestCloseTab = useCallback(
+    async (tabId: string): Promise<boolean> => {
+      const tab = state.tabs.find((t) => t.id === tabId);
+      if (!tab || state.tabs.length <= 1) return false;
+
+      const scratchDir = scratchDirRef.current;
+      const isScratchTab =
+        tab.isDirty &&
+        (isUntitledScratchCandidate(tab) ||
+          (scratchDir ? isScratchBackedTab(tab, scratchDir) : false));
+
+      if (isScratchTab) {
+        return new Promise((resolve) => {
+          setCloseScratchPrompt({
+            tab,
+            resolve: (closed) => resolve(closed),
+          });
+        });
+      }
+
+      if (tab.isDirty) {
+        const confirmMessage = `"${tab.title}" has unsaved changes.\n\nClose without saving?`;
+        let confirmed = false;
+        try {
+          const { confirm } = await import("@tauri-apps/plugin-dialog");
+          confirmed = await confirm(confirmMessage, {
+            title: "PSForge",
+            kind: "warning",
+            okLabel: "Close",
+            cancelLabel: "Cancel",
+          });
+        } catch {
+          confirmed = false;
+        }
+        if (!confirmed) return false;
+      }
+
+      dispatch({ type: "CLOSE_TAB", id: tab.id });
+      return true;
+    },
+    [dispatch, state.tabs],
+  );
+
   /** Close the active tab, mirroring tab-bar close confirmation semantics. */
   const closeActiveTab = useCallback(async () => {
     if (!activeTab || state.tabs.length <= 1) return;
-    if (activeTab.isDirty) {
-      const confirmMessage = `"${activeTab.title}" has unsaved changes.\n\nClose without saving?`;
-      let confirmed = false;
-      try {
-        const { confirm } = await import("@tauri-apps/plugin-dialog");
-        confirmed = await confirm(confirmMessage, {
-          title: "PSForge",
-          kind: "warning",
-          okLabel: "Close",
-          cancelLabel: "Cancel",
-        });
-      } catch {
-        confirmed = false;
-      }
-      if (!confirmed) return;
-    }
-    dispatch({ type: "CLOSE_TAB", id: activeTab.id });
-  }, [activeTab, state.tabs.length, dispatch]);
+    await requestCloseTab(activeTab.id);
+  }, [activeTab, state.tabs.length, requestCloseTab]);
 
   /** Activate the next/previous tab by offset (+1 next, -1 previous). */
   const activateRelativeTab = useCallback(
@@ -1376,7 +1484,8 @@ function AppInner() {
     // BUG-NEW-2 fix: welcome tabs have no runnable content; guard here so
     // F5 does not submit an empty script. The Run button is also disabled
     // for welcome tabs (see Toolbar.tsx).
-    if (!activeTab || activeTab.tabType === "welcome" || state.isRunning) {
+    const tab = activeTabRef.current;
+    if (!tab || tab.tabType === "welcome" || state.isRunning) {
       return;
     }
 
@@ -1406,28 +1515,28 @@ function AppInner() {
     dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
 
     // Auto-save before running when the setting is enabled (Rule 11 -- pre-flight).
-    if (state.settings.autoSaveOnRun && activeTab.isDirty) {
-      let savePath = activeTab.filePath;
+    if (state.settings.autoSaveOnRun && tab.isDirty) {
+      let savePath = tab.filePath;
       if (!savePath && state.settings.autoSaveScratchScripts !== false) {
         const scratchDir = scratchDirRef.current;
         if (scratchDir) {
-          savePath = scratchPathForTab(scratchDir, activeTab.id);
+          savePath = scratchPathForTab(scratchDir, tab.id);
         }
       }
       if (savePath) {
         try {
           await cmd.saveFileContent(
             savePath,
-            activeTab.content,
-            activeTab.encoding,
+            tab.content,
+            tab.encoding,
           );
           dispatch({
             type: "UPDATE_TAB",
-            id: activeTab.id,
+            id: tab.id,
             changes: {
               filePath: savePath,
-              title: activeTab.filePath ? activeTab.title : basename(savePath),
-              savedContent: activeTab.content,
+              title: tab.filePath ? tab.title : basename(savePath),
+              savedContent: tab.content,
               isDirty: false,
             },
           });
@@ -1440,17 +1549,17 @@ function AppInner() {
     // Snapshot execution parameters before any async gap so closures below
     // always use the values that were active at the moment Run was pressed.
     const psPath = state.selectedPsPath;
-    const scriptContent = activeTab.content;
+    const scriptContent = tab.content;
 
     // Determine working directory early (needed even if param dialog cancels).
-    const workDir = resolveExecutionWorkDir(
-      activeTab,
+    const workDir = resolveExecutionWorkDirWithOverride(
+      tab,
       state.workingDir,
-      state.settings.workingDirMode,
-      state.settings.customWorkingDir,
-      state.settings.pinnedRunDir ?? "",
+      state.settings,
       platformHomeFallback,
+      runWorkingDirOverrideRef.current ?? undefined,
     );
+    runWorkingDirOverrideRef.current = null;
 
     // ------------------------------------------------------------------
     // Mandatory-parameter pre-flight (Rule 17).
@@ -1504,7 +1613,7 @@ function AppInner() {
       // Degrade gracefully: run the script as-is and let PS handle it.
     }
 
-    const pssaErrors = (state.problems[activeTab.id] ?? []).filter((d) =>
+    const pssaErrors = (state.problems[tab.id] ?? []).filter((d) =>
       isPssaErrorSeverity(d.severity),
     );
     const pssaGate = state.settings.pssaRunGate ?? "warn";
@@ -1526,9 +1635,10 @@ function AppInner() {
         });
         return;
       }
-      const runAnyway = window.confirm(
-        `PSScriptAnalyzer found ${pssaErrors.length} error(s). Run anyway?`,
-      );
+      const runAnyway = await new Promise<boolean>((resolve) => {
+        setPssaGatePrompt({ errors: pssaErrors, resolve });
+      });
+      setPssaGatePrompt(null);
       if (!runAnyway) {
         runGuardRef.current = false;
         return;
@@ -1538,6 +1648,7 @@ function AppInner() {
     dispatch({ type: "SET_VARIABLES", variables: [] });
     dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
+    lastRunOutputStartLineRef.current = getTerminalLineCount();
 
     const executeInTerminal = async (workingDir: string) => {
       const command = await cmd.prepareTerminalScriptCommand(
@@ -1558,7 +1669,8 @@ function AppInner() {
       exitCode: number | null,
       workingDirForRecord: string,
     ) => {
-      const tabForRecord = activeTabRef.current ?? activeTab;
+      const tabForRecord = activeTabRef.current;
+      if (!tabForRecord) return;
       const durationMs = Math.max(
         0,
         Math.round(performance.now() - runStartedAt),
@@ -1589,7 +1701,7 @@ function AppInner() {
         state.settings.workingDirMode !== "pinned" &&
         isInvalidWorkingDirError(err)
       ) {
-        const fallbackWorkDir = resolveFallbackWorkDir(activeTab);
+        const fallbackWorkDir = resolveFallbackWorkDir(tab);
         if (fallbackWorkDir !== workDir) {
           await writeTerminalNotice(
             `[PSForge] Working directory "${workDir}" is unavailable; retrying from "${fallbackWorkDir}".`,
@@ -1617,20 +1729,77 @@ function AppInner() {
       dispatch({ type: "SET_RUNNING", running: false });
     }
   }, [
-    activeTab,
     state.isRunning,
     state.selectedPsPath,
     state.workingDir,
-    state.settings.autoSaveOnRun,
-    state.settings.clearOutputOnRun,
-    state.settings.workingDirMode,
-    state.settings.customWorkingDir,
-    state.settings.executionPolicy,
+    state.settings,
+    state.problems,
     setParamPrompt,
     dispatch,
     runCommandInTerminal,
     writeTerminalNotice,
   ]);
+
+  const rerunFromRecord = useCallback(
+    async (run: ScriptRunRecord) => {
+      if (run.scriptPath) {
+        await openFile(run.scriptPath);
+      } else {
+        const match = state.tabs.find(
+          (t) => t.tabType !== "welcome" && t.title === run.tabTitle,
+        );
+        if (match) {
+          dispatch({ type: "SET_ACTIVE_TAB", id: match.id });
+        }
+      }
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+      if (run.workingDir?.trim()) {
+        runWorkingDirOverrideRef.current = run.workingDir.trim();
+      }
+      await runScript();
+    },
+    [openFile, runScript, state.tabs, dispatch],
+  );
+
+  const clearRecentRuns = useCallback(() => {
+    dispatch({
+      type: "SET_SETTINGS",
+      settings: { ...state.settings, recentRuns: [] },
+    });
+  }, [dispatch, state.settings]);
+
+  const recoverScratchFiles = useCallback(
+    async (selected: ScratchRecoveryCandidate[]) => {
+      for (const candidate of selected) {
+        const existing = state.tabs.find((t) => t.id === candidate.tabId);
+        if (existing) {
+          dispatch({ type: "SET_ACTIVE_TAB", id: existing.id });
+          continue;
+        }
+        try {
+          const file = await cmd.readFileContent(candidate.path);
+          const tab: EditorTab = {
+            id: candidate.tabId,
+            title: basename(candidate.path),
+            filePath: candidate.path,
+            content: file.content,
+            savedContent: file.content,
+            encoding: file.encoding,
+            language: "powershell",
+            isDirty: false,
+            tabType: "code",
+          };
+          dispatch({ type: "ADD_TAB", tab });
+        } catch {
+          // skip unreadable scratch files
+        }
+      }
+      setScratchRecoveryCandidates(null);
+    },
+    [dispatch, state.tabs],
+  );
 
   const startDebugSession = useCallback(async () => {
     if (!activeTab || activeTab.tabType === "welcome" || state.isRunning) {
@@ -2192,6 +2361,26 @@ function AppInner() {
   }, []);
 
   useEffect(() => {
+    if (!state.settingsLoaded || scratchRecoveryCheckedRef.current) return;
+    scratchRecoveryCheckedRef.current = true;
+
+    void (async () => {
+      try {
+        const files = await cmd.listScratchFiles();
+        const openIds = new Set(state.tabs.map((t) => t.id));
+        const orphans = files
+          .filter((f) => !openIds.has(f.tabId))
+          .map((f) => ({ tabId: f.tabId, path: f.path }));
+        if (orphans.length > 0) {
+          setScratchRecoveryCandidates(orphans);
+        }
+      } catch {
+        // scratch recovery is best-effort
+      }
+    })();
+  }, [state.settingsLoaded, state.tabs]);
+
+  useEffect(() => {
     if (
       !state.settingsLoaded ||
       state.settings.autoSaveScratchScripts === false
@@ -2249,11 +2438,41 @@ function AppInner() {
         );
       }
     };
+    w.__psforge_copy_last_run_output = async () => {
+      const copied = await copyLastRunOutputToClipboard(
+        lastRunOutputStartLineRef.current,
+      );
+      if (!copied) {
+        void writeTerminalNotice(
+          "[PSForge] No run output to copy yet. Run a script with F5 first.",
+          { reveal: false },
+        );
+      }
+    };
+    w.__psforge_requestCloseTab = (tabId: string) => requestCloseTab(tabId);
+    w.__psforge_rerunFromRecord = (run: ScriptRunRecord) => {
+      void rerunFromRecord(run);
+    };
+    w.__psforge_clearRecentRuns = () => clearRecentRuns();
+    w.__psforge_openRunDirectory = (dir: string) => {
+      if (dir.trim()) void cmd.revealInExplorer(dir.trim());
+    };
     return () => {
       delete w.__psforge_pasteFromClipboardAsNewScript;
       delete w.__psforge_copy_terminal_output;
+      delete w.__psforge_copy_last_run_output;
+      delete w.__psforge_requestCloseTab;
+      delete w.__psforge_rerunFromRecord;
+      delete w.__psforge_clearRecentRuns;
+      delete w.__psforge_openRunDirectory;
     };
-  }, [pasteFromClipboardAsNewScript, writeTerminalNotice]);
+  }, [
+    pasteFromClipboardAsNewScript,
+    writeTerminalNotice,
+    requestCloseTab,
+    rerunFromRecord,
+    clearRecentRuns,
+  ]);
 
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
@@ -3027,6 +3246,43 @@ function AppInner() {
           params={paramPrompt.params}
           onConfirm={(values) => paramPrompt.resolve(values)}
           onCancel={() => paramPrompt.resolve(null)}
+        />
+      )}
+      {pssaGatePrompt && (
+        <PssaRunGateDialog
+          errors={pssaGatePrompt.errors}
+          onRunAnyway={() => pssaGatePrompt.resolve(true)}
+          onCancel={() => pssaGatePrompt.resolve(false)}
+          onViewProblems={() => {
+            dispatch({
+              type: "SET_BOTTOM_TAB",
+              tab: "reference",
+              referenceSubview: "problems",
+            });
+            pssaGatePrompt.resolve(false);
+          }}
+        />
+      )}
+      {closeScratchPrompt && (
+        <CloseScratchDialog
+          tabTitle={closeScratchPrompt.tab.title}
+          onChoice={(choice) => {
+            void (async () => {
+              const closed =
+                choice === "cancel"
+                  ? false
+                  : await finalizeCloseTab(closeScratchPrompt.tab, choice);
+              closeScratchPrompt.resolve(closed);
+              setCloseScratchPrompt(null);
+            })();
+          }}
+        />
+      )}
+      {scratchRecoveryCandidates && scratchRecoveryCandidates.length > 0 && (
+        <ScratchRecoveryDialog
+          candidates={scratchRecoveryCandidates}
+          onRecover={(selected) => void recoverScratchFiles(selected)}
+          onDismiss={() => setScratchRecoveryCandidates(null)}
         />
       )}
     </div>
