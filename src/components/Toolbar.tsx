@@ -64,7 +64,9 @@ export function Toolbar({
     (t) => t.tabType !== "welcome" && (t.isDirty || !t.filePath),
   );
   const [showRecent, setShowRecent] = useState(false);
+  const [showOverflow, setShowOverflow] = useState(false);
   const recentRef = useRef<HTMLDivElement>(null);
+  const overflowRef = useRef<HTMLDivElement>(null);
 
   // Close recent dropdown on outside click.
   useEffect(() => {
@@ -77,6 +79,17 @@ export function Toolbar({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showRecent]);
+
+  useEffect(() => {
+    if (!showOverflow) return;
+    const handler = (e: MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setShowOverflow(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showOverflow]);
 
   const handleThemeChange = (theme: ThemeName) => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -98,19 +111,10 @@ export function Toolbar({
         paddingRight: "12px",
       }}
     >
-      {/* File operations */}
-      <ToolbarBtn
-        title="New File (Ctrl+N)"
-        onClick={onNew}
-        testId="toolbar-new"
-      >
-        +
-      </ToolbarBtn>
-
-      {/* Recent files button + dropdown */}
+      {/* Primary: open, save, run, stop */}
       <div ref={recentRef} className="relative">
         <button
-          title="Recent Files"
+          title="Recent scripts"
           onClick={() => setShowRecent((v) => !v)}
           disabled={state.settings.recentFiles.length === 0}
           className="flex items-center gap-0.5 px-2 h-8 rounded text-sm transition-colors"
@@ -128,17 +132,10 @@ export function Toolbar({
           }}
         >
           Recent
-          <svg
-            width="9"
-            height="9"
-            viewBox="0 0 8 8"
-            fill="currentColor"
-            style={{ marginLeft: "2px" }}
-          >
+          <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor" style={{ marginLeft: "2px" }}>
             <path d="M0 2l4 4 4-4H0z" />
           </svg>
         </button>
-
         {showRecent && state.settings.recentFiles.length > 0 && (
           <div
             className="absolute z-50 py-1 rounded shadow-lg"
@@ -154,11 +151,7 @@ export function Toolbar({
             {state.settings.recentFiles.slice(0, 15).map((path) => {
               const name = basename(path);
               return (
-                <div
-                  key={path}
-                  className="flex items-center group"
-                  style={{ minWidth: 0 }}
-                >
+                <div key={path} className="flex items-center group" style={{ minWidth: 0 }}>
                   <button
                     onClick={() => {
                       onOpenRecent(path);
@@ -171,49 +164,12 @@ export function Toolbar({
                       cursor: "pointer",
                       minWidth: 0,
                     }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "var(--bg-hover)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "transparent";
-                    }}
                     title={path}
                   >
                     <span className="font-medium truncate w-full">{name}</span>
-                    <span
-                      className="truncate w-full"
-                      style={{ color: "var(--text-muted)", fontSize: "var(--ui-font-size-2xs)" }}
-                    >
+                    <span className="truncate w-full" style={{ color: "var(--text-muted)", fontSize: "var(--ui-font-size-2xs)" }}>
                       {path}
                     </span>
-                  </button>
-                  <button
-                    data-testid={`recent-remove-${name}`}
-                    title={`Remove ${name} from recent files`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      dispatch({ type: "REMOVE_RECENT_FILE", path });
-                    }}
-                    className="flex items-center justify-center w-5 h-5 mr-1 rounded opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                    style={{
-                      backgroundColor: "transparent",
-                      color: "var(--text-muted)",
-                      cursor: "pointer",
-                      fontSize: "var(--ui-font-size-sm)",
-                      lineHeight: 1,
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.color =
-                        "var(--text-primary)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.color =
-                        "var(--text-muted)";
-                    }}
-                  >
-                    &times;
                   </button>
                 </div>
               );
@@ -222,11 +178,7 @@ export function Toolbar({
         )}
       </div>
 
-      <ToolbarBtn
-        title="Open File (Ctrl+O)"
-        onClick={onOpen}
-        testId="toolbar-open"
-      >
+      <ToolbarBtn title="Open script (Ctrl+O)" onClick={onOpen} testId="toolbar-open">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
           <path d="M6 1H2a1 1 0 0 0-1 1v3h1V2h4v3h3V2.5L6 1zM9 5H6V2l3 3zm-8 2v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7H1zm13 7H2V8h12v6z" />
         </svg>
@@ -247,32 +199,12 @@ export function Toolbar({
         </svg>
       </ToolbarBtn>
 
-      <ToolbarBtn
-        title="Save All (Ctrl+Shift+S)"
-        onClick={onSaveAll}
-        testId="toolbar-save-all"
-        disabled={!hasSavableTabs}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M1 2a1 1 0 0 1 1-1h8.5a.5.5 0 0 1 .354.146l1.5 1.5A.5.5 0 0 1 12.5 3H2v9H1V2zm2 2h10a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4zm1 1v9h9V5H4zm2 1h5v1H6V6zm0 2h5v1H6V8z" />
-        </svg>
-      </ToolbarBtn>
+      <div className="mx-2 h-5" style={{ width: "1px", backgroundColor: "var(--border-primary)" }} />
 
-      <div
-        className="mx-2 h-5"
-        style={{
-          width: "1px",
-          backgroundColor: "var(--border-primary)",
-        }}
-      />
-
-      {/* Run / Stop */}
       <ToolbarBtn
-        title="Run or Debug Script (F5)"
+        title={showDebuggerTools ? "Run or Debug (F5)" : "Run script (F5)"}
         onClick={onRun}
         testId="toolbar-run"
-        // BUG-NEW-2 fix: welcome tabs contain no runnable PowerShell code;
-        // disable Run so the user cannot accidentally trigger an empty execution.
         disabled={
           state.isRunning ||
           !state.selectedPsPath ||
@@ -281,69 +213,43 @@ export function Toolbar({
         }
         className="text-green-400 hover:text-green-300"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
           <path d="M4 2l10 6-10 6V2z" />
         </svg>
       </ToolbarBtn>
+
+      {showDebuggerTools && (
+        <>
+          <ToolbarBtn
+            title="Start Debugging"
+            onClick={onDebugStart}
+            testId="toolbar-debug-start"
+            disabled={
+              state.isRunning ||
+              !state.selectedPsPath ||
+              !activeTab ||
+              activeTab.tabType === "welcome"
+            }
+            className="text-yellow-400 hover:text-yellow-300"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="8" cy="8" r="5" />
+            </svg>
+          </ToolbarBtn>
+          <ToolbarBtn
+            title="Continue"
+            onClick={onDebugContinue}
+            testId="toolbar-debug-continue"
+            disabled={!state.isDebugging || !state.debugPaused}
+            className="text-yellow-300"
+          >
+            <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>▶</span>
+          </ToolbarBtn>
+        </>
+      )}
+
       <ToolbarBtn
-        title="Start Debugging (sets line breakpoints from gutter)"
-        onClick={onDebugStart}
-        testId="toolbar-debug-start"
-        disabled={
-          state.isRunning ||
-          !state.selectedPsPath ||
-          !activeTab ||
-          activeTab.tabType === "welcome"
-        }
-        className="text-yellow-400 hover:text-yellow-300"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="8" cy="8" r="5" />
-          <rect x="7" y="1" width="2" height="2" />
-          <rect x="7" y="13" width="2" height="2" />
-        </svg>
-      </ToolbarBtn>
-      <ToolbarBtn
-        title="Continue (F5 while paused)"
-        onClick={onDebugContinue}
-        testId="toolbar-debug-continue"
-        disabled={!state.isDebugging || !state.debugPaused}
-        className="text-yellow-300 hover:text-yellow-200"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M4 2l8 6-8 6V2z" />
-          <rect x="12" y="3" width="1.5" height="10" />
-        </svg>
-      </ToolbarBtn>
-      <ToolbarBtn
-        title="Step Over (F10)"
-        onClick={onDebugStepOver}
-        testId="toolbar-debug-step-over"
-        disabled={!state.isDebugging || !state.debugPaused}
-        className="text-yellow-300 hover:text-yellow-200"
-      >
-        <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>SO</span>
-      </ToolbarBtn>
-      <ToolbarBtn
-        title="Step Into (F11)"
-        onClick={onDebugStepInto}
-        testId="toolbar-debug-step-into"
-        disabled={!state.isDebugging || !state.debugPaused}
-        className="text-yellow-300 hover:text-yellow-200"
-      >
-        <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>SI</span>
-      </ToolbarBtn>
-      <ToolbarBtn
-        title="Step Out (Shift+F11)"
-        onClick={onDebugStepOut}
-        testId="toolbar-debug-step-out"
-        disabled={!state.isDebugging || !state.debugPaused}
-        className="text-yellow-300 hover:text-yellow-200"
-      >
-        <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>SU</span>
-      </ToolbarBtn>
-      <ToolbarBtn
-        title="Stop (Ctrl+Break / Shift+F5)"
+        title="Stop (Shift+F5)"
         onClick={onStop}
         testId="toolbar-stop"
         disabled={!state.isRunning}
@@ -354,95 +260,39 @@ export function Toolbar({
         </svg>
       </ToolbarBtn>
 
-      <div
-        className="mx-2 h-5"
-        style={{
-          width: "1px",
-          backgroundColor: "var(--border-primary)",
-        }}
-      />
+      <div className="mx-2 h-5" style={{ width: "1px", backgroundColor: "var(--border-primary)" }} />
 
-      {/* Script tools: Format, Find/Replace, Profile, Print, Sign */}
-      <ToolbarBtn
-        title="Format Document (Shift+Alt+F) - requires PSScriptAnalyzer"
-        onClick={onFormat}
-        testId="toolbar-format"
-        disabled={
-          !activeTab || activeTab.tabType === "welcome" || !state.selectedPsPath
-        }
-      >
-        {/* Braces icon representing code formatting */}
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M3.5 1A1.5 1.5 0 0 0 2 2.5V5a1 1 0 0 1-1 1v.5a1 1 0 0 1 1 1v2.5A1.5 1.5 0 0 0 3.5 11H4v-1h-.5a.5.5 0 0 1-.5-.5V7a2 2 0 0 0-.947-1.71A2 2 0 0 0 3 3.71V2.5a.5.5 0 0 1 .5-.5H4V1h-.5zm9 0H12v1h.5a.5.5 0 0 1 .5.5v1.21A2 2 0 0 0 13.947 5.29 2 2 0 0 0 13 7v2.5a.5.5 0 0 1-.5.5H12v1h.5A1.5 1.5 0 0 0 14 9.5V7a1 1 0 0 1 1-1V5.5a1 1 0 0 1-1-1V2.5A1.5 1.5 0 0 0 12.5 1H12zm-7 5h5v1H5V6zm0 2h5v1H5V8z" />
-        </svg>
-      </ToolbarBtn>
+      <div ref={overflowRef} className="relative">
+        <ToolbarBtn
+          title="More tools"
+          testId="toolbar-overflow"
+          onClick={() => setShowOverflow((v) => !v)}
+        >
+          ⋯
+        </ToolbarBtn>
+        {showOverflow && (
+          <div
+            className="absolute z-50 py-1 rounded shadow-lg"
+            style={{
+              top: "100%",
+              left: 0,
+              minWidth: "200px",
+              backgroundColor: "var(--bg-tertiary)",
+              border: "1px solid var(--border-primary)",
+            }}
+          >
+            <OverflowItem label="New file (Ctrl+N)" onClick={() => { onNew(); setShowOverflow(false); }} />
+            <OverflowItem label="Save all" onClick={() => { onSaveAll(); setShowOverflow(false); }} disabled={!hasSavableTabs} />
+            <OverflowItem label="Format document" onClick={() => { onFormat(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !state.selectedPsPath} />
+            <OverflowItem label="Find & replace (Ctrl+H)" onClick={() => { onFindReplace(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome"} />
+            <OverflowItem label="Open $PROFILE" onClick={() => { onOpenProfile(); setShowOverflow(false); }} disabled={!state.selectedPsPath} />
+            <OverflowItem label="Print script" onClick={() => { onPrint(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !activeTab.content} />
+            <OverflowItem label="Sign script" onClick={() => { onSign(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !activeTab.filePath} />
+          </div>
+        )}
+      </div>
 
-      <ToolbarBtn
-        title="Find and Replace (Ctrl+H)"
-        onClick={onFindReplace}
-        testId="toolbar-find-replace"
-        disabled={!activeTab || activeTab.tabType === "welcome"}
-      >
-        {/* Magnifying glass with pencil icon */}
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.099zm-5.44 1.406a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z" />
-          <path d="M8.5 7.5a.5.5 0 0 0-1 0V9H6a.5.5 0 0 0 0 1h1.5v1.5a.5.5 0 0 0 1 0V10H10a.5.5 0 0 0 0-1H8.5V7.5z" />
-        </svg>
-      </ToolbarBtn>
-
-      <div
-        className="mx-1 h-5"
-        style={{ width: "1px", backgroundColor: "var(--border-primary)" }}
-      />
-
-      <ToolbarBtn
-        title="Open $PROFILE for editing"
-        onClick={onOpenProfile}
-        testId="toolbar-open-profile"
-        disabled={!state.selectedPsPath}
-      >
-        {/* Person/profile icon */}
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.029 10 8 10c-2.029 0-3.516.68-4.168 1.332-.678.678-.83 1.418-.832 1.664h10z" />
-        </svg>
-      </ToolbarBtn>
-
-      <ToolbarBtn
-        title="Print Script"
-        onClick={onPrint}
-        testId="toolbar-print"
-        disabled={
-          !activeTab || activeTab.tabType === "welcome" || !activeTab.content
-        }
-      >
-        {/* Printer icon */}
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z" />
-          <path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zm4 10H5a1 1 0 0 1-1-1v-1h6v1a1 1 0 0 1-1 1zm0-9a1 1 0 0 0-1 1v2H6V3a1 1 0 0 0-1 1v1H4V3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2h-1V4a1 1 0 0 0-1-1z" />
-        </svg>
-      </ToolbarBtn>
-
-      <ToolbarBtn
-        title="Sign Script (Authenticode)"
-        onClick={onSign}
-        testId="toolbar-sign"
-        disabled={
-          !activeTab || activeTab.tabType === "welcome" || !activeTab.filePath
-        }
-      >
-        {/* Certificate/badge icon */}
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 0a5 5 0 0 1 5 5 4.994 4.994 0 0 1-1.012 3.026L14.83 14l-1.41 1.41-1.96-1.96A4.978 4.978 0 0 1 8 14a5 5 0 1 1 0-10v-4zM8 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
-        </svg>
-      </ToolbarBtn>
-
-      <div
-        className="mx-2 h-5"
-        style={{
-          width: "1px",
-          backgroundColor: "var(--border-primary)",
-        }}
-      />
+      <div className="mx-2 h-5" style={{ width: "1px", backgroundColor: "var(--border-primary)" }} />
 
       {/* PS Version selector */}
       <select
@@ -634,3 +484,31 @@ function ToolbarBtn({
   );
 }
 
+
+
+function OverflowItem({
+  label,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="block w-full text-left px-3 py-1.5 text-xs transition-colors"
+      style={{
+        backgroundColor: "transparent",
+        color: disabled ? "var(--text-muted)" : "var(--text-primary)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
+}

@@ -99,6 +99,10 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub persist_runspace_between_runs: bool,
 
+    /// Show debugger toolbar controls, breakpoints, and the Debugger bottom tab.
+    #[serde(default)]
+    pub show_debugger_tools: bool,
+
     /// PowerShell execution policy override ("Default" means no override).
     #[serde(default = "default_execution_policy")]
     pub execution_policy: String,
@@ -276,7 +280,6 @@ impl Default for AppSettings {
             auto_save_on_run: false,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,
-            show_debugger_tools: false,
             execution_policy: default_execution_policy(),
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
