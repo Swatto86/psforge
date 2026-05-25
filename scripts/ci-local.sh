@@ -12,6 +12,7 @@ echo "==> npm run build"
 npm run build
 
 echo "==> cargo fmt --check"
+# src-tauri/rust-toolchain.toml pins stable (same as GitHub CI dtolnay/rust-toolchain@stable)
 (cd src-tauri && cargo fmt --all -- --check)
 
 echo "==> cargo clippy"

@@ -35,3 +35,4 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 ## Recent Context & Decisions
 
 - **2026-05-24:** Phase 2 script-runner: scratch folder, copy output, welcome paste, PSSA run gate, pinned run dir, recent runs log; editor/terminal font presets with persistence and status bar quick control. Version **1.2.13**.
+- **2026-05-24:** `src-tauri/rust-toolchain.toml` pins **stable** + rustfmt/clippy (matches CI; fixes edition2024/zbus_names on older default Rust). Local `./scripts/ci-local.sh` uses it automatically.
