@@ -34,8 +34,13 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 4. **Output:** `__psforge_copy_terminal_output` (full scrollback); `__psforge_copy_last_run_output` (from `lastRunOutputStartLineRef` + line count).
 5. **Fonts:** `fontFamily` / `outputFontFamily` + sizes persist in Rust settings; `linkEditorOutputFonts` syncs family; status bar `FontQuickControls` + Settings presets.
 
+## Primary user workflow
+
+Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl+Shift+Alt+V`) or Welcome paste → **F5** → **Copy Last Run** / Problems → feedback to AI. README documents recommended settings and Phase 4 ideas (debug bundle, paste summary, assistant profile).
+
 ## Recent Context & Decisions
 
+- **2026-05-25:** README rewritten for AI paste-and-run workflow, releases link, shortcut table, Phase 4 roadmap (not implemented).
 - **2026-05-25:** Phase 3 script-runner: scratch recovery dialog, untitled close (save/keep/discard), recent-run re-run/open folder/clear, `.psforge.json` + run-dir presets, in-app PSSA warn dialog, copy last run output, Vitest for `sanitize-paste`/`run-utils`. Version **1.2.14**.
 - **2026-05-24:** Phase 2 script-runner: scratch folder, copy output, welcome paste, PSSA run gate, pinned run dir, recent runs log; editor/terminal font presets with persistence and status bar quick control. Version **1.2.13**.
 - **2026-05-24:** `src-tauri/rust-toolchain.toml` pins **stable** + rustfmt/clippy (matches CI; fixes edition2024/zbus_names on older default Rust). Local `./scripts/ci-local.sh` uses it automatically.

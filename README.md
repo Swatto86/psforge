@@ -1,34 +1,51 @@
 # PSForge
 
-PSForge is a modern desktop PowerShell editor/IDE built with **Tauri**, **React**, and **Monaco Editor**.
+PSForge is a desktop PowerShell editor built with **Tauri**, **React**, and **Monaco Editor**. It is tuned for a fast loop: **paste script from an AI or the web → clean → format → F5 → read output → paste results back for debugging**.
 
-It is designed to make scripting faster and safer with an integrated editing, execution, and debugging workflow.
+The default layout keeps the integrated terminal large (~72% of the vertical space) so run output is easy to read without resizing panes.
 
-## What the utility does
+## Download
 
-PSForge helps you:
+Pre-built installers are published on [GitHub Releases](https://github.com/Swatto86/psforge/releases). The in-app updater checks the same feed on startup (Settings → can disable).
 
-- Write PowerShell scripts with syntax-aware editing
-- Run scripts directly from the app
-- Debug scripts with break/step controls
-- View output and interactive terminal streams in one workspace
-- Inspect variables and command/help metadata while you work
-- Manage editor settings, snippets, and recent files
+| Platform | Artifacts |
+|----------|-----------|
+| Windows | `.msi`, setup `.exe` |
+| macOS | Universal `.dmg` |
+| Linux | `.deb`, `.rpm`, AppImage |
 
-## Script runner (Phase 2–3)
+**Current version:** [1.2.14](https://github.com/Swatto86/psforge/releases/tag/v1.2.14)
 
-Focused workflow for day-to-day scripting:
+## AI-assisted workflow (paste → run → debug)
 
-- **Paste & run** — Clean clipboard junk on paste; optional run after Paste Clean + Format (`Ctrl+Shift+Alt+V`) or sanitized `Ctrl+V`
-- **Scratch auto-save** — Untitled scripts save under `%APPDATA%/PSForge/scratch`; **recovery on startup** for orphan scratch files
-- **Close untitled tabs** — Save as, keep in scratch, or discard the scratch copy
-- **PSSA run gate** — Warn or block F5 when PSScriptAnalyzer reports errors (in-app dialog in warn mode)
-- **Run directory** — File / custom / pinned CWD; **named presets** in Settings; optional **`.psforge.json`** beside project scripts
-- **Recent runs** — Welcome pane history with re-run, open run folder, clear list, and failed-run highlighting
-- **Terminal output** — Copy full scrollback or **copy last F5 run** only
-- **Fonts** — Editor/terminal presets with status-bar quick controls
+Typical use with an assistant writing PowerShell for you:
 
-Example `.psforge.json` in a repo:
+1. **Get script** — Copy a fenced `powershell` block (or plain script) from chat, docs, or Teams.
+2. **Paste into PSForge** — Use one of:
+   - **Welcome → Paste from clipboard** — New untitled tab, clean, format, optional run.
+   - **`Ctrl+Shift+Alt+V`** — Paste Clean + Format on the active tab (best default for AI output).
+   - **`Ctrl+V`** — Normal paste with light cleanup when **Clean Paste** is enabled (Settings → Editor).
+3. **Run** — **`F5`** (auto-save + scratch for untitled tabs when enabled).
+4. **Inspect** — Terminal output below the editor; **Reference → Problems** for PSScriptAnalyzer errors.
+5. **Share back** — **Copy Last Run** (terminal toolbar) or **Copy Output** for the full buffer; paste exit code/output into the AI thread.
+6. **Iterate** — Edit, F5 again, or **Re-run** from Welcome **Recent runs** (restores working directory).
+
+### Recommended settings for paste-and-run
+
+In **Settings → Editor / Execution**:
+
+| Setting | Suggested | Why |
+|---------|-----------|-----|
+| Clean Paste (`Ctrl+V`) | On | Fixes smart quotes, markdown fences, `PS>` prompts from copied terminals |
+| Run after Paste Clean + Format | On | One gesture after `Ctrl+Shift+Alt+V` |
+| Run when Ctrl+V was cleaned | Off | Avoid accidental F5 on small edits |
+| Save before F5 | On | Untitled scripts land in scratch before run |
+| Auto-save untitled → scratch | On | Recovery if the app closes mid-session |
+| Clear terminal before run | On | Last run output is unambiguous |
+| PSSA run gate | Warn | Block bad runs only when you want strictness |
+| Working directory | File or pinned preset | Module paths and `.\` relatives behave predictably |
+
+Optional repo file **`.psforge.json`** next to your scripts (walks up from opened file):
 
 ```json
 {
@@ -38,65 +55,80 @@ Example `.psforge.json` in a repo:
 }
 ```
 
-## Key features
+### Keyboard shortcuts (script runner)
 
-- Multi-tab script editor
-- Integrated terminal and output panes
-- PowerShell version detection and selection
-- Script parameter inspection/prompting
-- Command palette and keyboard shortcuts
-- Command/module/help discovery tools
-- File association support for PowerShell-related extensions
+| Keys | Action |
+|------|--------|
+| `Ctrl+Shift+Alt+V` | Paste Clean + Format (then optional F5 if enabled) |
+| `Ctrl+V` | Paste with cleanup when Clean Paste is on |
+| `F5` | Run script (or debug if breakpoints exist) |
+| `F8` | Run selection or current line |
+| `Shift+F5` | Stop |
+| `Ctrl+Shift+P` | Command palette (copy output, clear recent runs, …) |
+| `Ctrl+F1` | Full shortcut list |
+
+More shortcuts: **Help** style panel via `Ctrl+F1` or the toolbar **?** button.
+
+## Script runner features (v1.2.14)
+
+- **Scratch auto-save** — Untitled scripts under `%APPDATA%\PSForge\scratch\{tabId}.ps1` (Windows); orphan files offered on startup.
+- **Close untitled tabs** — Save as, keep in scratch, or discard.
+- **PSSA run gate** — In-app dialog on warn; block mode stops F5 until Problems are fixed.
+- **Run directory** — Per-file folder, custom path, pinned folder, named **presets** in Settings.
+- **Recent runs** — Welcome history: re-run, open run folder, clear, failed-run highlight.
+- **Terminal** — Copy full scrollback or **last F5 run only**; restart session from toolbar.
+- **Fonts** — Editor/terminal presets + status bar quick control.
+
+## Other capabilities
+
+- Multi-tab editor with session restore
+- PowerShell 5.1 / 7 detection and selection
+- Mandatory `param()` prompt before run
+- Integrated debugger (breakpoints, step, watch) — enable in Settings if needed
+- Module browser, Show Command, context help (`F1`)
+- Snippets (`Ctrl+J`), command palette, file associations
+- Script signing, print, open `$PROFILE`
 
 ## Tech stack
 
-- Frontend: React + TypeScript + Vite + Monaco Editor
-- Desktop runtime/backend: Tauri (Rust)
+- **Frontend:** React 19, TypeScript, Vite, Monaco, xterm.js, Tailwind 4
+- **Desktop:** Tauri 2 (Rust), PowerShell host for run/debug/PSSA/IntelliSense
 
-## Getting started
+## Development
 
 ### Prerequisites
 
-- Node.js 18+ (recommended)
-- Rust toolchain (required by Tauri)
+- Node.js 18+ (22 in CI)
+- Rust stable ([`src-tauri/rust-toolchain.toml`](src-tauri/rust-toolchain.toml))
 - PowerShell (Windows PowerShell and/or PowerShell 7)
+- Linux builds: WebKit/GTK dev packages (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml))
 
-### Install dependencies
+### Commands
 
 ```bash
 npm ci
+npm run tauri dev      # dev app
+npm test               # Vitest (sanitize-paste, run-utils)
+npm run build          # frontend production build
+npm run tauri build    # desktop installers
+./scripts/ci-local.sh  # fmt, clippy, tests, build (matches CI)
 ```
 
-### Run in development
+Machine-readable architecture notes for agents: [`AI_CONTEXT.md`](AI_CONTEXT.md).
 
-```bash
-npm run tauri dev
-```
+## What to improve next (paste-and-run focus)
 
-### Run frontend unit tests
+Ideas that fit **AI writes code → you paste → run → paste output back**:
 
-```bash
-npm test
-```
+| Priority | Improvement | Benefit |
+|----------|-------------|---------|
+| High | **Copy debug bundle** — One action: last run output + exit code + path + top 5 PSSA errors as markdown | Faster handoff back to the AI |
+| High | **Paste summary toast** — “Removed fence, 8 smart quotes, 2 prompt lines” | Trust that cleanup ran |
+| High | **Settings profile: “Assistant mode”** | One toggle applies paste/run/scratch/PSSA defaults |
+| Medium | **Problems → Copy all errors** | Paste analyzer text into chat |
+| Medium | **Run marker in terminal** — Visible `--- Run ---` / `--- Exit N ---` lines | Easier to eyeball last run when scrollback is long |
+| Medium | **Open folder from CLI** — `psforge path\to\script.ps1` documented + optional `--paste` | Agent/tooling can launch a run-ready window |
+| Lower | **Per-project scratch subfolder** — `scratch/{repo-hash}/` | Less collision when many untitled AI snippets |
+| Lower | **Export recent run as `.log`** | Attach to tickets or threads |
 
-### Build frontend assets
-
-```bash
-npm run build
-```
-
-### Build desktop app
-
-```bash
-npm run tauri build
-```
-
-### Local CI (matches GitHub Actions)
-
-```bash
-./scripts/ci-local.sh
-```
-
-## Version
-
-Current project version: **1.2.14**
+These are not implemented yet; they are the natural Phase 4 direction if you want the product optimized for assistant-driven scripting rather than classic ISE parity alone.
