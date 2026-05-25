@@ -78,6 +78,21 @@ export function StatusBar({
     (v) => v.path === state.selectedPsPath,
   );
 
+  const formatRunDuration = (ms: number): string => {
+    if (ms < 1000) return `${ms} ms`;
+    return `${(ms / 1000).toFixed(2)} s`;
+  };
+
+  const lastRun = state.lastRunResult;
+  const lastRunLabel =
+    lastRun && !state.isRunning
+      ? lastRun.exitCode === null
+        ? `Run failed · ${formatRunDuration(lastRun.durationMs)}`
+        : lastRun.exitCode === 0
+          ? `Exit 0 · ${formatRunDuration(lastRun.durationMs)}`
+          : `Exit ${lastRun.exitCode} · ${formatRunDuration(lastRun.durationMs)}`
+      : null;
+
   /** Link controls on the status bar — do not use --accent (same hue as --bg-statusbar). */
   const statusBarLinkStyle: React.CSSProperties = {
     backgroundColor: "transparent",
@@ -323,11 +338,25 @@ export function StatusBar({
             {state.debugPaused ? "Debug Paused" : "Debugging"}
             {state.debugLine ? ` (Ln ${state.debugLine})` : ""}
           </span>
+        ) : state.isRunning ? (
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            Running
+          </span>
         ) : (
-          state.isRunning && (
-            <span className="flex items-center gap-1">
-              <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              Running
+          lastRunLabel && (
+            <span
+              data-testid="status-last-run"
+              style={{
+                fontVariantNumeric: "tabular-nums",
+                color:
+                  lastRun?.exitCode === 0
+                    ? "var(--text-inverse)"
+                    : "var(--stream-stderr)",
+              }}
+              title="Last script run (F5)"
+            >
+              {lastRunLabel}
             </span>
           )
         )}

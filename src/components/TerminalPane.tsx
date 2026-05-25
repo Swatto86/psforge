@@ -678,7 +678,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         rejectPendingCommands("Terminal session ended before command completion.");
         if (isStoppingRef.current) return;
         term.write(
-          "\r\n\x1b[33m[Terminal session ended. Use Restart to start a new shell.]\x1b[0m\r\n",
+          "\r\n\x1b[33m[Terminal session ended. Use Restart Session to start a new shell.]\x1b[0m\r\n",
         );
       };
 
@@ -1152,17 +1152,6 @@ export function TerminalPane() {
           title="Clear active console"
         >
           Clear
-        </button>
-        <button
-          data-testid="terminal-restart-active"
-          onClick={() => getActiveHandle()?.restart()}
-          style={{
-            backgroundColor: "transparent",
-            color: "var(--text-secondary)",
-          }}
-          title="Restart active console"
-        >
-          Restart
         </button>
         <span
           style={{

@@ -91,6 +91,14 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub sanitize_paste_on_paste: bool,
 
+    /// Run the active script after Paste Clean + Format.
+    #[serde(default = "default_true")]
+    pub run_after_paste_clean_format: bool,
+
+    /// Run the active script after Ctrl+V when paste cleanup changed content.
+    #[serde(default)]
+    pub run_after_sanitized_paste: bool,
+
     /// Save the active file automatically before running (F5).
     #[serde(default)]
     pub auto_save_on_run: bool,
@@ -257,7 +265,7 @@ fn default_max_recent_files() -> usize {
 }
 
 fn default_split_position() -> f64 {
-    40.0
+    28.0
 }
 
 impl Default for AppSettings {
@@ -278,6 +286,8 @@ impl Default for AppSettings {
             enable_pssa: true,
             enable_intelli_sense: true,
             sanitize_paste_on_paste: true,
+            run_after_paste_clean_format: true,
+            run_after_sanitized_paste: false,
             auto_save_on_run: false,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,

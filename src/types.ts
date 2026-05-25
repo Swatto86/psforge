@@ -211,6 +211,10 @@ export interface AppSettings {
   enableIntelliSense: boolean;
   /** Clean clipboard junk on every editor paste (Ctrl+V). */
   sanitizePasteOnPaste: boolean;
+  /** Run the active script after Paste Clean + Format (Ctrl+Shift+Alt+V). */
+  runAfterPasteCleanFormat: boolean;
+  /** Run the active script after Ctrl+V when paste cleanup changed the buffer. */
+  runAfterSanitizedPaste: boolean;
 
   // ---- Execution ----
   /** Save the active file automatically before running (F5). */
@@ -280,6 +284,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enablePssa: true,
   enableIntelliSense: true,
   sanitizePasteOnPaste: true,
+  runAfterPasteCleanFormat: true,
+  runAfterSanitizedPaste: false,
   autoSaveOnRun: true,
   clearOutputOnRun: true,
   persistRunspaceBetweenRuns: true,
@@ -299,7 +305,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarFontFamily: "Segoe UI, sans-serif",
   sidebarFontSize: 13,
   maxRecentFiles: 20,
-  splitPosition: 40,
+  splitPosition: 28,
   recentFiles: [],
   fileAssociations: {},
   sidebarVisible: false,

@@ -28,7 +28,10 @@ import { getPsMonarchGrammar } from "../ps-grammar";
 import type { DebugBreakpoint, PsCompletion, ThemeName } from "../types";
 import { WelcomePane } from "./WelcomePane";
 import { analyzeScript, getCompletions } from "../commands";
-import { sanitizePastedText } from "../sanitize-paste";
+import {
+  pasteSanitizeOptionsFromSettings,
+  sanitizePastedText,
+} from "../sanitize-paste";
 
 // ---------------------------------------------------------------------------
 // Helpers — kept module-level so they are not recreated on every render.
@@ -237,6 +240,8 @@ async function fetchCompletionsForContext(
 
 export function EditorPane() {
   const { state, dispatch, activeTab } = useAppState();
+  const settingsRef = useRef(state.settings);
+  settingsRef.current = state.settings;
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
 
@@ -548,11 +553,18 @@ export function EditorPane() {
         const model = editor.getModel();
         if (!model) return;
         const pasted = model.getValueInRange(event.range);
-        const cleaned = sanitizePastedText(pasted);
+        const cleaned = sanitizePastedText(
+          pasted,
+          pasteSanitizeOptionsFromSettings(settingsRef.current),
+        );
         if (cleaned === pasted) return;
         editor.executeEdits("psforge-paste-sanitize", [
           { range: event.range, text: cleaned },
         ]);
+        const afterPaste = (
+          window as unknown as Record<string, unknown>
+        ).__psforge_afterPasteSanitized as (() => void) | undefined;
+        afterPaste?.();
       });
 
       editor.onDidChangeModelContent((e) => {
