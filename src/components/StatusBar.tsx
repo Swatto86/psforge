@@ -8,6 +8,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { UpdateStatus } from "../types";
+import { basename } from "../path-utils";
 
 interface StatusBarProps {
   updateStatus: UpdateStatus;
@@ -300,6 +301,34 @@ export function StatusBar({
 
       {/* Right side */}
       <div className="flex items-center gap-4">
+        {activeTab && activeTab.tabType !== "welcome" && activeTab.filePath && (
+          <span
+            title={activeTab.filePath}
+            style={{
+              maxWidth: "280px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {basename(activeTab.filePath)}
+          </span>
+        )}
+        {state.lastRunResult && !state.isRunning && (
+          <span
+            data-testid="status-last-run"
+            style={{ fontVariantNumeric: "tabular-nums" }}
+            title="Last script run"
+          >
+            {state.lastRunResult.exitCode === null
+              ? "Last run failed"
+              : state.lastRunResult.exitCode === 0
+                ? "Exit 0"
+                : `Exit ${state.lastRunResult.exitCode}`}
+            {" · "}
+            {(state.lastRunResult.durationMs / 1000).toFixed(1)}s
+          </span>
+        )}
         {state.isDebugging ? (
           <span className="flex items-center gap-1">
             <span

@@ -25,6 +25,10 @@ import {
   setBookmarksForPath,
   setBreakpointsForPath,
 } from "./path-state-store";
+import {
+  FULL_PASTE_SANITIZE_OPTIONS,
+  sanitizePastedText,
+} from "./sanitize-paste";
 import type {
   OutputLine,
   EditorTab,
@@ -1113,6 +1117,44 @@ function AppInner() {
     [state.tabs, state.settings, dispatch],
   );
 
+  const openScriptFolder = useCallback(async () => {
+    try {
+      const { open, message } = await import("@tauri-apps/plugin-dialog");
+      const { readDir } = await import("@tauri-apps/plugin-fs");
+      const selected = await open({ directory: true, multiple: false });
+      if (!selected || typeof selected !== "string") return;
+
+      const base = selected.replace(/[/\\]+$/, "");
+      const entries = await readDir(selected);
+      const scriptPaths = entries
+        .filter((entry) => entry.isFile)
+        .map((entry) => `${base}/${entry.name}`.replace(/\\/g, "/"))
+        .filter((path) => /\.(ps1|psm1|psd1)$/i.test(path))
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+      if (scriptPaths.length === 0) {
+        await message(
+          "No PowerShell scripts (.ps1, .psm1, .psd1) were found in that folder.",
+          { title: "Open Folder", kind: "info" },
+        );
+        return;
+      }
+
+      for (const path of scriptPaths.slice(0, 12)) {
+        await openFile(path);
+      }
+      if (scriptPaths.length > 12) {
+        await writeTerminalNotice(
+          `[PSForge] Opened the first 12 scripts from the folder (${scriptPaths.length} total).`,
+          { reveal: false },
+        );
+      }
+      dispatch({ type: "SET_WORKING_DIR", dir: selected });
+    } catch (err) {
+      console.error("openScriptFolder failed:", err);
+    }
+  }, [openFile, dispatch, writeTerminalNotice]);
+
   /** Open (or focus) the Welcome tab so users can restore onboarding content. */
   const openWelcomePage = useCallback(() => {
     const existing = state.tabs.find((t) => t.tabType === "welcome");
@@ -1146,6 +1188,7 @@ function AppInner() {
     // User-facing helpers: the WelcomePane and CommandPalette read these.
     w.__psforge_openFile = () => void openFile();
     w.__psforge_openFileByPath = (p: string) => void openFile(p);
+    w.__psforge_openFolder = () => void openScriptFolder();
     w.__psforge_openWelcome = () => openWelcomePage();
     // E2E-only helpers. We expose `dispatch` and `reset_variables` only in
     // dev builds so production users cannot stumble onto them via the
@@ -1440,6 +1483,7 @@ function AppInner() {
     }
 
     dispatch({ type: "SET_VARIABLES", variables: [] });
+    dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
 
     const executeInTerminal = async (workingDir: string) => {
@@ -1456,8 +1500,16 @@ function AppInner() {
       });
     };
 
+    const runStartedAt = performance.now();
     try {
-      await executeInTerminal(workDir);
+      const exitCode = await executeInTerminal(workDir);
+      dispatch({
+        type: "SET_LAST_RUN_RESULT",
+        result: {
+          exitCode,
+          durationMs: Math.max(0, Math.round(performance.now() - runStartedAt)),
+        },
+      });
     } catch (err) {
       if (
         state.settings.workingDirMode !== "custom" &&
@@ -1483,6 +1535,13 @@ function AppInner() {
       const message = extractInvokeErrorMessage(err);
       await writeTerminalNotice(`[PSForge] Run failed: ${message}`, {
         reveal: true,
+      });
+      dispatch({
+        type: "SET_LAST_RUN_RESULT",
+        result: {
+          exitCode: null,
+          durationMs: Math.max(0, Math.round(performance.now() - runStartedAt)),
+        },
       });
     } finally {
       runGuardRef.current = false;
@@ -1601,6 +1660,7 @@ function AppInner() {
     dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: 0 });
     dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
     dispatch({ type: "SET_VARIABLES", variables: [] });
+    dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
 
     try {
@@ -1831,6 +1891,7 @@ function AppInner() {
     const psPath = state.selectedPsPath;
 
     dispatch({ type: "SET_VARIABLES", variables: [] });
+    dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
 
     const workDir = resolveExecutionWorkDir(
@@ -1926,6 +1987,73 @@ function AppInner() {
       console.error("formatCurrentScript failed:", err);
     }
   }, [activeTab, state.selectedPsPath, dispatch]);
+
+  /**
+   * Read clipboard, clean web/terminal junk, insert at the selection, then
+   * format the whole script with Invoke-Formatter (Ctrl+Shift+Alt+V).
+   */
+  const pasteCleanAndFormat = useCallback(async () => {
+    if (!activeTab || activeTab.tabType === "welcome" || !state.selectedPsPath) {
+      return;
+    }
+    let clip = "";
+    try {
+      clip = await navigator.clipboard.readText();
+    } catch {
+      void writeTerminalNotice(
+        "[PSForge] Could not read the clipboard. Allow clipboard access or paste with Ctrl+V (clean on paste is still applied).",
+        { reveal: true },
+      );
+      return;
+    }
+    if (!clip.trim()) return;
+
+    const cleaned = sanitizePastedText(clip, FULL_PASTE_SANITIZE_OPTIONS);
+    const w = window as unknown as Record<string, unknown>;
+    const insert = w.__psforge_insertTextAtSelection as
+      | ((text: string) => boolean)
+      | undefined;
+    if (!insert?.(cleaned)) return;
+
+    const buffer =
+      (w.__psforge_getEditorText as (() => string) | undefined)?.() ??
+      activeTab.content;
+    try {
+      const formatted = await cmd.formatScript(state.selectedPsPath, buffer);
+      if (formatted !== buffer) {
+        dispatch({
+          type: "UPDATE_TAB",
+          id: activeTab.id,
+          changes: {
+            content: formatted,
+            isDirty: formatted !== activeTab.savedContent,
+          },
+        });
+      }
+    } catch (err) {
+      console.error("pasteCleanAndFormat failed:", err);
+      void writeTerminalNotice(
+        "[PSForge] Paste was cleaned but formatting failed. Install PSScriptAnalyzer or use Shift+Alt+F.",
+        { reveal: true },
+      );
+    }
+  }, [
+    activeTab,
+    state.selectedPsPath,
+    dispatch,
+    writeTerminalNotice,
+  ]);
+
+  useEffect(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__psforge_pasteCleanAndFormat = () => {
+      void pasteCleanAndFormat();
+    };
+    return () => {
+      delete w.__psforge_pasteCleanAndFormat;
+    };
+  }, [pasteCleanAndFormat]);
+
 
   /** Open the current user's $PROFILE script for editing, creating it if absent. */
   const openProfile = useCallback(async () => {
@@ -2201,6 +2329,12 @@ function AppInner() {
         void formatCurrentScript();
       }
 
+      // Ctrl+Shift+Alt+V: Paste from clipboard, clean, then format
+      if (e.ctrlKey && e.shiftKey && e.altKey && keyLower === "v") {
+        e.preventDefault();
+        void pasteCleanAndFormat();
+      }
+
       // Ctrl+G: Go to line (focus Monaco and trigger built-in action)
       if (e.ctrlKey && keyLower === "g") {
         e.preventDefault();
@@ -2254,6 +2388,7 @@ function AppInner() {
     stopExecution,
     runSelection,
     formatCurrentScript,
+    pasteCleanAndFormat,
     toggleBookmarkAtCursor,
     jumpToBookmark,
   ]);
@@ -2504,6 +2639,7 @@ function AppInner() {
         onDebugStepOut={debugStepOut}
         onStop={stopExecution}
         onFormat={formatCurrentScript}
+        onPasteCleanAndFormat={() => void pasteCleanAndFormat()}
         onFindReplace={() => {
           const trigger = (window as unknown as Record<string, unknown>)
             .__psforge_triggerFindReplace as (() => void) | undefined;

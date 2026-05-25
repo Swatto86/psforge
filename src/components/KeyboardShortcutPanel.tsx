@@ -74,6 +74,11 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
         keys: "Shift+Alt+F",
         description: "Format document (requires PSScriptAnalyzer)",
       },
+      {
+        keys: "Ctrl+Shift+Alt+V",
+        description:
+          "Paste Clean + Format — clipboard cleanup then Invoke-Formatter",
+      },
     ],
   },
   {
