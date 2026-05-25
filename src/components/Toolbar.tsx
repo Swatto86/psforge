@@ -29,6 +29,8 @@ interface ToolbarProps {
   onStop: () => void;
   /** Format current script with Invoke-Formatter (Shift+Alt+F). */
   onFormat: () => void;
+  /** Paste from clipboard, clean, and format (Ctrl+Shift+Alt+V). */
+  onPasteCleanAndFormat: () => void;
   /** Trigger Monaco's built-in Find & Replace widget. */
   onFindReplace: () => void;
   /** Open the current user's $PROFILE for editing. */
@@ -53,6 +55,7 @@ export function Toolbar({
   onDebugStepOut,
   onStop,
   onFormat,
+  onPasteCleanAndFormat,
   onFindReplace,
   onOpenProfile,
   onPrint,
@@ -284,6 +287,7 @@ export function Toolbar({
             <OverflowItem label="New file (Ctrl+N)" onClick={() => { onNew(); setShowOverflow(false); }} />
             <OverflowItem label="Save all" onClick={() => { onSaveAll(); setShowOverflow(false); }} disabled={!hasSavableTabs} />
             <OverflowItem label="Format document" onClick={() => { onFormat(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !state.selectedPsPath} />
+            <OverflowItem label="Paste clean + format (Ctrl+Shift+Alt+V)" onClick={() => { onPasteCleanAndFormat(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !state.selectedPsPath} />
             <OverflowItem label="Find & replace (Ctrl+H)" onClick={() => { onFindReplace(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome"} />
             <OverflowItem label="Open $PROFILE" onClick={() => { onOpenProfile(); setShowOverflow(false); }} disabled={!state.selectedPsPath} />
             <OverflowItem label="Print script" onClick={() => { onPrint(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !activeTab.content} />

@@ -249,16 +249,6 @@ export function EditorPane() {
 
   // Timer ref for debouncing PSScriptAnalyzer invocations on each keystroke.
   const pssaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const problemsRef = useRef(state.problems);
-  const isRunningRef = useRef(state.isRunning);
-
-  useEffect(() => {
-    problemsRef.current = state.problems;
-  }, [state.problems]);
-
-  useEffect(() => {
-    isRunningRef.current = state.isRunning;
-  }, [state.isRunning]);
 
   // Clear stale PSSA debounce timer whenever the active tab changes so a
   // pending analysis from the previous tab does not fire after the switch,
@@ -424,6 +414,8 @@ export function EditorPane() {
       delete w.__psforge_navigateTo;
       delete w.__psforge_getRunText;
       delete w.__psforge_getHelpQuery;
+      delete w.__psforge_insertTextAtSelection;
+      delete w.__psforge_getEditorText;
       delete w.__psforge_setEditorText;
     };
   }, []);
