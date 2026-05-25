@@ -3,6 +3,7 @@
 import React, { useEffect, useCallback, useRef } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 import { AppProvider, useAppState, newTabId, untitledCounter } from "./store";
 import { Toolbar } from "./components/Toolbar";
@@ -143,6 +144,10 @@ const SPLIT_EPSILON = 0.1;
 const PS7_INSTALL_URL = "https://aka.ms/install-powershell";
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
 const UPDATE_STATUS_RESET_MS = 8_000;
+
+type AvailableAppUpdate = NonNullable<
+  Awaited<ReturnType<typeof checkForAppUpdate>>
+>;
 
 const DEBUG_STACK_COMMAND =
   "$__psf_stack = Get-PSCallStack | ForEach-Object { " +
@@ -541,6 +546,61 @@ function AppInner() {
     };
   }, [clearPendingUpdate, clearUpdateStatusResetTimer]);
 
+  const downloadAndInstallUpdate = useCallback(
+    async (update: AvailableAppUpdate) => {
+      clearUpdateStatusResetTimer();
+      let downloadedBytes = 0;
+      let totalBytes = 0;
+      setUpdateStatus({
+        phase: "downloading",
+        version: update.version,
+        downloadedBytes,
+        totalBytes,
+      });
+
+      try {
+        await update.downloadAndInstall((event) => {
+          switch (event.event) {
+            case "Started":
+              downloadedBytes = 0;
+              totalBytes = event.data.contentLength ?? 0;
+              setUpdateStatus({
+                phase: "downloading",
+                version: update.version,
+                downloadedBytes,
+                totalBytes,
+              });
+              break;
+            case "Progress":
+              downloadedBytes += event.data.chunkLength;
+              setUpdateStatus({
+                phase: "downloading",
+                version: update.version,
+                downloadedBytes,
+                totalBytes,
+              });
+              break;
+            case "Finished":
+              setUpdateStatus({ phase: "installing", version: update.version });
+              break;
+          }
+        });
+
+        clearPendingUpdate();
+        setUpdateStatus({ phase: "installing", version: update.version });
+        await relaunch();
+      } catch (err) {
+        clearPendingUpdate();
+        setUpdateStatus({
+          phase: "error",
+          message: extractInvokeErrorMessage(err),
+        });
+        scheduleUpdateStatusReset();
+      }
+    },
+    [clearPendingUpdate, clearUpdateStatusResetTimer, scheduleUpdateStatusReset],
+  );
+
   const checkForUpdates = useCallback(
     async (initiatedByUser: boolean) => {
       if (
@@ -571,6 +631,11 @@ function AppInner() {
           return;
         }
 
+        if (!initiatedByUser) {
+          void downloadAndInstallUpdate(update);
+          return;
+        }
+
         setUpdateStatus({
           phase: "available",
           version: update.version,
@@ -592,6 +657,7 @@ function AppInner() {
     [
       clearPendingUpdate,
       clearUpdateStatusResetTimer,
+      downloadAndInstallUpdate,
       scheduleUpdateStatusReset,
       updateStatus.phase,
     ],
@@ -608,7 +674,7 @@ function AppInner() {
       "Install it now?",
       "",
       "PSForge will download the signed installer from GitHub Releases.",
-      "On Windows the app will close automatically while the update is applied.",
+      "The app will restart automatically when the update finishes.",
     ];
     if (releaseNotes) {
       confirmLines.push("", "Release notes:", releaseNotes);
@@ -628,72 +694,8 @@ function AppInner() {
     }
     if (!confirmed) return;
 
-    clearUpdateStatusResetTimer();
-    let downloadedBytes = 0;
-    let totalBytes = 0;
-    setUpdateStatus({
-      phase: "downloading",
-      version: update.version,
-      downloadedBytes,
-      totalBytes,
-    });
-
-    try {
-      await update.downloadAndInstall((event) => {
-        switch (event.event) {
-          case "Started":
-            downloadedBytes = 0;
-            totalBytes = event.data.contentLength ?? 0;
-            setUpdateStatus({
-              phase: "downloading",
-              version: update.version,
-              downloadedBytes,
-              totalBytes,
-            });
-            break;
-          case "Progress":
-            downloadedBytes += event.data.chunkLength;
-            setUpdateStatus({
-              phase: "downloading",
-              version: update.version,
-              downloadedBytes,
-              totalBytes,
-            });
-            break;
-          case "Finished":
-            setUpdateStatus({ phase: "installing", version: update.version });
-            break;
-        }
-      });
-
-      clearPendingUpdate();
-      setUpdateStatus({ phase: "installing", version: update.version });
-
-      try {
-        const { message } = await import("@tauri-apps/plugin-dialog");
-        await message(
-          "The update package has been installed. If PSForge does not restart automatically, launch it again to finish applying the update.",
-          {
-            title: "PSForge Update",
-            kind: "info",
-          },
-        );
-      } catch {
-        // Best effort only; Windows usually exits before this path executes.
-      }
-    } catch (err) {
-      clearPendingUpdate();
-      setUpdateStatus({
-        phase: "error",
-        message: extractInvokeErrorMessage(err),
-      });
-      scheduleUpdateStatusReset();
-    }
-  }, [
-    clearPendingUpdate,
-    clearUpdateStatusResetTimer,
-    scheduleUpdateStatusReset,
-  ]);
+    await downloadAndInstallUpdate(update);
+  }, [downloadAndInstallUpdate]);
 
   useEffect(() => {
     if (autoUpdateCheckStartedRef.current) return;

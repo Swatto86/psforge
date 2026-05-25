@@ -491,17 +491,6 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
-                label="Clean on paste"
-                tooltip="Fixes smart quotes, markdown fences, line-number gutters, and PS prompts whenever you paste into the editor."
-              >
-                <Toggle
-                  checked={state.settings.sanitizePasteOnPaste !== false}
-                  onChange={(v) => updateSetting("sanitizePasteOnPaste", v)}
-                  label="Always clean clipboard text on paste (Ctrl+V)"
-                />
-              </SettingRow>
-
-              <SettingRow
                 label="Render Whitespace"
                 tooltip="Controls how whitespace characters are visually marked in the editor."
               >
@@ -636,7 +625,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Application Updates"
-                tooltip="Checks the public GitHub Releases feed for signed PSForge updates when the app starts."
+                tooltip="On startup, checks GitHub Releases for a newer signed build and installs it automatically when one is available."
               >
                 <div className="flex flex-col gap-1">
                   <Toggle
@@ -644,12 +633,12 @@ export function SettingsPanel() {
                     onChange={(v) =>
                       updateSetting("checkForUpdatesOnStartup", v)
                     }
-                    label="Check for application updates on startup"
+                    label="Check and apply updates automatically on startup"
                   />
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Automatic checks are silent unless an update is found. You
-                    can still trigger a manual check from the status bar at any
-                    time.
+                    When enabled, PSForge downloads and installs updates on
+                    launch, then restarts. Progress appears in the status bar.
+                    Use &quot;Check for Updates&quot; there to install manually.
                   </p>
                 </div>
               </SettingRow>
@@ -673,17 +662,6 @@ export function SettingsPanel() {
                   checked={state.settings.clearOutputOnRun !== false}
                   onChange={(v) => updateSetting("clearOutputOnRun", v)}
                   label="Clear the terminal before each run"
-                />
-              </SettingRow>
-
-              <SettingRow
-                label="Debugger Tools"
-                tooltip="Shows breakpoint gutter controls, debugger toolbar buttons, and the Debugger bottom tab. Turn on only when you need step-through debugging."
-              >
-                <Toggle
-                  checked={state.settings.showDebuggerTools === true}
-                  onChange={(v) => updateSetting("showDebuggerTools", v)}
-                  label="Show debugger toolbar, breakpoints, and Debugger tab"
                 />
               </SettingRow>
 

@@ -9,6 +9,7 @@
     "dialog:default",
     "fs:default",
     "core:event:default",
-    "updater:default"
+    "updater:default",
+    "process:default"
   ]
 }
