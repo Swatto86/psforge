@@ -41,6 +41,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-06-01:** Optional "Open with PSForge" right-click menu (`register_context_menu`/`unregister_context_menu`/`get_context_menu_status`, Settings → File Associations toggle); status-bar run-dir link now toggles pin/unpin; file-association registration writes a proper `Applications\<exe>` Open With entry (FriendlyAppName + icon + command + SupportedTypes) and a ProgID FriendlyAppName to fix the broken/iconless Open With entry. Version **1.2.16**.
 - **2026-05-25:** Phase 4 assistant workflow: `assistantMode` setting, paste summary toasts, Copy Debug Bundle, `ToastStack`. Version **1.2.15**.
 - **2026-05-25:** README rewritten for AI paste-and-run workflow, releases link, shortcut table.
 - **2026-05-25:** Phase 3 script-runner: scratch recovery dialog, untitled close (save/keep/discard), recent-run re-run/open folder/clear, `.psforge.json` + run-dir presets, in-app PSSA warn dialog, copy last run output, Vitest for `sanitize-paste`/`run-utils`. Version **1.2.14**.
