@@ -92,6 +92,10 @@ export function SettingsPanel() {
   const [assocLoading, setAssocLoading] = useState(false);
   /** Busy flag for individual or batch file association operations (Rule 16). */
   const [assocBusy, setAssocBusy] = useState(false);
+  /** Whether the "Open with PSForge" right-click menu item is registered. */
+  const [contextMenuEnabled, setContextMenuEnabled] = useState(false);
+  /** Busy flag while toggling the context menu registration. */
+  const [contextMenuBusy, setContextMenuBusy] = useState(false);
   const [execPolicyFeedback, setExecPolicyFeedback] = useState<{
     type: "success" | "error";
     message: string;
@@ -102,11 +106,13 @@ export function SettingsPanel() {
   useEffect(() => {
     if (activeSection === "associations") {
       setAssocLoading(true);
-      cmd
-        .getFileAssociationStatus()
-        .then(setAssociations)
-        .catch(() => {})
-        .finally(() => setAssocLoading(false));
+      Promise.all([
+        cmd.getFileAssociationStatus().then(setAssociations).catch(() => {}),
+        cmd
+          .getContextMenuStatus()
+          .then(setContextMenuEnabled)
+          .catch(() => {}),
+      ]).finally(() => setAssocLoading(false));
     }
   }, [activeSection]);
 
@@ -321,6 +327,25 @@ export function SettingsPanel() {
       // ignore
     } finally {
       setAssocBusy(false);
+    }
+  };
+
+  const toggleContextMenu = async (enable: boolean) => {
+    if (contextMenuBusy) return;
+    setContextMenuBusy(true);
+    try {
+      if (enable) {
+        await cmd.registerContextMenu();
+      } else {
+        await cmd.unregisterContextMenu();
+      }
+    } catch {
+      // ignore -- the refresh below reflects the registry's real state.
+    } finally {
+      // Always re-read so the toggle mirrors what is actually registered,
+      // even if the register/unregister call failed partway through.
+      setContextMenuEnabled(await cmd.getContextMenuStatus().catch(() => enable));
+      setContextMenuBusy(false);
     }
   };
 
@@ -1397,6 +1422,25 @@ export function SettingsPanel() {
                 built-in security prompt for PowerShell scripts. Scripts will
                 open in PSForge instead of showing a security dialog.
               </InfoBox>
+
+              <div
+                className="flex flex-col gap-2 pb-3"
+                style={{ borderBottom: "1px solid var(--border-primary)" }}
+              >
+                <Toggle
+                  checked={contextMenuEnabled}
+                  onChange={(v) => void toggleContextMenu(v)}
+                  label="Add &quot;Open with PSForge&quot; to the right-click menu"
+                />
+                <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                  Adds an &quot;Open with PSForge&quot; entry (with the PSForge
+                  icon) to the Explorer right-click menu for all files, so any
+                  file can be opened in the editor. This also repairs the
+                  PSForge entry in the Windows &quot;Open with&quot; list if it
+                  was previously showing without an icon.
+                  {contextMenuBusy ? " Working..." : ""}
+                </p>
+              </div>
 
               <div className="flex gap-2">
                 <button

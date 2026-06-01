@@ -387,16 +387,23 @@ export function StatusBar({
           <button
             data-testid="status-run-cwd"
             onClick={() => {
+              const isPinned = state.settings.workingDirMode === "pinned";
               dispatch({
                 type: "SET_SETTINGS",
                 settings: {
                   ...state.settings,
-                  workingDirMode: "pinned",
-                  pinnedRunDir: runCwd,
+                  // Toggle: clicking a pinned directory unpins it (runs use each
+                  // file's own folder again); clicking an unpinned one pins it.
+                  workingDirMode: isPinned ? "file" : "pinned",
+                  ...(isPinned ? {} : { pinnedRunDir: runCwd }),
                 },
               });
             }}
-            title={`Run directory: ${runCwd}. Click to pin for all runs.`}
+            title={
+              state.settings.workingDirMode === "pinned"
+                ? `Run directory pinned to ${runCwd}. Click to unpin (runs use each file's folder).`
+                : `Run directory: ${runCwd}. Click to pin it for all runs.`
+            }
             style={{
               ...statusBarLinkStyle,
               maxWidth: "220px",
@@ -405,7 +412,7 @@ export function StatusBar({
               whiteSpace: "nowrap",
             }}
           >
-            {state.settings.workingDirMode === "pinned" ? "Pinned: " : "Run: "}
+            {state.settings.workingDirMode === "pinned" ? "📌 Pinned: " : "Run: "}
             {runCwd}
           </button>
         )}
