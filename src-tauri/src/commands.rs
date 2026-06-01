@@ -1369,6 +1369,56 @@ fn file_association_icon_registry_value(exe_path: &std::path::Path) -> String {
     format!("\"{}\",0", exe_path.to_string_lossy())
 }
 
+/// Registers (or repairs) the per-user `Applications\<exe>` entry that backs
+/// PSForge's presence in the Windows "Open with" list.
+///
+/// Windows auto-surfaces an executable in "Open with" the first time it is used
+/// to open a file, but that bare entry has no `FriendlyAppName` and no
+/// `DefaultIcon`, so it renders as the raw executable path with a blank icon and
+/// — if it was created from a stale path — fails to launch. Writing an explicit
+/// entry here gives the option a proper name + icon and a known-good launch
+/// command pointing at the current executable. Re-running this repairs a
+/// previously broken entry.
+#[cfg(target_os = "windows")]
+fn ensure_open_with_application(
+    hkcu: &winreg::RegKey,
+    exe_path: &std::path::Path,
+    exe_path_str: &str,
+) -> Result<(), AppError> {
+    let exe_name = exe_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "psforge.exe".to_string());
+
+    let app_root = format!(r"Software\Classes\Applications\{}", exe_name);
+    let (app_key, _) = hkcu.create_subkey(&app_root).map_err(reg_err)?;
+    app_key
+        .set_value("FriendlyAppName", &"PSForge")
+        .map_err(reg_err)?;
+
+    let icon_path = format!(r"{}\DefaultIcon", app_root);
+    let (icon_key, _) = hkcu.create_subkey(&icon_path).map_err(reg_err)?;
+    icon_key
+        .set_value("", &format!("\"{}\",0", exe_path_str))
+        .map_err(reg_err)?;
+
+    let cmd_path = format!(r"{}\shell\open\command", app_root);
+    let (cmd_key, _) = hkcu.create_subkey(&cmd_path).map_err(reg_err)?;
+    cmd_key
+        .set_value("", &format!("\"{}\" \"%1\"", exe_path_str))
+        .map_err(reg_err)?;
+
+    // SupportedTypes makes PSForge a first-class suggestion in the Open With
+    // list for our script extensions.
+    let types_path = format!(r"{}\SupportedTypes", app_root);
+    let (types_key, _) = hkcu.create_subkey(&types_path).map_err(reg_err)?;
+    for ext in PS_EXTENSIONS {
+        types_key.set_value(ext, &"").map_err(reg_err)?;
+    }
+
+    Ok(())
+}
+
 /// Registers PSForge as the handler for a specific file extension.
 /// Uses HKCU (per-user, no admin required).
 #[tauri::command]
@@ -1395,6 +1445,11 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
         let (prog_key, _) = hkcu.create_subkey(&prog_id_path).map_err(reg_err)?;
         prog_key
             .set_value("", &format!("PSForge {} File", extension))
+            .map_err(reg_err)?;
+        // A friendly name ensures any UI that surfaces this ProgID (notably the
+        // "Open with" picker) shows "PSForge" rather than the raw ProgID string.
+        prog_key
+            .set_value("FriendlyAppName", &"PSForge")
             .map_err(reg_err)?;
 
         // shell\open\command
@@ -1435,6 +1490,11 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
         );
         // Ignore errors: the key simply may not exist yet.
         let _ = hkcu.delete_subkey_all(&user_choice_path);
+
+        // Register / repair the canonical "Open with" application entry so
+        // PSForge appears in the Open With list with its proper name and icon
+        // and actually launches when chosen.
+        ensure_open_with_application(&hkcu, &exe_path, &exe_path_str)?;
 
         // Notify the shell of the change
         notify_shell_assoc_changed();
@@ -1492,6 +1552,107 @@ pub async fn unregister_file_association(extension: String) -> Result<(), AppErr
     }
 
     Ok(())
+}
+
+/// Registry path for the optional "Open with PSForge" right-click verb.
+/// Registered under the all-files wildcard (`*`) so any file can be opened in
+/// the PSForge editor from Explorer's context menu.
+#[cfg(target_os = "windows")]
+const CONTEXT_MENU_VERB_PATH: &str = r"Software\Classes\*\shell\PSForge";
+
+/// Adds an "Open with PSForge" item (with the PSForge icon) to the Explorer
+/// right-click menu for all files. Uses HKCU so no administrator rights are
+/// required. This is opt-in via the Settings panel.
+#[tauri::command]
+pub async fn register_context_menu() -> Result<(), AppError> {
+    info!("Registering 'Open with PSForge' context menu");
+
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let exe_path = std::env::current_exe().map_err(|e| AppError {
+            code: "EXE_PATH_FAILED".to_string(),
+            message: format!("Could not determine executable path: {}", e),
+        })?;
+        let exe_path_str = exe_path.to_string_lossy().to_string();
+
+        // Verb key: the default value is the menu caption; `Icon` renders the
+        // PSForge application icon beside it.
+        let (verb_key, _) = hkcu
+            .create_subkey(CONTEXT_MENU_VERB_PATH)
+            .map_err(reg_err)?;
+        verb_key
+            .set_value("", &"Open with PSForge")
+            .map_err(reg_err)?;
+        verb_key
+            .set_value("Icon", &format!("\"{}\",0", exe_path_str))
+            .map_err(reg_err)?;
+
+        let cmd_path = format!(r"{}\command", CONTEXT_MENU_VERB_PATH);
+        let (cmd_key, _) = hkcu.create_subkey(&cmd_path).map_err(reg_err)?;
+        cmd_key
+            .set_value("", &format!("\"{}\" \"%1\"", exe_path_str))
+            .map_err(reg_err)?;
+
+        // Keep the Open With application entry healthy at the same time.
+        ensure_open_with_application(&hkcu, &exe_path, &exe_path_str)?;
+
+        notify_shell_assoc_changed();
+        info!("'Open with PSForge' context menu registered");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(AppError {
+            code: "UNSUPPORTED_PLATFORM".to_string(),
+            message: "Context menu integration is only supported on Windows".to_string(),
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    Ok(())
+}
+
+/// Removes the "Open with PSForge" right-click menu item.
+#[tauri::command]
+pub async fn unregister_context_menu() -> Result<(), AppError> {
+    info!("Unregistering 'Open with PSForge' context menu");
+
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        // Ignore errors: the key simply may not exist.
+        let _ = hkcu.delete_subkey_all(CONTEXT_MENU_VERB_PATH);
+        notify_shell_assoc_changed();
+        info!("'Open with PSForge' context menu unregistered");
+    }
+
+    Ok(())
+}
+
+/// Returns whether the "Open with PSForge" right-click menu item is registered.
+#[tauri::command]
+pub async fn get_context_menu_status() -> Result<bool, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let cmd_path = format!(r"{}\command", CONTEXT_MENU_VERB_PATH);
+        Ok(hkcu.open_subkey(&cmd_path).is_ok())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(false)
+    }
 }
 
 /// Returns the current file association status for all PS extensions.

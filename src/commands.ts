@@ -264,6 +264,21 @@ export async function batchUnregisterFileAssociations(
   });
 }
 
+/** Add the "Open with PSForge" item to the Windows right-click context menu. */
+export async function registerContextMenu(): Promise<void> {
+  return invoke("register_context_menu");
+}
+
+/** Remove the "Open with PSForge" item from the Windows right-click context menu. */
+export async function unregisterContextMenu(): Promise<void> {
+  return invoke("unregister_context_menu");
+}
+
+/** Returns whether the "Open with PSForge" right-click menu item is registered. */
+export async function getContextMenuStatus(): Promise<boolean> {
+  return invoke<boolean>("get_context_menu_status");
+}
+
 /** Get all snippets (built-in + user). */
 export async function getSnippets(): Promise<Snippet[]> {
   return invoke<Snippet[]>("get_snippets");
