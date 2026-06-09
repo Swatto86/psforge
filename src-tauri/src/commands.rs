@@ -2406,12 +2406,11 @@ if (Get-Command -Name Find-PSResource -ErrorAction SilentlyContinue) {
             Sort-Object -Property Name -Unique |
             Select-Object -First 5
         if ($r) {
-            ($r | Select-Object
-                @{N='name';E={$_.Name}},
+            ($r | Select-Object @{N='name';E={$_.Name}},
                 @{N='version';E={ if ($_.Version) { $_.Version.ToString() } else { '' } }},
                 @{N='repository';E={ if ($_.Repository) { $_.Repository } else { '' } }},
-                @{N='installCommand';E={ "Install-PSResource -Name '$($_.Name)'" }}
-            | ConvertTo-Json -Compress)
+                @{N='installCommand';E={ "Install-PSResource -Name '$($_.Name)'" }} |
+                ConvertTo-Json -Compress)
             exit
         }
     } catch {}
@@ -2423,12 +2422,11 @@ if (Get-Command -Name Find-Module -ErrorAction SilentlyContinue) {
             Sort-Object -Property Name -Unique |
             Select-Object -First 5
         if ($r) {
-            ($r | Select-Object
-                @{N='name';E={$_.Name}},
+            ($r | Select-Object @{N='name';E={$_.Name}},
                 @{N='version';E={ if ($_.Version) { $_.Version.ToString() } else { '' } }},
                 @{N='repository';E={ if ($_.Repository) { $_.Repository } else { '' } }},
-                @{N='installCommand';E={ "Install-Module -Name '$($_.Name)' -Scope CurrentUser" }}
-            | ConvertTo-Json -Compress)
+                @{N='installCommand';E={ "Install-Module -Name '$($_.Name)' -Scope CurrentUser" }} |
+                ConvertTo-Json -Compress)
             exit
         }
     } catch {}
