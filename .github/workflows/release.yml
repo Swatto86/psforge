@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual fallback for environments that cannot push tags directly: the
+  # release (and its tag, via createRelease) is cut from the dispatched
+  # commit. The tag input must match the manifest versions on that commit.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.2.17). Created on the dispatched commit if it does not exist."
+        required: true
+        type: string
 
 jobs:
   # Create the draft release once so matrix jobs do not race creating/updating
@@ -14,13 +23,31 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create-release.outputs.result }}
+      tag: ${{ steps.resolve-tag.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve release tag
+        id: resolve-tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          case "$tag" in
+            v[0-9]*) ;;
+            *)
+              echo "::error::Release tag '$tag' must look like v<major>.<minor>.<patch>."
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Verify tag matches manifest version
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
+          tag="${{ steps.resolve-tag.outputs.tag }}"
           tag_version="${tag#v}"
           conf_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           pkg_version="$(node -p "require('./package.json').version")"
@@ -34,9 +61,11 @@ jobs:
       - name: Create or reuse draft release
         id: create-release
         uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ steps.resolve-tag.outputs.tag }}
         with:
           script: |
-            const tag = context.ref.replace('refs/tags/', '');
+            const tag = process.env.RELEASE_TAG;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
@@ -54,10 +83,14 @@ jobs:
               }
             }
 
+            // When the tag does not exist yet (workflow_dispatch fallback),
+            // createRelease creates it on target_commitish; for tag-push runs
+            // the tag exists and target_commitish is ignored.
             const { data } = await github.rest.repos.createRelease({
               owner,
               repo,
               tag_name: tag,
+              target_commitish: context.sha,
               name: tag,
               draft: true,
               prerelease: false,
