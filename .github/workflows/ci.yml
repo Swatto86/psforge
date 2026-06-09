@@ -30,6 +30,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Frontend tests (vitest)
+        run: npm test
+
       - name: Frontend build (tsc + vite)
         run: npm run build
 

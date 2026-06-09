@@ -21,15 +21,19 @@ export function ToastStack() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   useEffect(() => {
+    const timers = new Set<number>();
     pushToastHandler = (message: string) => {
       const id = nextToastId++;
       setToasts((prev) => [...prev, { id, message }]);
-      window.setTimeout(() => {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
         setToasts((prev) => prev.filter((t) => t.id !== id));
       }, TOAST_MS);
+      timers.add(timer);
     };
     return () => {
       pushToastHandler = null;
+      for (const timer of timers) window.clearTimeout(timer);
     };
   }, []);
 

@@ -2906,17 +2906,39 @@ pub async fn list_scratch_files() -> Result<Vec<ScratchFileInfo>, AppError> {
     Ok(files)
 }
 
+/// Resolves `path` to a deletable scratch file: it must be a direct child of
+/// `scratch_dir` named `<tab-id>.ps1` with the same stem charset accepted by
+/// `list_scratch_files`. Rejects traversal (`..`), nested paths, and foreign
+/// extensions so the delete command can never escape the scratch folder.
+/// (`Path::starts_with` alone is not enough: `<scratch>/../x` passes it
+/// component-wise while the OS resolves it outside the directory.)
+fn scratch_delete_target(path: &str, scratch_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let target = std::path::Path::new(path.trim());
+    let stem_ok = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(".ps1"))
+        .is_some_and(|stem| {
+            !stem.is_empty()
+                && stem
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        });
+    if stem_ok && target.parent() == Some(scratch_dir) {
+        Some(target.to_path_buf())
+    } else {
+        None
+    }
+}
+
 /// Deletes a scratch file when the user discards an untitled buffer.
 #[tauri::command]
 pub async fn delete_scratch_file(path: String) -> Result<(), AppError> {
     let scratch_dir = settings::scratch_dir()?;
-    let target = std::path::Path::new(path.trim());
-    if !target.starts_with(&scratch_dir) {
-        return Err(AppError {
-            code: "SCRATCH_PATH_OUTSIDE_DIR".to_string(),
-            message: "Scratch file path is outside the scratch directory.".to_string(),
-        });
-    }
+    let target = scratch_delete_target(&path, &scratch_dir).ok_or_else(|| AppError {
+        code: "SCRATCH_PATH_OUTSIDE_DIR".to_string(),
+        message: "Scratch file path is outside the scratch directory.".to_string(),
+    })?;
     if target.exists() {
         std::fs::remove_file(target)?;
     }
@@ -3343,6 +3365,60 @@ mod tests {
     #[test]
     fn find_last_json_returns_none_for_plain_text() {
         assert!(find_last_json("just plain text output").is_none());
+    }
+
+    // ----- scratch_delete_target tests -----
+
+    #[test]
+    fn scratch_delete_target_accepts_direct_child_ps1() {
+        let dir = std::path::Path::new("/data/PSForge/scratch");
+        let path = "/data/PSForge/scratch/0c8e7a44-1111-2222-3333-444455556666.ps1";
+        assert_eq!(
+            scratch_delete_target(path, dir),
+            Some(std::path::PathBuf::from(path))
+        );
+    }
+
+    #[test]
+    fn scratch_delete_target_rejects_parent_traversal() {
+        let dir = std::path::Path::new("/data/PSForge/scratch");
+        // Component-wise this starts with the scratch dir, but the OS would
+        // resolve it outside; it must be rejected.
+        assert_eq!(
+            scratch_delete_target("/data/PSForge/scratch/../../../etc/passwd", dir),
+            None
+        );
+        assert_eq!(
+            scratch_delete_target("/data/PSForge/scratch/../scratch/a.ps1", dir),
+            None
+        );
+    }
+
+    #[test]
+    fn scratch_delete_target_rejects_nested_and_foreign_paths() {
+        let dir = std::path::Path::new("/data/PSForge/scratch");
+        // Nested subdirectory.
+        assert_eq!(
+            scratch_delete_target("/data/PSForge/scratch/sub/a.ps1", dir),
+            None
+        );
+        // Entirely outside the scratch dir.
+        assert_eq!(scratch_delete_target("/tmp/a.ps1", dir), None);
+        // Wrong extension.
+        assert_eq!(
+            scratch_delete_target("/data/PSForge/scratch/a.txt", dir),
+            None
+        );
+        // Stem characters outside the tab-id charset.
+        assert_eq!(
+            scratch_delete_target("/data/PSForge/scratch/a b.ps1", dir),
+            None
+        );
+        // Bare extension with empty stem.
+        assert_eq!(
+            scratch_delete_target("/data/PSForge/scratch/.ps1", dir),
+            None
+        );
     }
 
     // ----- validation constant sanity checks -----

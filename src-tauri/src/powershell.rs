@@ -763,7 +763,7 @@ function __psforge_emit_variables {
         $__psforge_vars = @(
             Get-Variable |
             Where-Object {
-                $_.Name -notmatch '^(\\?|args|input|MyInvocation|PSBoundParameters|PSCommandPath|PSScriptRoot|utf8NoBom|psfHwnd)$' -and
+                $_.Name -notmatch '^(\?|args|input|MyInvocation|PSBoundParameters|PSCommandPath|PSScriptRoot|utf8NoBom|psfHwnd)$' -and
                 $_.Name -notlike '__psforge*'
             } |
             ForEach-Object {

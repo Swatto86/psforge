@@ -31,6 +31,9 @@ export function ScriptSigningDialog() {
   // Fetch code-signing certs whenever the dialog opens.
   useEffect(() => {
     if (!state.showSigningDialog) return;
+    // Guard against a slow earlier request resolving after the dialog was
+    // reopened (or the PS path changed) and overwriting the fresh cert list.
+    let cancelled = false;
     setLoading(true);
     setCerts([]);
     setSelectedThumbprint("");
@@ -40,14 +43,19 @@ export function ScriptSigningDialog() {
     cmd
       .getSigningCertificates(state.selectedPsPath)
       .then((c) => {
+        if (cancelled) return;
         setCerts(c);
         if (c.length > 0) setSelectedThumbprint(c[0].thumbprint);
         setLoading(false);
       })
       .catch(() => {
+        if (cancelled) return;
         setError("Failed to load certificates.");
         setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [state.showSigningDialog, state.selectedPsPath]);
 
   // Close on Escape.

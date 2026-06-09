@@ -630,11 +630,7 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         bottomPanelTab: action.tab,
-        referenceSubview:
-          action.referenceSubview ??
-          (action.tab === "reference"
-            ? state.referenceSubview
-            : state.referenceSubview),
+        referenceSubview: action.referenceSubview ?? state.referenceSubview,
       };
 
     case "SET_REFERENCE_SUBVIEW":

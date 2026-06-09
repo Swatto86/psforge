@@ -323,6 +323,10 @@ export function TabBar() {
         >
           <CtxMenuItem
             label="Close"
+            // The app always keeps at least one tab open; the tab close button
+            // is hidden in that case, so grey this out instead of silently
+            // doing nothing.
+            disabled={state.tabs.length <= 1}
             onClick={() => {
               // BUG-NEW-5 fix: route through closeTab so isDirty is checked.
               void closeTab(contextMenu.tabId);

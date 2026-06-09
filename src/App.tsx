@@ -187,7 +187,10 @@ const DEBUG_STACK_COMMAND =
   "location = if ($_.ScriptName) { \"$($_.ScriptName):$($_.ScriptLineNumber)\" } else { 'Interactive' }; " +
   "command = if ($_.Command) { $_.Command } else { '' } " +
   "} }; " +
-  `Write-Host '${DEBUG_STACK_PREFIX}' + ($__psf_stack | ConvertTo-Json -Compress -Depth 4)`;
+  // The concatenation must be wrapped in parens: in PowerShell argument mode
+  // a bare `+` is passed to Write-Host as a separate argument, emitting
+  // "<prefix> + <json>" which the marker parser rejects.
+  `Write-Host ('${DEBUG_STACK_PREFIX}' + ($__psf_stack | ConvertTo-Json -Compress -Depth 4))`;
 
 function escapeForSingleQuotedPsLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -269,7 +272,7 @@ function buildDebugLocalsCommand(frameIndex: number): string {
     "value = ($_.Value | Out-String).Trim(); " +
     'scope = "Frame:$__psf_scope" ' +
     "} }; " +
-    `Write-Host '${DEBUG_LOCALS_PREFIX}' + ($__psf_locals | ConvertTo-Json -Compress -Depth 4)`
+    `Write-Host ('${DEBUG_LOCALS_PREFIX}' + ($__psf_locals | ConvertTo-Json -Compress -Depth 4))`
   );
 }
 
@@ -286,7 +289,7 @@ function buildWatchEvalCommand(expression: string, frameIndex: number): string {
     "} catch { " +
     "  $__psf_payload = [PSCustomObject]@{ expression = $__psf_expr; value = ''; error = $_.Exception.Message }; " +
     "} " +
-    `Write-Host '${DEBUG_WATCH_PREFIX}' + ($__psf_payload | ConvertTo-Json -Compress -Depth 4)`
+    `Write-Host ('${DEBUG_WATCH_PREFIX}' + ($__psf_payload | ConvertTo-Json -Compress -Depth 4))`
   );
 }
 

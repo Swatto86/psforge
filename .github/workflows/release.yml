@@ -24,9 +24,10 @@ jobs:
           tag_version="${tag#v}"
           conf_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           pkg_version="$(node -p "require('./package.json').version")"
-          echo "tag=$tag_version conf=$conf_version pkg=$pkg_version"
-          if [ "$tag_version" != "$conf_version" ] || [ "$tag_version" != "$pkg_version" ]; then
-            echo "::error::Tag $tag_version does not match tauri.conf.json ($conf_version) / package.json ($pkg_version). Tag the commit that bumps the version, not an earlier one."
+          cargo_version="$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)"
+          echo "tag=$tag_version conf=$conf_version pkg=$pkg_version cargo=$cargo_version"
+          if [ "$tag_version" != "$conf_version" ] || [ "$tag_version" != "$pkg_version" ] || [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::Tag $tag_version does not match tauri.conf.json ($conf_version) / package.json ($pkg_version) / Cargo.toml ($cargo_version). Tag the commit that bumps all versions, not an earlier one."
             exit 1
           fi
 
@@ -92,7 +93,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            pkg-config
 
       - uses: actions/setup-node@v4
         with:
