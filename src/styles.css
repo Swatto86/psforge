@@ -30,6 +30,7 @@
   --accent: #007acc;
   --accent-hover: #1a8ad4;
   --accent-fg: #ffffff;
+  --success: #4ec9b0;
 
   /* Output stream colors */
   --stream-stdout: #d4d4d4;
@@ -116,6 +117,7 @@
 
   --border-primary: #cecece;
   --border-active: #007acc;
+  --success: #0f7b0f;
 
   --stream-stdout: #333333;
   --stream-stderr: #cd3131;
@@ -173,6 +175,7 @@
 
   --accent: #01356e;
   --accent-hover: #014a8a;
+  --success: #7ed07e;
 
   --stream-stdout: #eeedf0;
   --stream-stderr: #ff6060;
@@ -268,7 +271,7 @@ body,
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: color-mix(in srgb, var(--scrollbar-thumb) 70%, var(--text-secondary));
 }
 
 ::selection {
@@ -324,6 +327,383 @@ textarea {
 
 textarea:focus {
   border-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------------
+   Shared component classes (toolbar, menus, tabs, status bar, welcome pane).
+   Same visual language as the bottom-pane styles below: soft pills, subtle
+   borders, color-mix tints of the theme variables.
+--------------------------------------------------------------------------- */
+
+/* Icon-only toolbar button */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.icon-btn:disabled {
+  color: var(--text-muted);
+  opacity: 0.45;
+  cursor: default;
+}
+
+.icon-btn-toggled {
+  color: var(--text-accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Labeled toolbar action (pill with icon + text) */
+.tb-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.tb-action:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.tb-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tb-action-solid {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.tb-action-solid:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.tb-action-run {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border-primary));
+  color: var(--success);
+}
+
+.tb-action-run:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.tb-action-stop {
+  border-color: color-mix(
+    in srgb,
+    var(--stream-stderr) 45%,
+    var(--border-primary)
+  );
+  color: var(--stream-stderr);
+}
+
+.tb-action-stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--stream-stderr) 12%, transparent);
+}
+
+.tb-action-accent {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-primary));
+  color: var(--text-accent);
+}
+
+.tb-action-accent:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.tb-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 8px;
+  background: var(--border-primary);
+  flex-shrink: 0;
+}
+
+/* Dropdown / context-menu panel */
+.menu-pop {
+  position: absolute;
+  z-index: 50;
+  padding: 4px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--ui-font-size-sm);
+  text-align: left;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.menu-item:disabled {
+  color: var(--text-muted);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-primary);
+}
+
+/* Editor tabs */
+.tab-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 14px;
+  height: 36px;
+  font-size: var(--ui-font-size-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  background: var(--bg-tab);
+  color: var(--text-secondary);
+  border-right: 1px solid var(--border-primary);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.tab-item:hover {
+  color: var(--text-primary);
+}
+
+.tab-item::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: transparent;
+}
+
+.tab-item-active {
+  background: var(--bg-tab-active);
+  color: var(--text-primary);
+}
+
+.tab-item-active::before {
+  background: var(--accent);
+}
+
+.tab-item-drop-target {
+  box-shadow: inset 2px 0 0 var(--accent);
+  opacity: 0.8;
+}
+
+.tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 0;
+  font-size: var(--ui-font-size-base);
+  line-height: 1;
+  transition:
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.tab-item:hover .tab-close,
+.tab-item-active .tab-close {
+  opacity: 0.7;
+}
+
+.tab-close:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tab-dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-accent);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* Status bar links */
+.status-link {
+  background: transparent;
+  color: var(--text-inverse);
+  cursor: pointer;
+  font-size: inherit;
+  opacity: 0.9;
+  transition: opacity 0.15s ease;
+}
+
+.status-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+/* Solid / outline buttons for panes, banners, and dialogs */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--ui-font-size-base);
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--btn-primary-hover);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.btn-sm {
+  padding: 3px 10px;
+  font-size: var(--ui-font-size-xs);
+  font-weight: 500;
+  border-radius: 5px;
+}
+
+/* Welcome pane */
+.welcome-card {
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  padding: 20px;
+}
+
+.welcome-step {
+  flex: 1 1 180px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-primary) 55%, var(--bg-secondary));
+}
+
+.welcome-step-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: var(--ui-font-size-base);
+}
+
+.welcome-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--text-accent);
+  font-size: var(--ui-font-size-xs);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.welcome-step-hint {
+  color: var(--text-secondary);
+  font-size: var(--ui-font-size-sm);
+  line-height: 1.45;
+}
+
+.welcome-list-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  padding: 8px 10px;
+  transition: border-color 0.15s ease;
+}
+
+.welcome-list-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-primary));
 }
 
 .bottom-pane-shell {

@@ -28,9 +28,14 @@ const SESSION_GRACEFUL_EXIT_MS: u64 = 1_500;
 const MAX_OUTPUT_LINES: usize = 100_000;
 /// Poll interval for checking whether the persistent PowerShell process exited.
 const PROCESS_MONITOR_POLL_MS: u64 = 120;
+/// After the stdout DONE marker, how long to wait for the stderr DONE_ERR
+/// marker before finishing the run anyway (covers scripts that close or
+/// redirect stderr, which would otherwise hang the run).
+const STDERR_DRAIN_TIMEOUT_MS: u64 = 2_000;
 /// Frontend/backend command markers for the persistent host protocol.
 const RUN_COMMAND_MARKER_PREFIX: &str = "<<PSFORGE_RUN|";
 const RUN_COMPLETE_MARKER_PREFIX: &str = "<<PSFORGE_DONE|";
+const RUN_COMPLETE_STDERR_MARKER_PREFIX: &str = "<<PSFORGE_DONE_ERR|";
 const HOST_EXIT_MARKER: &str = "<<PSFORGE_EXIT>>";
 pub const VARIABLES_MARKER_PREFIX: &str = "<<PSFORGE_VARIABLES_JSON>>";
 
@@ -135,6 +140,18 @@ fn parse_run_complete_marker(text: &str) -> Option<(String, i32)> {
     Some((id.to_string(), code))
 }
 
+/// Parses the stderr-side completion marker `<<PSFORGE_DONE_ERR|id>>`.
+fn parse_run_complete_stderr_marker(text: &str) -> Option<String> {
+    let body = text
+        .trim()
+        .strip_prefix(RUN_COMPLETE_STDERR_MARKER_PREFIX)?
+        .strip_suffix(">>")?;
+    if body.is_empty() {
+        return None;
+    }
+    Some(body.to_string())
+}
+
 fn persistent_host_bootstrap_script() -> String {
     let mut script = String::new();
     script.push_str(
@@ -175,11 +192,17 @@ function global:Invoke-PSForgeCommand {
         Write-Error $_
         $exitCode = 1
     } finally {
-        # Emit completion marker only on stdout. If it is emitted on stderr too,
-        # the stderr reader can race ahead of real stdout payload lines and cause
-        # the host loop to complete before user output is drained.
+        # Emit one completion marker per stream. The Rust side waits for BOTH
+        # before finishing the run: each pipe is drained in order by its own
+        # reader task, so once a stream's marker has been seen, every real
+        # line written to that stream beforehand (e.g. a trailing Write-Error)
+        # is guaranteed to have been forwarded. Breaking on the stdout marker
+        # alone raced the independent stderr reader and could silently drop
+        # trailing stderr output.
         [Console]::Out.WriteLine("<<PSFORGE_DONE|$CommandId|$exitCode>>")
         [Console]::Out.Flush()
+        [Console]::Error.WriteLine("<<PSFORGE_DONE_ERR|$CommandId>>")
+        [Console]::Error.Flush()
     }
 }
 
@@ -1042,7 +1065,47 @@ function __psforge_invoke_user_script {
         }
 
         let mut session_terminated = false;
+        // The run is complete only when BOTH stream markers have arrived; the
+        // stdout and stderr readers are independent tasks, so either marker
+        // can be dequeued first. Once the stdout marker is in, the wait for
+        // the stderr marker is bounded: a user script can close or redirect
+        // stderr, in which case DONE_ERR never arrives and the run must not
+        // hang for it.
+        let mut stdout_done: Option<i32> = None;
+        let mut stderr_done = false;
         let exit_code = loop {
+            if let Some(code) = stdout_done {
+                if stderr_done {
+                    break code;
+                }
+                match timeout(
+                    Duration::from_millis(STDERR_DRAIN_TIMEOUT_MS),
+                    session_events.recv(),
+                )
+                .await
+                {
+                    Err(_) => break code, // stderr marker never arrived
+                    Ok(Some(SessionEvent::Output(line))) => {
+                        if let Some(done_id) = parse_run_complete_stderr_marker(&line.text) {
+                            if done_id == command_id {
+                                break code;
+                            }
+                            continue;
+                        }
+                        if parse_run_complete_marker(&line.text).is_some() {
+                            // Stray stdout marker (this or another command);
+                            // never surface marker lines as output.
+                            continue;
+                        }
+                        on_output(line);
+                        continue;
+                    }
+                    Ok(Some(SessionEvent::Exited(_))) | Ok(None) => {
+                        session_terminated = true;
+                        break code;
+                    }
+                }
+            }
             tokio::select! {
                 _ = &mut kill_rx => {
                     break -1;
@@ -1052,9 +1115,21 @@ function __psforge_invoke_user_script {
                         Some(SessionEvent::Output(line)) => {
                             if let Some((done_id, code)) = parse_run_complete_marker(&line.text) {
                                 if done_id == command_id {
-                                    break code;
+                                    if stderr_done {
+                                        break code;
+                                    }
+                                    stdout_done = Some(code);
                                 }
                                 // Marker for an unrelated command; do not surface.
+                                continue;
+                            }
+                            if let Some(done_id) = parse_run_complete_stderr_marker(&line.text) {
+                                if done_id == command_id {
+                                    if let Some(code) = stdout_done {
+                                        break code;
+                                    }
+                                    stderr_done = true;
+                                }
                                 continue;
                             }
                             on_output(line);
@@ -1368,5 +1443,33 @@ mod tests {
         let err = resolve_working_dir(&missing.to_string_lossy())
             .expect_err("invalid working dir must return error");
         assert_eq!(err.code, "INVALID_WORKING_DIR");
+    }
+
+    #[test]
+    fn parse_run_complete_marker_roundtrip() {
+        assert_eq!(
+            parse_run_complete_marker("<<PSFORGE_DONE|abc-123|0>>"),
+            Some(("abc-123".to_string(), 0))
+        );
+        assert_eq!(parse_run_complete_marker("<<PSFORGE_DONE||1>>"), None);
+        assert_eq!(parse_run_complete_marker("plain output"), None);
+        // stderr marker must not parse as the stdout marker
+        assert_eq!(parse_run_complete_marker("<<PSFORGE_DONE_ERR|abc>>"), None);
+    }
+
+    #[test]
+    fn parse_run_complete_stderr_marker_roundtrip() {
+        assert_eq!(
+            parse_run_complete_stderr_marker("  <<PSFORGE_DONE_ERR|abc-123>>  "),
+            Some("abc-123".to_string())
+        );
+        assert_eq!(
+            parse_run_complete_stderr_marker("<<PSFORGE_DONE_ERR|>>"),
+            None
+        );
+        assert_eq!(
+            parse_run_complete_stderr_marker("<<PSFORGE_DONE|abc|0>>"),
+            None
+        );
     }
 }

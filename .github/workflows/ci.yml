@@ -55,3 +55,27 @@ jobs:
       - name: cargo test
         working-directory: src-tauri
         run: cargo test
+
+  # The Linux job compiles out every #[cfg(windows)] block (registry file
+  # associations, PS discovery, ConPTY), so Windows-only breakage would only
+  # surface after a release tag was already pushed. This leg gates it here.
+  check-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: cargo clippy (windows)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test (windows)
+        working-directory: src-tauri
+        run: cargo test

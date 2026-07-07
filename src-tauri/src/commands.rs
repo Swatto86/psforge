@@ -53,6 +53,16 @@ fn ps_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+/// Builds a tokio Command for an ad hoc PowerShell helper process with
+/// `kill_on_drop` set. tokio defaults to leaving the child running when its
+/// future is dropped, so every helper wrapped in `tokio::time::timeout` would
+/// otherwise be orphaned (a live pwsh.exe, forever) each time it timed out.
+fn ps_command(ps_path: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(ps_path);
+    cmd.kill_on_drop(true);
+    cmd
+}
+
 fn resolve_terminal_working_dir(working_dir: &str) -> Result<String, AppError> {
     let trimmed = working_dir.trim();
     if !trimmed.is_empty() {
@@ -379,7 +389,7 @@ pub async fn get_script_parameters(
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(PARAM_INSPECT_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -527,7 +537,7 @@ pub async fn get_installed_modules(ps_path: String) -> Result<Vec<ModuleInfo>, A
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(MODULE_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -676,7 +686,7 @@ pub async fn get_module_commands(
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(MODULE_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -776,7 +786,7 @@ if ($__params.Count -eq 0) { '[]' } else { $__params | ConvertTo-Json -Compress 
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(COMMAND_PARAMS_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -879,7 +889,7 @@ try {
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(COMMAND_HELP_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -1104,12 +1114,17 @@ pub async fn read_file_content(path: String) -> Result<FileContent, AppError> {
 }
 
 /// Saves content to a file with the specified encoding.
+///
+/// Returns `Some(warning)` when the save succeeded but altered the content
+/// (e.g. Windows-1252 replaced unencodable characters with '?') — mirrors the
+/// warning channel on the read path (`FileContent.warning`). The frontend
+/// surfaces it; a silent lossy save is permanent, invisible corruption.
 #[tauri::command]
 pub async fn save_file_content(
     path: String,
     content: String,
     encoding: String,
-) -> Result<(), AppError> {
+) -> Result<Option<String>, AppError> {
     debug!("save_file_content: {} ({})", path, encoding);
 
     // Pre-flight path validation (Rule 17).
@@ -1123,6 +1138,7 @@ pub async fn save_file_content(
         });
     }
 
+    let mut warning: Option<String> = None;
     let bytes = match encoding.as_str() {
         "utf8bom" => {
             let mut bom = vec![0xEF, 0xBB, 0xBF];
@@ -1149,10 +1165,11 @@ pub async fn save_file_content(
             // conversion to UTF-8 the user did not ask for.
             let (encoded, _, had_unmappable) = encoding_rs::WINDOWS_1252.encode(content.as_str());
             if had_unmappable {
-                warn!(
-                    "save_file_content: content contains characters not representable in Windows-1252; \
-                     unrepresentable bytes have been replaced with '?'"
-                );
+                let message = "Some characters are not representable in Windows-1252 and were \
+                     saved as '?'. Change the encoding to UTF-8 to keep them."
+                    .to_string();
+                warn!("save_file_content: {}", message);
+                warning = Some(message);
             }
             encoded.into_owned()
         }
@@ -1165,7 +1182,7 @@ pub async fn save_file_content(
     with_retry("save_file_content", || {
         atomic_write(std::path::Path::new(&path), &bytes)
     })?;
-    Ok(())
+    Ok(warning)
 }
 
 /// Detects encoding from BOM and decodes bytes to a string.
@@ -2233,7 +2250,7 @@ if (-not $d) {{ '[]'; exit }}\
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(ANALYSIS_TIMEOUT_SECS),
-        tokio::process::Command::new(ps_path)
+        ps_command(ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -2330,7 +2347,7 @@ if (-not $r.CompletionMatches) {{ '[]'; exit }}\
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(COMPLETION_TIMEOUT_SECS),
-        tokio::process::Command::new(ps_path)
+        ps_command(ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -2454,7 +2471,7 @@ pub async fn suggest_modules_for_command(
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(MODULE_SUGGEST_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -2541,7 +2558,7 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
         return Ok("Unknown".to_string());
     }
 
-    let output = match tokio::process::Command::new(ps_path)
+    let output = match ps_command(ps_path)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -2620,7 +2637,7 @@ pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(),
         canonical
     );
 
-    let output = tokio::process::Command::new(&ps_path)
+    let output = ps_command(&ps_path)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -2727,7 +2744,7 @@ if ($formatted) { $formatted } else { $text }";
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(FORMAT_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -2789,7 +2806,7 @@ pub async fn get_ps_profile_path(ps_path: String) -> Result<String, AppError> {
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(PROFILE_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -2995,7 +3012,7 @@ friendlyName=$(if($_.FriendlyName){$_.FriendlyName}else{$_.Subject -replace '^CN
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(CERT_ENUM_TIMEOUT_SECS),
-        tokio::process::Command::new(ps_path)
+        ps_command(ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -3107,7 +3124,7 @@ $sig.Status.ToString()",
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(SIGN_TIMEOUT_SECS),
-        tokio::process::Command::new(&ps_path)
+        ps_command(&ps_path)
             .args([
                 "-NoProfile",
                 "-NonInteractive",

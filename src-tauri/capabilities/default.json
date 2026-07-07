@@ -8,6 +8,10 @@
     "opener:default",
     "dialog:default",
     "fs:default",
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [{ "path": "**" }]
+    },
     "core:event:default",
     "updater:default",
     "process:default"

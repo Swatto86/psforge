@@ -112,7 +112,6 @@ export function StatusBar({
     backgroundColor: "transparent",
     color: "var(--text-inverse)",
     cursor: "pointer",
-    textDecoration: "underline",
     fontSize: "inherit",
   };
 
@@ -169,13 +168,8 @@ export function StatusBar({
             data-testid="status-update-error"
             onClick={onCheckForUpdates}
             title={updateStatus.message}
-            style={{
-              backgroundColor: "transparent",
-              color: "var(--stream-stderr)",
-              cursor: "pointer",
-              textDecoration: "underline",
-              fontSize: "inherit",
-            }}
+            className="status-link"
+            style={{ color: "var(--stream-stderr)" }}
           >
             Update check failed
           </button>
@@ -186,13 +180,7 @@ export function StatusBar({
           <button
             data-testid="status-update-check"
             onClick={onCheckForUpdates}
-            style={{
-              backgroundColor: "transparent",
-              color: "var(--text-inverse)",
-              cursor: "pointer",
-              opacity: 0.9,
-              fontSize: "inherit",
-            }}
+            className="status-link"
             title="Check GitHub Releases for a newer PSForge version"
           >
             Check for Updates
@@ -221,32 +209,19 @@ export function StatusBar({
             <button
               onClick={() => setShowEncodingPicker((v) => !v)}
               title="Click to change encoding"
-              className="transition-opacity"
-              style={{
-                backgroundColor: "transparent",
-                color: "var(--text-inverse)",
-                cursor: "pointer",
-                opacity: 0.9,
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.opacity = "1";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.opacity = "0.9";
-              }}
+              className="status-link"
+              style={{ textDecoration: "none" }}
             >
               {encodingLabel(activeTab.encoding)}
             </button>
 
             {showEncodingPicker && (
               <div
-                className="absolute z-50 py-1 rounded shadow-lg"
+                className="menu-pop"
                 style={{
                   bottom: "100%",
                   left: 0,
                   marginBottom: "4px",
-                  backgroundColor: "var(--bg-tertiary)",
-                  border: "1px solid var(--border-primary)",
                   minWidth: "160px",
                 }}
               >
@@ -261,32 +236,20 @@ export function StatusBar({
                       });
                       setShowEncodingPicker(false);
                     }}
-                    className="flex items-center gap-2 w-full px-3 py-1 text-left text-xs"
+                    className="menu-item flex items-center gap-2"
                     style={{
                       backgroundColor:
                         activeTab.encoding === opt.value
                           ? "var(--bg-hover)"
-                          : "transparent",
-                      color: "var(--text-primary)",
-                      cursor: "pointer",
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "var(--bg-hover)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        activeTab.encoding === opt.value
-                          ? "var(--bg-hover)"
-                          : "transparent";
+                          : undefined,
+                      fontSize: "var(--ui-font-size-xs)",
                     }}
                   >
-                    {activeTab.encoding === opt.value && (
+                    {activeTab.encoding === opt.value ? (
                       <span style={{ color: "var(--text-accent)" }}>
                         &#10003;
                       </span>
-                    )}
-                    {activeTab.encoding !== opt.value && (
+                    ) : (
                       <span
                         style={{ width: "12px", display: "inline-block" }}
                       />
@@ -308,30 +271,16 @@ export function StatusBar({
             onClick={() =>
               cmd.revealInExplorer(activeTab.filePath).catch(() => {})
             }
-            className="transition-opacity"
+            className="status-link"
             style={{
-              backgroundColor: "transparent",
-              color: "var(--text-inverse)",
-              cursor: "pointer",
               maxWidth: "500px",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              opacity: 0.9,
-              fontSize: "inherit",
               direction: "rtl",
               textAlign: "left",
             }}
             title={`Reveal in Explorer: ${activeTab.filePath}`}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLElement).style.opacity = "1";
-              (e.currentTarget as HTMLElement).style.textDecoration =
-                "underline";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.opacity = "0.9";
-              (e.currentTarget as HTMLElement).style.textDecoration = "none";
-            }}
           >
             {activeTab.filePath}
           </button>
@@ -367,18 +316,17 @@ export function StatusBar({
                   window as unknown as Record<string, (() => Promise<void>) | undefined>
                 ).__psforge_copy_debug_bundle?.();
               }}
+              className="status-link"
               style={{
-                ...statusBarLinkStyle,
                 fontVariantNumeric: "tabular-nums",
                 color:
                   lastRun?.exitCode === 0
                     ? "var(--text-inverse)"
                     : "var(--stream-stderr)",
-                textDecoration: "underline",
               }}
               title="Copy debug bundle for AI (last run output, exit code, PSSA)"
             >
-              {lastRunLabel}
+              {lastRunLabel} · Copy bundle
             </button>
           )
         )}
@@ -404,8 +352,8 @@ export function StatusBar({
                 ? `Run directory pinned to ${runCwd}. Click to unpin (runs use each file's folder).`
                 : `Run directory: ${runCwd}. Click to pin it for all runs.`
             }
+            className="status-link"
             style={{
-              ...statusBarLinkStyle,
               maxWidth: "220px",
               overflow: "hidden",
               textOverflow: "ellipsis",

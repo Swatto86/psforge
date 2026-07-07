@@ -220,7 +220,7 @@ export function TabBar() {
       style={{
         backgroundColor: "var(--bg-secondary)",
         borderBottom: "1px solid var(--border-primary)",
-        minHeight: "44px",
+        minHeight: "37px",
       }}
     >
       {state.tabs.map((tab) => {
@@ -253,54 +253,23 @@ export function TabBar() {
             onDragEnd={() => setDragOverId(null)}
             onClick={() => dispatch({ type: "SET_ACTIVE_TAB", id: tab.id })}
             onContextMenu={(e) => handleContextMenu(e, tab.id)}
-            className="flex items-center gap-2 px-4 py-3 text-sm cursor-pointer shrink-0 transition-colors"
-            style={{
-              backgroundColor: isActive
-                ? "var(--bg-tab-active)"
-                : "var(--bg-tab)",
-              color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-              borderRight: "1px solid var(--border-primary)",
-              borderBottom: isActive
-                ? "2px solid var(--accent)"
-                : "2px solid transparent",
-              // Highlight drop target with a left border accent
-              borderLeft: isDragTarget
-                ? "2px solid var(--accent)"
-                : "2px solid transparent",
-              opacity: isDragTarget ? 0.8 : 1,
-            }}
+            className={`tab-item ${isActive ? "tab-item-active" : ""} ${
+              isDragTarget ? "tab-item-drop-target" : ""
+            }`}
           >
             <span title={tab.filePath || undefined}>{displayLabel}</span>
-            {tab.isDirty && (
-              <span
-                style={{
-                  width: "8px",
-                  height: "8px",
-                  borderRadius: "50%",
-                  backgroundColor: "var(--text-accent)",
-                  display: "inline-block",
-                }}
-              />
-            )}
+            {tab.isDirty && <span className="tab-dirty-dot" />}
             <button
               onClick={(e) => handleClose(e, tab.id)}
               data-testid={`tab-close-${tab.id}`}
               disabled={state.tabs.length <= 1}
-              className="ml-1 rounded hover:opacity-100 opacity-50"
+              className="tab-close"
               style={{
-                color: "var(--text-secondary)",
-                backgroundColor: "transparent",
-                width: "18px",
-                height: "18px",
-                fontSize: "var(--ui-font-size-base)",
-                lineHeight: "1",
-                display: state.tabs.length <= 1 ? "none" : "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                display: state.tabs.length <= 1 ? "none" : "inline-flex",
               }}
               title="Close"
             >
-              x
+              ×
             </button>
           </div>
         );
@@ -310,15 +279,13 @@ export function TabBar() {
       {contextMenu && (
         <div
           ref={menuRef}
-          className="fixed z-50 py-1 rounded shadow-lg"
+          className="menu-pop"
           style={{
+            position: "fixed",
             left: contextMenu.x,
             top: contextMenu.y,
-            backgroundColor: "var(--bg-tertiary)",
-            border: "1px solid var(--border-primary)",
-            minWidth: "150px",
+            minWidth: "160px",
             fontFamily: "var(--ui-font-family)",
-            fontSize: "var(--ui-font-size)",
           }}
         >
           <CtxMenuItem
@@ -338,13 +305,7 @@ export function TabBar() {
             onClick={() => void closeOthers(contextMenu.tabId)}
           />
           <CtxMenuItem label="Close All" onClick={() => void closeAll()} />
-          <div
-            className="my-1"
-            style={{
-              height: "1px",
-              backgroundColor: "var(--border-primary)",
-            }}
-          />
+          <div className="menu-separator" />
           <CtxMenuItem
             label="Reveal in Explorer"
             disabled={
@@ -374,25 +335,14 @@ function CtxMenuItem({
   disabled?: boolean;
 }) {
   return (
-    <div
-      onClick={disabled ? undefined : () => void onClick()}
-      className="px-3 py-1 transition-colors"
-      style={{
-        color: disabled ? "var(--text-muted)" : "var(--text-primary)",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-      }}
-      onMouseEnter={(e) => {
-        if (!disabled)
-          (e.currentTarget as HTMLElement).style.backgroundColor =
-            "var(--bg-hover)";
-      }}
-      onMouseLeave={(e) =>
-        ((e.currentTarget as HTMLElement).style.backgroundColor = "transparent")
-      }
+    <button
+      type="button"
+      onClick={() => void onClick()}
+      disabled={disabled}
+      className="menu-item"
     >
       {label}
-    </div>
+    </button>
   );
 }
 

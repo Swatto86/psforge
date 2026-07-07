@@ -68,6 +68,8 @@ export function WelcomePane() {
     });
   };
 
+  const pasteRuns = state.settings.runAfterPasteCleanFormat !== false;
+
   return (
     <div
       data-testid="welcome-pane"
@@ -79,13 +81,7 @@ export function WelcomePane() {
       }}
     >
       <div className="mx-auto" style={{ width: "100%", maxWidth: "920px" }}>
-        <div
-          className="mb-6 rounded-lg p-5"
-          style={{
-            backgroundColor: "var(--bg-secondary)",
-            border: "1px solid var(--border-primary)",
-          }}
-        >
+        <div className="welcome-card mb-6">
           <h1
             className="font-bold mb-2"
             style={{
@@ -94,7 +90,7 @@ export function WelcomePane() {
               lineHeight: 1.2,
             }}
           >
-            Run your PowerShell scripts
+            Paste a script. Run it. Iterate.
           </h1>
           <p
             className="mb-4"
@@ -103,21 +99,22 @@ export function WelcomePane() {
               fontSize: "var(--ui-font-size-lg)",
             }}
           >
-            Open a script, press F5, and read the output in the terminal below.
-            Diagnostics and help live in the Reference tab when you need them.
+            Built for the AI loop: paste a generated PowerShell script, run it,
+            and copy the results back to your assistant when something needs
+            fixing.
           </p>
-          <div className="flex flex-wrap gap-2">
-            <ActionButton onClick={createNewFile} label="New script" hint="Ctrl+N" />
-            <ActionButton onClick={handleOpenFile} label="Open script" hint="Ctrl+O" />
+          <div className="flex flex-wrap gap-2 mb-5">
             <ActionButton
               onClick={() => {
                 (
                   window as unknown as Record<string, (() => void) | undefined>
                 ).__psforge_pasteFromClipboardAsNewScript?.();
               }}
-              label="Paste from clipboard"
-              hint="Ctrl+Shift+Alt+V on an open script"
+              label={pasteRuns ? "Paste from clipboard + run" : "Paste from clipboard"}
+              hint="Ctrl+Shift+Alt+V — cleans smart quotes and code fences, formats, then runs"
             />
+            <ActionButton onClick={createNewFile} label="New script" hint="Ctrl+N" secondary />
+            <ActionButton onClick={handleOpenFile} label="Open script" hint="Ctrl+O" secondary />
             <ActionButton
               onClick={handleOpenFolder}
               label="Open folder"
@@ -125,15 +122,41 @@ export function WelcomePane() {
               secondary
             />
           </div>
+          <div className="flex flex-wrap gap-3">
+            <div className="welcome-step">
+              <span className="welcome-step-label">
+                <span className="welcome-step-num">1</span>
+                Paste
+              </span>
+              <span className="welcome-step-hint">
+                Ctrl+Shift+Alt+V cleans smart quotes, zero-width characters, and
+                Markdown fences, then formats the script.
+              </span>
+            </div>
+            <div className="welcome-step">
+              <span className="welcome-step-label">
+                <span className="welcome-step-num">2</span>
+                Run
+              </span>
+              <span className="welcome-step-hint">
+                F5 runs in the integrated terminal below. PSScriptAnalyzer warns
+                before running anything suspicious.
+              </span>
+            </div>
+            <div className="welcome-step">
+              <span className="welcome-step-label">
+                <span className="welcome-step-num">3</span>
+                Copy for AI
+              </span>
+              <span className="welcome-step-hint">
+                One click on the toolbar copies output, exit code, and
+                diagnostics — paste it back to your assistant.
+              </span>
+            </div>
+          </div>
         </div>
 
-        <div
-          className="rounded-lg p-4"
-          style={{
-            backgroundColor: "var(--bg-secondary)",
-            border: "1px solid var(--border-primary)",
-          }}
-        >
+        <div className="welcome-card" style={{ padding: "16px" }}>
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2
               className="text-xs font-semibold uppercase"
@@ -142,15 +165,7 @@ export function WelcomePane() {
               Recent scripts
             </h2>
             {recentScripts.length > 0 && (
-              <button
-                onClick={clearRecentFiles}
-                className="text-xs rounded px-2 py-1"
-                style={{
-                  backgroundColor: "var(--bg-tertiary)",
-                  color: "var(--text-secondary)",
-                  border: "1px solid var(--border-primary)",
-                }}
-              >
+              <button onClick={clearRecentFiles} className="btn btn-ghost btn-sm" style={{ border: "1px solid var(--border-primary)" }}>
                 Clear list
               </button>
             )}
@@ -164,20 +179,15 @@ export function WelcomePane() {
             <ul className="flex flex-col gap-2">
               {recentScripts.map((path, idx) => (
                 <li key={path}>
-                  <div
-                    className="flex items-start gap-2 rounded p-2"
-                    style={{
-                      backgroundColor: "var(--bg-primary)",
-                      border: "1px solid var(--border-primary)",
-                    }}
-                  >
+                  <div className="welcome-list-row">
                     <button
                       onClick={() => openPath(path)}
-                      className="text-left flex-1 rounded px-1 py-0.5 transition-colors"
+                      className="text-left flex-1 rounded px-1 py-0.5"
                       style={{
                         backgroundColor: "transparent",
                         color: "var(--text-primary)",
                         cursor: "pointer",
+                        minWidth: 0,
                       }}
                       title={path}
                     >
@@ -203,12 +213,8 @@ export function WelcomePane() {
                     <button
                       data-testid={`welcome-recent-remove-${idx}`}
                       onClick={() => removeRecentFile(path)}
-                      className="rounded px-2 py-1 text-xs"
-                      style={{
-                        backgroundColor: "transparent",
-                        border: "1px solid var(--border-primary)",
-                        color: "var(--text-secondary)",
-                      }}
+                      className="btn btn-ghost btn-sm"
+                      style={{ border: "1px solid var(--border-primary)" }}
                     >
                       Remove
                     </button>
@@ -219,13 +225,7 @@ export function WelcomePane() {
           )}
         </div>
 
-        <div
-          className="mt-4 rounded-lg p-4"
-          style={{
-            backgroundColor: "var(--bg-secondary)",
-            border: "1px solid var(--border-primary)",
-          }}
-        >
+        <div className="welcome-card mt-4" style={{ padding: "16px" }}>
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2
               className="text-xs font-semibold uppercase"
@@ -242,12 +242,8 @@ export function WelcomePane() {
                     window as unknown as Record<string, (() => void) | undefined>
                   ).__psforge_clearRecentRuns?.();
                 }}
-                className="text-xs rounded px-2 py-1"
-                style={{
-                  border: "1px solid var(--border-primary)",
-                  color: "var(--text-secondary)",
-                  backgroundColor: "transparent",
-                }}
+                className="btn btn-ghost btn-sm"
+                style={{ border: "1px solid var(--border-primary)" }}
               >
                 Clear
               </button>
@@ -330,11 +326,8 @@ function RecentRunRow({
 
   return (
     <li
-      className="rounded p-2 text-sm"
-      style={{
-        backgroundColor: "var(--bg-primary)",
-        border: "1px solid var(--border-primary)",
-      }}
+      className="welcome-list-row text-sm"
+      style={{ flexDirection: "column", alignItems: "stretch", gap: "4px" }}
     >
       {onOpen ? (
         <button
@@ -394,18 +387,7 @@ function SmallAction({
   testId: string;
 }) {
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      onClick={onClick}
-      className="rounded px-2 py-0.5 text-xs"
-      style={{
-        border: "1px solid var(--border-primary)",
-        backgroundColor: "var(--bg-tertiary)",
-        color: "var(--text-primary)",
-        cursor: "pointer",
-      }}
-    >
+    <button type="button" data-testid={testId} onClick={onClick} className="btn btn-sm">
       {label}
     </button>
   );
@@ -425,17 +407,8 @@ function ActionButton({
   return (
     <button
       onClick={onClick}
-      className="px-4 py-2 rounded"
-      style={{
-        backgroundColor: secondary
-          ? "var(--bg-tertiary)"
-          : "var(--btn-primary-bg)",
-        color: secondary ? "var(--text-primary)" : "var(--btn-primary-fg)",
-        border: secondary ? "1px solid var(--border-primary)" : "none",
-        cursor: "pointer",
-        fontSize: "var(--ui-font-size-base)",
-        fontWeight: 600,
-      }}
+      className={secondary ? "btn" : "btn btn-primary"}
+      style={{ padding: "8px 16px" }}
       title={hint}
     >
       {label}

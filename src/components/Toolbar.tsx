@@ -1,6 +1,7 @@
 /** PSForge Toolbar component.
- *  Contains New, Open, Save, Save All, Run, Stop, Settings, Theme selector, PS version picker,
- *  and a Recent Files dropdown.
+ *  The primary AI paste-and-run workflow gets labeled buttons front and center:
+ *  Paste + Run, Run, Stop, Copy for AI. File ops, debugger tools, and the rest
+ *  live as icon buttons and an overflow menu.
  */
 
 import React, { useState, useRef, useEffect } from "react";
@@ -29,8 +30,11 @@ interface ToolbarProps {
   onStop: () => void;
   /** Format current script with Invoke-Formatter (Shift+Alt+F). */
   onFormat: () => void;
-  /** Paste from clipboard, clean, and format (Ctrl+Shift+Alt+V). */
-  onPasteCleanAndFormat: () => void;
+  /** Paste from clipboard, clean, format, and (per settings) run.
+   *  Works from the Welcome tab too (opens a new script tab). */
+  onPasteScript: () => void;
+  /** Copy the debug bundle (last run output + exit code + PSSA) for the AI. */
+  onCopyDebugBundle: () => void;
   /** Trigger Monaco's built-in Find & Replace widget. */
   onFindReplace: () => void;
   /** Open the current user's $PROFILE for editing. */
@@ -55,7 +59,8 @@ export function Toolbar({
   onDebugStepOut,
   onStop,
   onFormat,
-  onPasteCleanAndFormat,
+  onPasteScript,
+  onCopyDebugBundle,
   onFindReplace,
   onOpenProfile,
   onPrint,
@@ -86,7 +91,10 @@ export function Toolbar({
   useEffect(() => {
     if (!showOverflow) return;
     const handler = (e: MouseEvent) => {
-      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+      if (
+        overflowRef.current &&
+        !overflowRef.current.contains(e.target as Node)
+      ) {
         setShowOverflow(false);
       }
     };
@@ -102,6 +110,9 @@ export function Toolbar({
     });
   };
 
+  const hasCodeTab = !!activeTab && activeTab.tabType !== "welcome";
+  const pasteRuns = state.settings.runAfterPasteCleanFormat !== false;
+
   return (
     <div
       data-testid="toolbar-root"
@@ -114,80 +125,62 @@ export function Toolbar({
         paddingRight: "12px",
       }}
     >
-      {/* Primary: open, save, run, stop */}
+      {/* File ops */}
       <div ref={recentRef} className="relative">
         <button
           title="Recent scripts"
           onClick={() => setShowRecent((v) => !v)}
           disabled={state.settings.recentFiles.length === 0}
-          className="flex items-center gap-0.5 px-2 h-8 rounded text-sm transition-colors"
-          style={{
-            backgroundColor: "transparent",
-            color:
-              state.settings.recentFiles.length === 0
-                ? "var(--text-muted)"
-                : "var(--text-primary)",
-            cursor:
-              state.settings.recentFiles.length === 0
-                ? "not-allowed"
-                : "pointer",
-            opacity: state.settings.recentFiles.length === 0 ? 0.4 : 1,
-          }}
+          className="tb-action"
+          style={{ borderColor: "transparent", fontWeight: 500 }}
         >
           Recent
-          <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor" style={{ marginLeft: "2px" }}>
+          <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor">
             <path d="M0 2l4 4 4-4H0z" />
           </svg>
         </button>
         {showRecent && state.settings.recentFiles.length > 0 && (
           <div
-            className="absolute z-50 py-1 rounded shadow-lg"
-            style={{
-              top: "100%",
-              left: 0,
-              minWidth: "280px",
-              maxWidth: "420px",
-              backgroundColor: "var(--bg-tertiary)",
-              border: "1px solid var(--border-primary)",
-            }}
+            className="menu-pop"
+            style={{ top: "100%", left: 0, minWidth: "280px", maxWidth: "420px" }}
           >
             {state.settings.recentFiles.slice(0, 15).map((path) => {
               const name = basename(path);
               return (
-                <div key={path} className="flex items-center group" style={{ minWidth: 0 }}>
-                  <button
-                    onClick={() => {
-                      onOpenRecent(path);
-                      setShowRecent(false);
-                    }}
-                    className="flex flex-col items-start flex-1 px-3 py-1.5 text-left text-xs transition-colors"
+                <button
+                  key={path}
+                  onClick={() => {
+                    onOpenRecent(path);
+                    setShowRecent(false);
+                  }}
+                  className="menu-item"
+                  style={{ minWidth: 0 }}
+                  title={path}
+                >
+                  <span className="block font-medium truncate">{name}</span>
+                  <span
+                    className="block truncate"
                     style={{
-                      backgroundColor: "transparent",
-                      color: "var(--text-primary)",
-                      cursor: "pointer",
-                      minWidth: 0,
+                      color: "var(--text-muted)",
+                      fontSize: "var(--ui-font-size-2xs)",
                     }}
-                    title={path}
                   >
-                    <span className="font-medium truncate w-full">{name}</span>
-                    <span className="truncate w-full" style={{ color: "var(--text-muted)", fontSize: "var(--ui-font-size-2xs)" }}>
-                      {path}
-                    </span>
-                  </button>
-                </div>
+                    {path}
+                  </span>
+                </button>
               );
             })}
           </div>
         )}
       </div>
 
-      <ToolbarBtn title="Open script (Ctrl+O)" onClick={onOpen} testId="toolbar-open">
+      <IconBtn title="Open script (Ctrl+O)" onClick={onOpen} testId="toolbar-open">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
           <path d="M6 1H2a1 1 0 0 0-1 1v3h1V2h4v3h3V2.5L6 1zM9 5H6V2l3 3zm-8 2v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7H1zm13 7H2V8h12v6z" />
         </svg>
-      </ToolbarBtn>
+      </IconBtn>
 
-      <ToolbarBtn
+      <IconBtn
         title="Save (Ctrl+S)"
         onClick={onSave}
         testId="toolbar-save"
@@ -200,103 +193,124 @@ export function Toolbar({
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
           <path d="M13.354 1.146l1.5 1.5A.5.5 0 0 1 15 3v11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h10.5a.5.5 0 0 1 .354.146zM2 2v12h12V3.207L12.793 2H11v4H4V2H2zm3 0v3h5V2H5z" />
         </svg>
-      </ToolbarBtn>
+      </IconBtn>
 
-      <div className="mx-2 h-5" style={{ width: "1px", backgroundColor: "var(--border-primary)" }} />
+      <div className="tb-divider" />
 
-      <ToolbarBtn
+      {/* AI paste-and-run workflow */}
+      <button
+        type="button"
+        data-testid="toolbar-paste-run"
+        title={
+          pasteRuns
+            ? "Paste from clipboard, clean smart quotes/code fences, format, and run (Ctrl+Shift+Alt+V)"
+            : "Paste from clipboard, clean smart quotes/code fences, and format (Ctrl+Shift+Alt+V)"
+        }
+        onClick={onPasteScript}
+        disabled={!state.selectedPsPath}
+        className="tb-action tb-action-solid"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M10 1.5a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1H4.5A1.5 1.5 0 0 0 3 3v11a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 13 14V3a1.5 1.5 0 0 0-1.5-1.5H10zM7 1.5h2V3H7V1.5zM4.5 3H6v.5a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5V3h1.5a.5.5 0 0 1 .5.5V14a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5V3.5a.5.5 0 0 1 .5-.5z" />
+        </svg>
+        {pasteRuns ? "Paste + Run" : "Paste clean"}
+      </button>
+
+      <button
+        type="button"
+        data-testid="toolbar-run"
         title={showDebuggerTools ? "Run or Debug (F5)" : "Run script (F5)"}
         onClick={onRun}
-        testId="toolbar-run"
         disabled={
-          state.isRunning ||
-          !state.selectedPsPath ||
-          !activeTab ||
-          activeTab.tabType === "welcome"
+          state.isRunning || !state.selectedPsPath || !hasCodeTab
         }
-        className="text-green-400 hover:text-green-300"
+        className="tb-action tb-action-run"
       >
-        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
           <path d="M4 2l10 6-10 6V2z" />
         </svg>
-      </ToolbarBtn>
+        Run
+      </button>
 
       {showDebuggerTools && (
         <>
-          <ToolbarBtn
+          <IconBtn
             title="Start Debugging"
             onClick={onDebugStart}
             testId="toolbar-debug-start"
-            disabled={
-              state.isRunning ||
-              !state.selectedPsPath ||
-              !activeTab ||
-              activeTab.tabType === "welcome"
-            }
+            disabled={state.isRunning || !state.selectedPsPath || !hasCodeTab}
             className="text-yellow-400 hover:text-yellow-300"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <circle cx="8" cy="8" r="5" />
             </svg>
-          </ToolbarBtn>
-          <ToolbarBtn
+          </IconBtn>
+          <IconBtn
             title="Continue"
             onClick={onDebugContinue}
             testId="toolbar-debug-continue"
             disabled={!state.isDebugging || !state.debugPaused}
             className="text-yellow-300"
           >
-            <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>▶</span>
-          </ToolbarBtn>
+            <span style={{ fontSize: "var(--ui-font-size-2xs)", fontWeight: 700 }}>
+              ▶
+            </span>
+          </IconBtn>
         </>
       )}
 
-      <ToolbarBtn
+      <button
+        type="button"
+        data-testid="toolbar-stop"
         title="Stop (Shift+F5)"
         onClick={onStop}
-        testId="toolbar-stop"
         disabled={!state.isRunning}
-        className="text-red-400 hover:text-red-300"
+        className="tb-action tb-action-stop"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <rect x="3" y="3" width="10" height="10" />
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
+          <rect x="3" y="3" width="10" height="10" rx="1" />
         </svg>
-      </ToolbarBtn>
+        Stop
+      </button>
 
-      <div className="mx-2 h-5" style={{ width: "1px", backgroundColor: "var(--border-primary)" }} />
+      <button
+        type="button"
+        data-testid="toolbar-copy-bundle"
+        title="Copy debug bundle for the AI: last run output, exit code, and PSScriptAnalyzer findings"
+        onClick={onCopyDebugBundle}
+        disabled={!state.lastRunResult || state.isRunning}
+        className="tb-action tb-action-accent"
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M4 2a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1v1a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h1V2zm1 1h6a1 1 0 0 1 1 1v8h1V2H5v1zM3 4v10h8V4H3z" />
+        </svg>
+        Copy for AI
+      </button>
+
+      <div className="tb-divider" />
 
       <div ref={overflowRef} className="relative">
-        <ToolbarBtn
+        <IconBtn
           title="More tools"
           testId="toolbar-overflow"
           onClick={() => setShowOverflow((v) => !v)}
         >
           ⋯
-        </ToolbarBtn>
+        </IconBtn>
         {showOverflow && (
-          <div
-            className="absolute z-50 py-1 rounded shadow-lg"
-            style={{
-              top: "100%",
-              left: 0,
-              minWidth: "200px",
-              backgroundColor: "var(--bg-tertiary)",
-              border: "1px solid var(--border-primary)",
-            }}
-          >
+          <div className="menu-pop" style={{ top: "100%", left: 0, minWidth: "220px" }}>
             <OverflowItem label="New file (Ctrl+N)" onClick={() => { onNew(); setShowOverflow(false); }} />
             <OverflowItem label="Save all" onClick={() => { onSaveAll(); setShowOverflow(false); }} disabled={!hasSavableTabs} />
-            <OverflowItem label="Format document" onClick={() => { onFormat(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !state.selectedPsPath} />
-            <OverflowItem label="Paste clean + format (Ctrl+Shift+Alt+V)" onClick={() => { onPasteCleanAndFormat(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !state.selectedPsPath} />
-            <OverflowItem label="Find & replace (Ctrl+H)" onClick={() => { onFindReplace(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome"} />
+            <OverflowItem label="Format document (Shift+Alt+F)" onClick={() => { onFormat(); setShowOverflow(false); }} disabled={!hasCodeTab || !state.selectedPsPath} />
+            <OverflowItem label="Find & replace (Ctrl+H)" onClick={() => { onFindReplace(); setShowOverflow(false); }} disabled={!hasCodeTab} />
             <OverflowItem label="Open $PROFILE" onClick={() => { onOpenProfile(); setShowOverflow(false); }} disabled={!state.selectedPsPath} />
-            <OverflowItem label="Print script" onClick={() => { onPrint(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !activeTab.content} />
-            <OverflowItem label="Sign script" onClick={() => { onSign(); setShowOverflow(false); }} disabled={!activeTab || activeTab.tabType === "welcome" || !activeTab.filePath} />
+            <OverflowItem label="Print script" onClick={() => { onPrint(); setShowOverflow(false); }} disabled={!hasCodeTab || !activeTab?.content} />
+            <OverflowItem label="Sign script" onClick={() => { onSign(); setShowOverflow(false); }} disabled={!hasCodeTab || !activeTab?.filePath} />
           </div>
         )}
       </div>
 
-      <div className="mx-2 h-5" style={{ width: "1px", backgroundColor: "var(--border-primary)" }} />
+      <div className="tb-divider" />
 
       {/* PS Version selector */}
       <select
@@ -312,12 +326,7 @@ export function Toolbar({
           });
         }}
         className="text-xs py-0.5 rounded"
-        style={{
-          backgroundColor: "var(--bg-input)",
-          color: "var(--text-primary)",
-          border: "1px solid var(--border-primary)",
-          minWidth: "160px",
-        }}
+        style={{ minWidth: "160px" }}
       >
         {state.psVersions.length === 0 && (
           <option value="">No PowerShell found</option>
@@ -339,11 +348,6 @@ export function Toolbar({
         value={state.settings.theme}
         onChange={(e) => handleThemeChange(e.target.value as ThemeName)}
         className="text-xs py-0.5 rounded"
-        style={{
-          backgroundColor: "var(--bg-input)",
-          color: "var(--text-primary)",
-          border: "1px solid var(--border-primary)",
-        }}
       >
         <option value="dark">Dark</option>
         <option value="light">Light</option>
@@ -351,26 +355,21 @@ export function Toolbar({
       </select>
 
       {/* Modules panel toggle */}
-      <ToolbarBtn
-        title={
-          state.sidebarVisible ? "Hide Modules Panel" : "Show Modules Panel"
-        }
+      <IconBtn
+        title={state.sidebarVisible ? "Hide Modules Panel" : "Show Modules Panel"}
         onClick={() => dispatch({ type: "TOGGLE_SIDEBAR" })}
         testId="toolbar-modules"
-        className={state.sidebarVisible ? "text-blue-400" : ""}
+        className={state.sidebarVisible ? "icon-btn-toggled" : ""}
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
           <path d="M1 2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2zm2 0v12h2V2H3zm4 0a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V2zm2 0v12h5V2H9z" />
         </svg>
-      </ToolbarBtn>
+      </IconBtn>
 
-      <div
-        className="mx-1 h-5"
-        style={{ width: "1px", backgroundColor: "var(--border-primary)" }}
-      />
+      <div className="tb-divider" style={{ margin: "0 4px" }} />
 
       {/* Settings button */}
-      <ToolbarBtn
+      <IconBtn
         title="Settings (Ctrl+,)"
         testId="toolbar-settings"
         onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}
@@ -379,74 +378,41 @@ export function Toolbar({
           <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z" />
           <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.421 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.421-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.116l.094-.318z" />
         </svg>
-      </ToolbarBtn>
-
-      <div
-        className="mx-1 h-5"
-        style={{ width: "1px", backgroundColor: "var(--border-primary)" }}
-      />
+      </IconBtn>
 
       {/* About button */}
-      <ToolbarBtn
+      <IconBtn
         title="About PS Forge"
         testId="toolbar-about"
         onClick={() => dispatch({ type: "TOGGLE_ABOUT" })}
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle
-            cx="8"
-            cy="8"
-            r="7"
-            stroke="currentColor"
-            strokeWidth="1.2"
-            fill="none"
-          />
-          <text
-            x="8"
-            y="12"
-            textAnchor="middle"
-            fontSize="9"
-            fontWeight="bold"
-            fill="currentColor"
-          >
+          <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2" fill="none" />
+          <text x="8" y="12" textAnchor="middle" fontSize="9" fontWeight="bold" fill="currentColor">
             i
           </text>
         </svg>
-      </ToolbarBtn>
+      </IconBtn>
 
       {/* Keyboard shortcut help button */}
-      <ToolbarBtn
+      <IconBtn
         title="Keyboard Shortcuts (Ctrl+F1)"
         testId="toolbar-shortcuts"
         onClick={() => dispatch({ type: "TOGGLE_SHORTCUT_PANEL" })}
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle
-            cx="8"
-            cy="8"
-            r="7"
-            stroke="currentColor"
-            strokeWidth="1.2"
-            fill="none"
-          />
-          <text
-            x="8"
-            y="12"
-            textAnchor="middle"
-            fontSize="9"
-            fontWeight="bold"
-            fill="currentColor"
-          >
+          <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2" fill="none" />
+          <text x="8" y="12" textAnchor="middle" fontSize="9" fontWeight="bold" fill="currentColor">
             ?
           </text>
         </svg>
-      </ToolbarBtn>
+      </IconBtn>
     </div>
   );
 }
 
-/** Reusable toolbar button. */
-function ToolbarBtn({
+/** Reusable icon-only toolbar button. */
+function IconBtn({
   children,
   title,
   onClick,
@@ -467,28 +433,12 @@ function ToolbarBtn({
       onClick={onClick}
       disabled={disabled}
       data-testid={testId}
-      className={`flex items-center justify-center w-8 h-8 rounded transition-colors ${className}`}
-      style={{
-        backgroundColor: "transparent",
-        color: disabled ? "var(--text-muted)" : "var(--text-primary)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-      }}
-      onMouseEnter={(e) => {
-        if (!disabled)
-          (e.currentTarget as HTMLElement).style.backgroundColor =
-            "var(--bg-hover)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-      }}
+      className={`icon-btn ${className}`}
     >
       {children}
     </button>
   );
 }
-
-
 
 function OverflowItem({
   label,
@@ -500,18 +450,7 @@ function OverflowItem({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="block w-full text-left px-3 py-1.5 text-xs transition-colors"
-      style={{
-        backgroundColor: "transparent",
-        color: disabled ? "var(--text-muted)" : "var(--text-primary)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-      }}
-    >
+    <button type="button" onClick={onClick} disabled={disabled} className="menu-item">
       {label}
     </button>
   );

@@ -98,7 +98,7 @@ const MARKDOWN_FENCE_RE =
   /^\s*```[\w.#+-]*\r?\n([\s\S]*?)\r?\n```[\s]*$/;
 const EMBEDDED_FENCE_RE = /```([\w.#+-]*)\r?\n([\s\S]*?)```/g;
 const PS_FENCE_LANG_RE = /^(?:powershell|ps1|ps|pwsh|psm1)$/i;
-const LINE_NUMBER_GUTTER_RE = /^\s*\d{1,5}\s*[|:]\s?/;
+const LINE_NUMBER_GUTTER_RE = /^\s*(\d{1,5})\s*[|:]\s?/;
 const PROMPT_PREFIX_RE =
   /^(?:PS(?:\s+[^\r\n>]+)?>\s*|>>\s*)/i;
 const CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
@@ -113,10 +113,104 @@ function fixTypography(input: string): string {
   return input.replace(TYPOGRAPHY_PATTERN, (ch) => REPLACEMENTS[ch] ?? ch);
 }
 
+/**
+ * Splits PowerShell source into alternating code / string-literal segments so
+ * sanitizer passes can skip string contents. Handles '...', "..." (with `"
+ * and doubled-quote escapes), and @"..."@ / @'...'@ here-strings.
+ * ponytail: does not track comments — a quote inside a # comment starts a
+ * phantom string segment; acceptable for sanitizer heuristics, add comment
+ * tracking if a real paste ever trips it.
+ */
+function splitPsStringSegments(
+  input: string,
+): { text: string; isString: boolean }[] {
+  const segments: { text: string; isString: boolean }[] = [];
+  const n = input.length;
+  let segStart = 0;
+  let i = 0;
+  const push = (end: number, isString: boolean) => {
+    if (end > segStart) {
+      segments.push({ text: input.slice(segStart, end), isString });
+    }
+    segStart = end;
+  };
+  while (i < n) {
+    const ch = input[i];
+    if (ch === "@" && (input[i + 1] === '"' || input[i + 1] === "'")) {
+      // Here-string: opener must be followed by a newline; terminator is a
+      // closing quote + @ at the start of a line.
+      const quote = input[i + 1];
+      let j = i + 2;
+      if (input[j] === "\r") j++;
+      if (input[j] === "\n") {
+        push(i, false);
+        const term = `\n${quote}@`;
+        const k = input.indexOf(term, j);
+        const end = k === -1 ? n : k + term.length;
+        push(end, true);
+        i = end;
+        continue;
+      }
+    }
+    if (ch === "'") {
+      push(i, false);
+      let j = i + 1;
+      while (j < n) {
+        if (input[j] === "'") {
+          if (input[j + 1] === "'") {
+            j += 2;
+            continue;
+          }
+          j++;
+          break;
+        }
+        j++;
+      }
+      push(Math.min(j, n), true);
+      i = Math.min(j, n);
+      continue;
+    }
+    if (ch === '"') {
+      push(i, false);
+      let j = i + 1;
+      while (j < n) {
+        const c = input[j];
+        if (c === "`") {
+          j += 2;
+          continue;
+        }
+        if (c === '"') {
+          if (input[j + 1] === '"') {
+            j += 2;
+            continue;
+          }
+          j++;
+          break;
+        }
+        j++;
+      }
+      push(Math.min(j, n), true);
+      i = Math.min(j, n);
+      continue;
+    }
+    i++;
+  }
+  push(n, false);
+  return segments;
+}
+
+/** Strips HTML tags outside PowerShell string literals only — scripts that
+ *  build HTML bodies (reports, Send-MailMessage) must keep their markup. */
 function stripSimpleHtml(input: string): string {
-  return input.replace(SIMPLE_HTML_RE, (tag) =>
-    /^<br\b/i.test(tag) ? "\n" : "",
-  );
+  return splitPsStringSegments(input)
+    .map((seg) =>
+      seg.isString
+        ? seg.text
+        : seg.text.replace(SIMPLE_HTML_RE, (tag) =>
+            /^<br\b/i.test(tag) ? "\n" : "",
+          ),
+    )
+    .join("");
 }
 
 function stripMarkdownFences(input: string): string {
@@ -126,14 +220,34 @@ function stripMarkdownFences(input: string): string {
 }
 
 function extractEmbeddedMarkdownFences(input: string): string {
-  const blocks: { lang: string; body: string }[] = [];
+  const blocks: { lang: string; body: string; start: number; end: number }[] =
+    [];
   for (const match of input.matchAll(EMBEDDED_FENCE_RE)) {
     blocks.push({
       lang: (match[1] ?? "").trim(),
       body: match[2] ?? "",
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
     });
   }
   if (blocks.length === 0) return input;
+
+  // Only treat the paste as a prose-wrapped chat message when everything
+  // outside the fences is blank or recognizable prose. A genuine script that
+  // merely CONTAINS a fenced block (e.g. building Markdown in a here-string)
+  // must pass through untouched — extracting here would silently discard the
+  // entire surrounding script.
+  let cursor = 0;
+  let outside = "";
+  for (const b of blocks) {
+    outside += input.slice(cursor, b.start);
+    cursor = b.end;
+  }
+  outside += input.slice(cursor);
+  const hasNonProseOutside = outside
+    .split("\n")
+    .some((line) => line.trim() !== "" && !PROSE_LINE_RE.test(line.trim()));
+  if (hasNonProseOutside) return input;
 
   const psBlock = blocks.find((b) => PS_FENCE_LANG_RE.test(b.lang));
   if (psBlock) return psBlock.body.trimEnd();
@@ -178,7 +292,30 @@ function stripProseWrappers(input: string): string {
   return lines.slice(start, end).join("\n");
 }
 
+/**
+ * True only when the input looks like a genuine copy-pasted line-number
+ * gutter: at least two matching lines, strictly increasing numbers, covering
+ * most non-blank lines. A lone `1 | Should -Be $x` Pester assertion (valid
+ * PowerShell: integer piped into a cmdlet) must never be treated as a gutter.
+ */
+function looksLikeLineNumberGutter(input: string): boolean {
+  const lines = input.split("\n");
+  const nums: number[] = [];
+  let nonBlank = 0;
+  for (const line of lines) {
+    if (line.trim() !== "") nonBlank++;
+    const m = LINE_NUMBER_GUTTER_RE.exec(line);
+    if (m) nums.push(parseInt(m[1], 10));
+  }
+  if (nums.length < 2 || nums.length < Math.ceil(nonBlank * 0.6)) return false;
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] <= nums[i - 1]) return false;
+  }
+  return true;
+}
+
 function stripLineNumberGutters(input: string): string {
+  if (!looksLikeLineNumberGutter(input)) return input;
   return input
     .split("\n")
     .map((line) => line.replace(LINE_NUMBER_GUTTER_RE, ""))
@@ -205,7 +342,11 @@ function countTypographyReplacements(input: string): number {
 }
 
 function countHtmlTags(input: string): number {
-  return input.match(SIMPLE_HTML_RE)?.length ?? 0;
+  return splitPsStringSegments(input).reduce(
+    (acc, seg) =>
+      acc + (seg.isString ? 0 : (seg.text.match(SIMPLE_HTML_RE)?.length ?? 0)),
+    0,
+  );
 }
 
 function countControlChars(input: string): number {
@@ -213,6 +354,7 @@ function countControlChars(input: string): number {
 }
 
 function countLineGutters(input: string): number {
+  if (!looksLikeLineNumberGutter(input)) return 0;
   return input.split("\n").filter((line) => LINE_NUMBER_GUTTER_RE.test(line))
     .length;
 }

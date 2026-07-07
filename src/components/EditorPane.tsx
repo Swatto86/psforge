@@ -15,7 +15,7 @@
  *  - PowerShell IntelliSense via TabExpansion2 (registered as a Monaco completion provider).
  */
 
-import React, { useRef, useCallback, useEffect } from "react";
+import React, { useRef, useCallback, useEffect, useState } from "react";
 import Editor, { type OnMount, type BeforeMount } from "@monaco-editor/react";
 import type {
   editor as MonacoEditor,
@@ -246,6 +246,10 @@ export function EditorPane() {
   settingsRef.current = state.settings;
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
+  // monacoRef is a plain ref, invisible to React. The IntelliSense effect
+  // below must re-run once Monaco finishes its async mount, so mount also
+  // flips this state flag.
+  const [monacoReady, setMonacoReady] = useState(false);
 
   // Ref that always holds the latest selected PS path so that async callbacks
   // (completions, PSSA) never capture a stale closure value.
@@ -523,6 +527,7 @@ export function EditorPane() {
     (editor, monaco) => {
       editorRef.current = editor;
       monacoRef.current = monaco;
+      setMonacoReady(true);
 
       // Track selection for F8 legacy fallback consumers.
       editor.onDidChangeCursorSelection(() => {
@@ -571,7 +576,10 @@ export function EditorPane() {
       });
 
       editor.onDidChangeModelContent((e) => {
-        if (!state.settings.enableIntelliSense) return;
+        // Read through settingsRef (like onDidPaste above): this listener is
+        // registered once per tab mount and must see setting changes made
+        // while the tab stays open.
+        if (!settingsRef.current.enableIntelliSense) return;
 
         const insertedTrigger = e.changes.some(
           (change) =>
@@ -802,7 +810,7 @@ export function EditorPane() {
           }
         },
       });
-  }, [state.settings.enableIntelliSense]);
+  }, [state.settings.enableIntelliSense, monacoReady]);
 
   // Handle content changes
   const handleChange = useCallback(

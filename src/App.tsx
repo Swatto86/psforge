@@ -41,7 +41,6 @@ import {
 import {
   copyLastRunOutputToClipboard,
   copyTerminalOutputToClipboard,
-  getTerminalLineCount,
 } from "./terminal-utils";
 import {
   scratchPathForTab,
@@ -148,7 +147,15 @@ function buildScriptArgs(
       continue;
     }
 
-    if (lower === "true" || lower === "false") {
+    // Colon-form boolean emission only for genuinely boolean-typed params.
+    // For anything else (e.g. [string]$Mode) the literal text "true" must
+    // pass through unmodified — the backend coerces `-Name:$true` to a real
+    // boolean, which would silently rewrite the user's string to "True".
+    const isBool =
+      typeName === "bool" ||
+      typeName === "boolean" ||
+      typeName === "system.boolean";
+    if (isBool && (lower === "true" || lower === "false")) {
       args.push(`-${param.name}:$${lower}`);
       continue;
     }
@@ -831,13 +838,21 @@ function AppInner() {
   const runCommandInTerminal = useCallback(
     async (
       command: string,
-      options?: { clearBeforeRun?: boolean; reveal?: boolean },
+      options?: {
+        clearBeforeRun?: boolean;
+        reveal?: boolean;
+        onStartLine?: (line: number) => void;
+      },
     ) => {
       const runFn = (window as unknown as Record<string, unknown>)
         .__psforge_terminal_run_command as
         | ((
             scriptCommand: string,
-            runOptions?: { clearBeforeRun?: boolean; reveal?: boolean },
+            runOptions?: {
+              clearBeforeRun?: boolean;
+              reveal?: boolean;
+              onStartLine?: (line: number) => void;
+            },
           ) => Promise<number | null>)
         | undefined;
       if (!runFn) {
@@ -884,20 +899,6 @@ function AppInner() {
       // Best-effort signal. If this fails the safety-net timer in lib.rs
       // will reveal the window after 3 s.
     });
-  }, []);
-
-  // Open the file passed as a CLI argument when the app was launched via a
-  // Windows file-type association (e.g. double-click on a .ps1 file in Explorer).
-  // Called once on mount; getLaunchPath() returns null for normal launches.
-  useEffect(() => {
-    cmd
-      .getLaunchPath()
-      .then((path) => {
-        if (path) void openFile(path);
-      })
-      .catch((err) => console.error("getLaunchPath failed:", err));
-    // openFile is stable (useCallback with stable deps on mount); run once only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Listen for ps-output events from Rust backend
@@ -1011,24 +1012,30 @@ function AppInner() {
 
     const unlistenDebugBreak = listen<number>("ps-debug-break", (event) => {
       if (!debugSessionRef.current) return;
+      // Variable/Command breakpoints have no line number (the marker carries
+      // 0). The pause is still real — the process is blocked at the debug
+      // prompt — so always flip the UI into paused state; only the source
+      // line highlight/navigation needs a valid line.
       const line = event.payload;
-      if (!Number.isFinite(line) || line < 1) return;
-      debugLocationRef.current = { line, column: 1 };
+      const hasLine = Number.isFinite(line) && line >= 1;
+      debugLocationRef.current = hasLine ? { line, column: 1 } : null;
       dispatch({
         type: "SET_DEBUG_STATE",
         isDebugging: true,
         debugPaused: true,
-        debugLine: line,
-        debugColumn: 1,
+        debugLine: hasLine ? line : null,
+        debugColumn: hasLine ? 1 : null,
       });
       dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: 0 });
       dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
       void refreshDebugInspector(0);
-      const nav = (window as unknown as Record<string, unknown>)
-        .__psforge_navigateTo as
-        | ((targetLine: number, targetColumn: number) => void)
-        | undefined;
-      nav?.(line, 1);
+      if (hasLine) {
+        const nav = (window as unknown as Record<string, unknown>)
+          .__psforge_navigateTo as
+          | ((targetLine: number, targetColumn: number) => void)
+          | undefined;
+        nav?.(line, 1);
+      }
     });
 
     const unlistenComplete = listen<number>("ps-complete", (event) => {
@@ -1168,6 +1175,24 @@ function AppInner() {
     [state.tabs, state.settings, dispatch],
   );
 
+  // Open the file passed as a CLI argument when the app was launched via a
+  // Windows file-type association (e.g. double-click on a .ps1 file in Explorer).
+  // Gated on settingsLoaded: openFile dispatches SET_SETTINGS derived from the
+  // settings its closure captured, so running it before the real settings load
+  // would clobber them with defaults (and the debounced save would persist
+  // that). The ref latches so it still runs exactly once.
+  const launchPathHandledRef = useRef(false);
+  useEffect(() => {
+    if (launchPathHandledRef.current || !state.settingsLoaded) return;
+    launchPathHandledRef.current = true;
+    cmd
+      .getLaunchPath()
+      .then((path) => {
+        if (path) void openFile(path);
+      })
+      .catch((err) => console.error("getLaunchPath failed:", err));
+  }, [state.settingsLoaded, openFile]);
+
   const openScriptFolder = useCallback(async () => {
     try {
       const { open, message } = await import("@tauri-apps/plugin-dialog");
@@ -1213,6 +1238,10 @@ function AppInner() {
       }
     } catch (err) {
       console.error("openScriptFolder failed:", err);
+      await writeTerminalNotice(
+        `[PSForge] Open folder failed: ${extractInvokeErrorMessage(err)}`,
+        { reveal: true },
+      );
     }
   }, [openFile, dispatch, writeTerminalNotice, state.settings]);
 
@@ -1311,7 +1340,14 @@ function AppInner() {
       }
 
       try {
-        await cmd.saveFileContent(filePath, tab.content, tab.encoding);
+        const saveWarning = await cmd.saveFileContent(
+          filePath,
+          tab.content,
+          tab.encoding,
+        );
+        if (saveWarning) {
+          void writeTerminalNotice(`[PSForge] ${saveWarning}`, { reveal: true });
+        }
         const fileName = basename(filePath);
         dispatch({
           type: "UPDATE_TAB",
@@ -1531,11 +1567,16 @@ function AppInner() {
       }
       if (savePath) {
         try {
-          await cmd.saveFileContent(
+          const saveWarning = await cmd.saveFileContent(
             savePath,
             tab.content,
             tab.encoding,
           );
+          if (saveWarning) {
+            void writeTerminalNotice(`[PSForge] ${saveWarning}`, {
+              reveal: true,
+            });
+          }
           dispatch({
             type: "UPDATE_TAB",
             id: tab.id,
@@ -1654,7 +1695,10 @@ function AppInner() {
     dispatch({ type: "SET_VARIABLES", variables: [] });
     dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
-    lastRunOutputStartLineRef.current = getTerminalLineCount();
+    // Baseline for "copy last run output" is captured via onStartLine below,
+    // AFTER the terminal clear — a pre-clear snapshot exceeds the post-clear
+    // buffer and made the copy silently fail.
+    lastRunOutputStartLineRef.current = null;
 
     const executeInTerminal = async (workingDir: string) => {
       const command = await cmd.prepareTerminalScriptCommand(
@@ -1667,6 +1711,9 @@ function AppInner() {
       return runCommandInTerminal(command, {
         clearBeforeRun: state.settings.clearOutputOnRun !== false,
         reveal: true,
+        onStartLine: (line) => {
+          lastRunOutputStartLineRef.current = line;
+        },
       });
     };
 
@@ -1873,11 +1920,16 @@ function AppInner() {
       activeTab.filePath
     ) {
       try {
-        await cmd.saveFileContent(
+        const saveWarning = await cmd.saveFileContent(
           activeTab.filePath,
           activeTab.content,
           activeTab.encoding,
         );
+        if (saveWarning) {
+          void writeTerminalNotice(`[PSForge] ${saveWarning}`, {
+            reveal: true,
+          });
+        }
         dispatch({
           type: "UPDATE_TAB",
           id: activeTab.id,
@@ -2821,10 +2873,15 @@ function AppInner() {
         void formatCurrentScript();
       }
 
-      // Ctrl+Shift+Alt+V: Paste from clipboard, clean, then format
+      // Ctrl+Shift+Alt+V: Paste from clipboard, clean, then format.
+      // On the Welcome tab (or with no tab) the paste lands in a new script tab.
       if (e.ctrlKey && e.shiftKey && e.altKey && keyLower === "v") {
         e.preventDefault();
-        void pasteCleanAndFormat();
+        if (!activeTab || activeTab.tabType === "welcome") {
+          void pasteFromClipboardAsNewScript();
+        } else {
+          void pasteCleanAndFormat();
+        }
       }
 
       // Ctrl+G: Go to line (focus Monaco and trigger built-in action)
@@ -2891,6 +2948,8 @@ function AppInner() {
     runSelection,
     formatCurrentScript,
     pasteCleanAndFormat,
+    pasteFromClipboardAsNewScript,
+    activeTab,
     toggleBookmarkAtCursor,
     jumpToBookmark,
   ]);
@@ -3141,7 +3200,16 @@ function AppInner() {
         onDebugStepOut={debugStepOut}
         onStop={stopExecution}
         onFormat={formatCurrentScript}
-        onPasteCleanAndFormat={() => void pasteCleanAndFormat()}
+        onPasteScript={() => {
+          // From the Welcome tab (or no tab) the paste lands in a fresh script
+          // tab; with a code tab open it pastes into the current selection.
+          if (!activeTab || activeTab.tabType === "welcome") {
+            void pasteFromClipboardAsNewScript();
+          } else {
+            void pasteCleanAndFormat();
+          }
+        }}
+        onCopyDebugBundle={() => void copyDebugBundle()}
         onFindReplace={() => {
           const trigger = (window as unknown as Record<string, unknown>)
             .__psforge_triggerFindReplace as (() => void) | undefined;
@@ -3176,55 +3244,28 @@ function AppInner() {
             </div>
           </div>
           <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-            <button
-              onClick={openPs7InstallPage}
-              style={{
-                backgroundColor: "var(--accent)",
-                color: "#ffffff",
-                border: "1px solid var(--accent)",
-                borderRadius: "4px",
-                padding: "4px 10px",
-              }}
-            >
+            <button onClick={openPs7InstallPage} className="btn btn-primary btn-sm">
               Install
             </button>
             <button
               onClick={() => void refreshPsVersions()}
               disabled={psVersionRefreshInFlight}
-              style={{
-                backgroundColor: "transparent",
-                color: psVersionRefreshInFlight
-                  ? "var(--text-muted)"
-                  : "var(--text-secondary)",
-                border: "1px solid var(--border-primary)",
-                borderRadius: "4px",
-                padding: "4px 10px",
-                cursor: psVersionRefreshInFlight ? "default" : "pointer",
-              }}
+              className="btn btn-ghost btn-sm"
+              style={{ border: "1px solid var(--border-primary)" }}
             >
               {psVersionRefreshInFlight ? "Rescanning..." : "Rescan"}
             </button>
             <button
               onClick={dismissPs7BannerForSession}
-              style={{
-                backgroundColor: "transparent",
-                color: "var(--text-secondary)",
-                border: "1px solid var(--border-primary)",
-                borderRadius: "4px",
-                padding: "4px 10px",
-              }}
+              className="btn btn-ghost btn-sm"
+              style={{ border: "1px solid var(--border-primary)" }}
             >
               Not now
             </button>
             <button
               onClick={disablePs7Reminder}
-              style={{
-                backgroundColor: "transparent",
-                color: "var(--text-secondary)",
-                border: "1px solid var(--border-primary)",
-                borderRadius: "4px",
-                padding: "4px 10px",
-              }}
+              className="btn btn-ghost btn-sm"
+              style={{ border: "1px solid var(--border-primary)" }}
             >
               Don&apos;t remind again
             </button>

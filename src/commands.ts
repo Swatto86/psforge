@@ -181,13 +181,15 @@ export async function readFileContent(path: string): Promise<FileContent> {
   return invoke<FileContent>("read_file_content", { path });
 }
 
-/** Save file content with specified encoding. */
+/** Save file content with specified encoding.
+ *  Resolves to a warning message when the save was lossy (e.g. characters not
+ *  representable in Windows-1252 were replaced with '?'), else null. */
 export async function saveFileContent(
   path: string,
   content: string,
   encoding: string,
-): Promise<void> {
-  return invoke("save_file_content", { path, content, encoding });
+): Promise<string | null> {
+  return invoke<string | null>("save_file_content", { path, content, encoding });
 }
 
 /** Load user settings. */

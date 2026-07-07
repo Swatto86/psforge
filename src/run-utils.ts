@@ -21,7 +21,10 @@ export function resolveExecutionWorkDir(
 
   const fileDir = activeTab.filePath ? dirname(activeTab.filePath) : "";
 
-  return stateWorkingDir || fileDir || platformHomeFallback();
+  // "file" mode: the active tab's own directory must win. stateWorkingDir is
+  // a global last-opened/saved directory that goes stale on tab switch and
+  // would run this tab's script in another tab's folder.
+  return fileDir || stateWorkingDir || platformHomeFallback();
 }
 
 export function isPssaErrorSeverity(severity: string): boolean {

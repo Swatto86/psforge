@@ -53,6 +53,30 @@ describe("resolveExecutionWorkDir", () => {
     );
     expect(dir).toBe("C:\\Scripts");
   });
+
+  it("prefers the active tab's own directory over the stale global workingDir", () => {
+    const dir = resolveExecutionWorkDir(
+      tab("C:\\ProjectA\\a.ps1"),
+      "C:\\ProjectB",
+      "file",
+      "",
+      "",
+      () => "/home",
+    );
+    expect(dir).toBe("C:\\ProjectA");
+  });
+
+  it("uses the global workingDir for untitled tabs in file mode", () => {
+    const dir = resolveExecutionWorkDir(
+      tab(""),
+      "C:\\ProjectB",
+      "file",
+      "",
+      "",
+      () => "/home",
+    );
+    expect(dir).toBe("C:\\ProjectB");
+  });
 });
 
 describe("resolveExecutionWorkDirWithOverride", () => {

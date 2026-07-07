@@ -23,10 +23,12 @@ export function basename(path: string): string {
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
-/** Returns the parent directory of `path`, or `""` if there isn't one. */
+/** Returns the parent directory of `path`, or `""` if there isn't one.
+ *  A file directly under the root ("/script.ps1") has parent "/". */
 export function dirname(path: string): string {
   const idx = lastSeparatorIndex(path);
-  return idx > 0 ? path.slice(0, idx) : "";
+  if (idx === -1) return "";
+  return idx === 0 ? path[0] : path.slice(0, idx);
 }
 
 /** Join directory and file segment using the dominant separator in `dir`. */

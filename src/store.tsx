@@ -110,7 +110,7 @@ interface PersistedSession {
 }
 
 
-function createUntitledTab(id = "tab-1", title = "Untitled-1"): EditorTab {
+function createUntitledTab(id = newTabId(), title = "Untitled-1"): EditorTab {
   return {
     id,
     title,
@@ -408,7 +408,7 @@ function createInitialTab(): EditorTab {
     // Storage may be unavailable in hardened browser contexts. Fall back to a
     // normal untitled editor tab rather than crashing before first render.
   }
-  return createUntitledTab("tab-1", "Untitled-1");
+  return createUntitledTab(newTabId(), "Untitled-1");
 }
 
 const initialTab = createInitialTab();
@@ -866,12 +866,11 @@ export function useAppState(): AppContextValue {
 // Provider
 // ---------------------------------------------------------------------------
 
-let tabCounter = 1;
-
-/** Generates a unique tab id. */
+/** Generates a globally-unique tab id. Counter-based ids reset every launch
+ *  and collided with a previous session's persisted tabs, so the session
+ *  restore merge could silently drop restored tabs. */
 export function newTabId(): string {
-  tabCounter += 1;
-  return `tab-${tabCounter}`;
+  return `tab-${crypto.randomUUID()}`;
 }
 
 /** Monotonically increasing counter for untitled tab titles.
@@ -884,24 +883,19 @@ export function untitledCounter(): number {
   return untitledNum;
 }
 
-/** Seed tab/untitled counters from restored session tabs to avoid id/title collisions. */
+/** Seed the untitled-title counter from restored session tabs so new tabs
+ *  don't reuse a restored "Untitled-N" title. Tab ids need no syncing — they
+ *  are UUIDs and cannot collide. */
 function syncTabCounters(tabs: EditorTab[]): void {
-  let maxTab = tabCounter;
   let maxUntitled = untitledNum;
 
   for (const tab of tabs) {
-    const idMatch = /^tab-(\d+)$/i.exec(tab.id);
-    if (idMatch) {
-      maxTab = Math.max(maxTab, parseInt(idMatch[1], 10));
-    }
-
     const titleMatch = /^Untitled-(\d+)$/i.exec(tab.title);
     if (titleMatch) {
       maxUntitled = Math.max(maxUntitled, parseInt(titleMatch[1], 10));
     }
   }
 
-  tabCounter = Math.max(tabCounter, maxTab);
   untitledNum = Math.max(untitledNum, maxUntitled);
 }
 

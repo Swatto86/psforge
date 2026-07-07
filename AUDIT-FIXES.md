@@ -8,6 +8,43 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 2 (v1.3.0) — multi-agent bug sweep, 21 findings, all fixed
+
+### CRITICAL
+
+- [x] **S2-1** — `extractEmbeddedMarkdownFences` discarded an entire valid script when it contained an embedded ``` fence anywhere in its body (e.g. building Markdown in a here-string). Extraction now only fires when everything outside the fences is blank or recognizable prose (`PROSE_LINE_RE`); otherwise the paste passes through untouched. Regression tests added.
+- [x] **S2-2** — IntelliSense completion provider was never registered: the owning effect depended only on `enableIntelliSense` (true from first render), and `monacoRef` is invisible to React, so the effect's early-return pass was also its last. Added a `monacoReady` state flag set in `handleEditorMount` and included in the dependency array.
+
+### HIGH
+
+- [x] **S2-3** — Session-restore merge could silently drop a previous session's tab: tab ids came from a counter that resets each launch, so a live `tab-2` collided with the persisted `tab-2`. `newTabId()` now returns `tab-<uuid>`; the id half of `syncTabCounters` is gone.
+- [x] **S2-4** — CLI-launch (`getLaunchPath`) effect captured the first-render `openFile` closure, whose `state.settings` was still `DEFAULT_SETTINGS`; opening via file association could overwrite freshly-loaded settings with defaults (then persist them). Effect now gates on `settingsLoaded` with a run-once ref latch.
+- [x] **S2-5** — Copy Last Run Output / Copy Debug Bundle silently failed with `clearOutputOnRun` (the default): the line-count baseline was snapshotted before the clear. `runCommandInTerminal` now reports the post-clear baseline via an `onStartLine` callback.
+- [x] **S2-6** — PTY backend session leaked when a console tab was closed while `startTerminal` was still in flight: the cancelled path now calls `stopTerminal(sid)` on the just-created session.
+- [x] **S2-7** — Trailing stderr output (e.g. a final `Write-Error`) could be silently dropped: the run completed on the stdout `<<PSFORGE_DONE>>` marker while the independent stderr reader task still held undelivered lines, which the next run then drained. The host now emits `<<PSFORGE_DONE_ERR|id>>` on stderr as well, and `execute()` waits for both markers.
+- [x] **S2-8** — Variable/Command breakpoints emitted line 0, which the frontend guard discarded entirely, so the debugger never showed the pause. The `ps-debug-break` handler now always flips into paused state and only gates line highlight/navigation on a valid line.
+- [x] **S2-9** — Every timed-out PowerShell helper subprocess (PSSA, completions, module listing, formatter, signing…) was orphaned: tokio defaults to `kill_on_drop(false)`. Added `ps_command()` helper with `kill_on_drop(true)` and switched all 14 ad hoc spawn sites.
+- [x] **S2-10** — `save_file_content` silently replaced unencodable characters with `?` when saving as `windows1252`. It now returns `Option<String>` (warning), surfaced via terminal notice at the save/auto-save call sites — mirroring the read path's `FileContent.warning`.
+- [x] **S2-11** — "Use file's directory" run mode could resolve to a *different tab's* directory after switching tabs (`stateWorkingDir` won the OR-chain). The active tab's own directory now takes priority.
+- [x] **S2-12** — `stripSimpleHtml` deleted literal HTML tags out of valid PowerShell string content (HTML report/email builders). The sanitizer now tracks PowerShell string literals (quotes + here-strings) via `splitPsStringSegments` and only strips outside them.
+- [x] **S2-13** — "Open Folder" always failed silently: `fs:default` only scopes app-data dirs, so `readDir` on any user-picked folder was ACL-denied and the catch only logged. Added a scoped `fs:allow-read-dir` capability and a user-visible error notice.
+
+### MEDIUM
+
+- [x] **S2-14** — `buildScriptArgs` emitted `-Name:$true` for the literal text "true" on *any* parameter type, silently rewriting e.g. a `[string]` value to "True". Colon-form boolean emission is now gated on the parameter's declared boolean type.
+- [x] **S2-15** — `LINE_NUMBER_GUTTER_RE` stripped valid pipelines like Pester's `1 | Should -Be 1`. Gutter stripping now requires ≥2 strictly-increasing matches covering most non-blank lines.
+- [x] **S2-16** — Post-commit suggestion re-trigger read `state.settings.enableIntelliSense` captured at editor mount; now reads `settingsRef.current` like the sibling paste handler.
+- [x] **S2-17** — Backend default `autoSaveOnRun: false` contradicted the frontend default `true` and won on first launch (unsaved edits didn't run). Backend now defaults `true` with `#[serde(default = "default_true")]`.
+- [x] **S2-18** — CI ran only on ubuntu, so `#[cfg(windows)]` code (registry, PS discovery, ConPTY) was never compiled before a release tag. Added a `check-windows` job (clippy + tests on `windows-latest`).
+
+### LOW
+
+- [x] **S2-19** — `dirname("/script.ps1")` returned `""` instead of `"/"`.
+- [x] **S2-20** — Settings `NumberInput` snapped a cleared field back to the previous value on every keystroke; now keeps local text state, commits in-range values live, clamps on blur.
+- [x] **S2-21** — Backend default `sidebarVisible: true` contradicted the frontend `false` and auto-opened the sidebar on first launch; backend now defaults `false`.
+
+---
+
 ## CRITICAL
 
 - [x] **#1** — Settings & file saves are not atomic. Added `atomic_write()` in `utils.rs` (sibling temp file + fsync + rename, with parent fsync on Unix). Wired into `save_file_content`, `settings::save_to`, and `save_user_snippets_to`.

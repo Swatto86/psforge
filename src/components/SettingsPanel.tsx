@@ -1658,16 +1658,39 @@ function NumberInput({
   error?: string;
   width?: string;
 }) {
+  // Local text state lets the field go empty/partial while the user retypes a
+  // value; a fully controlled numeric value snapped a cleared field straight
+  // back to the previous number. In-range values commit live; out-of-range
+  // text commits clamped on blur (committing clamped mid-typing would fight
+  // the user: typing "7" en route to "72" with min 8 would snap to 8).
+  const [text, setText] = useState(String(value));
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (document.activeElement === inputRef.current) return;
+    setText(String(value));
+  }, [value]);
   return (
     <div className="flex flex-col gap-1">
       <input
+        ref={inputRef}
         type="number"
         min={min}
         max={max}
-        value={value}
+        value={text}
         onChange={(e) => {
-          const v = parseInt(e.target.value);
-          if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v)));
+          setText(e.target.value);
+          const v = parseInt(e.target.value, 10);
+          if (!isNaN(v) && v >= min && v <= max) onChange(v);
+        }}
+        onBlur={() => {
+          const v = parseInt(text, 10);
+          if (isNaN(v)) {
+            setText(String(value));
+            return;
+          }
+          const clamped = Math.max(min, Math.min(max, v));
+          if (clamped !== value) onChange(clamped);
+          setText(String(clamped));
         }}
         className={`${width ?? "w-20"} text-sm`}
         style={{

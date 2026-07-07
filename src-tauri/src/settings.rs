@@ -130,7 +130,9 @@ pub struct AppSettings {
     pub assistant_mode: bool,
 
     /// Save the active file automatically before running (F5).
-    #[serde(default)]
+    /// Default matches the frontend (types.ts DEFAULT_SETTINGS) — a mismatch
+    /// here silently overrides the frontend default on first launch.
+    #[serde(default = "default_true")]
     pub auto_save_on_run: bool,
 
     /// Clear the integrated terminal before each run.
@@ -238,7 +240,8 @@ pub struct AppSettings {
     pub file_associations: HashMap<String, bool>,
 
     /// Whether the module browser sidebar is visible.
-    #[serde(default = "default_true")]
+    /// Default matches the frontend (types.ts / store.tsx both start false).
+    #[serde(default)]
     pub sidebar_visible: bool,
 
     /// Which side the module browser is docked to: "left" or "right".
@@ -352,7 +355,7 @@ impl Default for AppSettings {
             run_after_paste_clean_format: true,
             run_after_sanitized_paste: false,
             assistant_mode: false,
-            auto_save_on_run: false,
+            auto_save_on_run: true,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,
             pssa_run_gate: default_pssa_run_gate(),
@@ -379,7 +382,7 @@ impl Default for AppSettings {
             split_position: default_split_position(),
             recent_files: Vec::new(),
             file_associations: HashMap::new(),
-            sidebar_visible: true,
+            sidebar_visible: false,
             sidebar_position: default_sidebar_position(),
         }
     }

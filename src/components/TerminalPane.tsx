@@ -468,7 +468,14 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
             rows,
             loadProfileRef.current,
           );
-          if (cancelled) return;
+          if (cancelled) {
+            // The owning tab unmounted while the backend was still spawning:
+            // its cleanup ran before sessionIdRef was set, so nothing else
+            // will ever stop this session. Stop it here or the PTY process
+            // leaks for the rest of the app run.
+            void cmd.stopTerminal(sid).catch(() => {});
+            return;
+          }
           sessionIdRef.current = sid;
           isReadyRef.current = true;
           flushWriteQueue();
@@ -983,7 +990,15 @@ export function TerminalPane() {
   const runCommandInLocalTerminal = useCallback(
     async (
       command: string,
-      options?: { clearBeforeRun?: boolean; reveal?: boolean },
+      options?: {
+        clearBeforeRun?: boolean;
+        reveal?: boolean;
+        /** Reports the buffer line count AFTER any clear, right before the
+         *  command starts — the correct baseline for "copy last run output".
+         *  A pre-clear snapshot would exceed the post-clear buffer size and
+         *  make the copy silently return nothing. */
+        onStartLine?: (line: number) => void;
+      },
     ) => {
       const tabId = ensureLocalExecutionTab();
       const reveal = options?.reveal !== false;
@@ -998,6 +1013,7 @@ export function TerminalPane() {
       if (options?.clearBeforeRun) {
         handle.clear();
       }
+      options?.onStartLine?.(handle.getLineCount());
       if (reveal) {
         handle.focus();
       }
@@ -1033,7 +1049,11 @@ export function TerminalPane() {
     w.__psforge_terminal_focus = () => getActiveHandle()?.focus();
     w.__psforge_terminal_run_command = (
       command: string,
-      options?: { clearBeforeRun?: boolean; reveal?: boolean },
+      options?: {
+        clearBeforeRun?: boolean;
+        reveal?: boolean;
+        onStartLine?: (line: number) => void;
+      },
     ) => runCommandInLocalTerminal(command, options);
     w.__psforge_terminal_restart = () => getActiveHandle()?.restart();
     w.__psforge_terminal_get_content = (lineCount?: number) =>
