@@ -443,7 +443,6 @@ function AppInner() {
   const scratchDirRef = useRef("");
   const scratchSaveTimersRef = useRef<Map<string, number>>(new Map());
   const scratchRecoveryCheckedRef = useRef(false);
-  const lastRunOutputStartLineRef = useRef<number | null>(null);
   const runWorkingDirOverrideRef = useRef<string | null>(null);
   const [pssaGatePrompt, setPssaGatePrompt] = React.useState<{
     errors: PssaDiagnostic[];
@@ -841,7 +840,6 @@ function AppInner() {
       options?: {
         clearBeforeRun?: boolean;
         reveal?: boolean;
-        onStartLine?: (line: number) => void;
       },
     ) => {
       const runFn = (window as unknown as Record<string, unknown>)
@@ -851,7 +849,6 @@ function AppInner() {
             runOptions?: {
               clearBeforeRun?: boolean;
               reveal?: boolean;
-              onStartLine?: (line: number) => void;
             },
           ) => Promise<number | null>)
         | undefined;
@@ -1432,6 +1429,14 @@ function AppInner() {
 
       if (choice === "cancel") return false;
 
+      // Cancel any pending scratch auto-save for this tab so a late debounced
+      // write can't resurrect content the user is discarding/closing (S3-16).
+      const pendingTimer = scratchSaveTimersRef.current.get(tab.id);
+      if (pendingTimer !== undefined) {
+        window.clearTimeout(pendingTimer);
+        scratchSaveTimersRef.current.delete(tab.id);
+      }
+
       if (choice === "save-as") {
         const result = await saveTab(tab);
         if (!result.saved) return false;
@@ -1581,8 +1586,9 @@ function AppInner() {
             type: "UPDATE_TAB",
             id: tab.id,
             changes: {
+              // Keep the friendly title; a scratch save is an internal backing
+              // store, not a user-chosen save location (S3-17).
               filePath: savePath,
-              title: tab.filePath ? tab.title : basename(savePath),
               savedContent: tab.content,
               isDirty: false,
             },
@@ -1695,10 +1701,6 @@ function AppInner() {
     dispatch({ type: "SET_VARIABLES", variables: [] });
     dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
-    // Baseline for "copy last run output" is captured via onStartLine below,
-    // AFTER the terminal clear — a pre-clear snapshot exceeds the post-clear
-    // buffer and made the copy silently fail.
-    lastRunOutputStartLineRef.current = null;
 
     const executeInTerminal = async (workingDir: string) => {
       const command = await cmd.prepareTerminalScriptCommand(
@@ -1708,12 +1710,11 @@ function AppInner() {
         state.settings.executionPolicy,
         scriptArgs,
       );
+      // The "copy last run output" baseline is captured inside the terminal
+      // via a reflow/eviction-safe marker at run start (S3-13).
       return runCommandInTerminal(command, {
         clearBeforeRun: state.settings.clearOutputOnRun !== false,
         reveal: true,
-        onStartLine: (line) => {
-          lastRunOutputStartLineRef.current = line;
-        },
       });
     };
 
@@ -1838,16 +1839,13 @@ function AppInner() {
       state.settings,
       platformHomeFallback,
     );
-    const copied = await copyDebugBundleWithRunOutput(
-      {
-        tab,
-        lastRun: state.lastRunResult,
-        workingDir: workDir,
-        problems: state.problems[tab.id] ?? [],
-        getRunOutput: () => "",
-      },
-      lastRunOutputStartLineRef.current,
-    );
+    const copied = await copyDebugBundleWithRunOutput({
+      tab,
+      lastRun: state.lastRunResult,
+      workingDir: workDir,
+      problems: state.problems[tab.id] ?? [],
+      getRunOutput: () => "",
+    });
     if (copied) {
       showAppToast("Debug bundle copied — paste into your AI chat.");
     } else {
@@ -1887,12 +1885,17 @@ function AppInner() {
           };
           dispatch({ type: "ADD_TAB", tab });
         } catch {
-          // skip unreadable scratch files
+          // Surface the failure instead of silently dropping the candidate, so
+          // the user isn't left with a confirm that appears to do nothing (S3-31).
+          void writeTerminalNotice(
+            `[PSForge] Could not recover scratch file: ${basename(candidate.path)}`,
+            { reveal: false },
+          );
         }
       }
       setScratchRecoveryCandidates(null);
     },
-    [dispatch, state.tabs],
+    [dispatch, state.tabs, writeTerminalNotice],
   );
 
   const startDebugSession = useCallback(async () => {
@@ -2130,15 +2133,20 @@ function AppInner() {
       return;
     }
 
-    if (!activeTab || activeTab.tabType === "welcome") return;
-    const breakpoints = state.breakpoints[activeTab.id] ?? [];
+    // Read the live active tab via ref, not the closed-over `activeTab`.
+    // pasteFromClipboardAsNewScript schedules this via setTimeout right after
+    // adding a new tab, so the closure's `activeTab` is still the previous
+    // (Welcome) tab and would otherwise early-return, never auto-running the
+    // pasted script (S3-3). runScript/startDebugSession already use the ref.
+    const tab = activeTabRef.current;
+    if (!tab || tab.tabType === "welcome") return;
+    const breakpoints = state.breakpoints[tab.id] ?? [];
     if (breakpoints.length > 0) {
       void startDebugSession();
       return;
     }
     void runScript();
   }, [
-    activeTab,
     state.breakpoints,
     state.isDebugging,
     state.debugPaused,
@@ -2497,8 +2505,10 @@ function AppInner() {
     const scratchDir = scratchDirRef.current;
     if (!scratchDir) return;
 
+    const activeCandidates = new Set<string>();
     for (const tab of state.tabs) {
       if (tab.tabType === "welcome" || tab.filePath || !tab.isDirty) continue;
+      activeCandidates.add(tab.id);
 
       const existing = scratchSaveTimersRef.current.get(tab.id);
       if (existing) window.clearTimeout(existing);
@@ -2513,8 +2523,10 @@ function AppInner() {
               type: "UPDATE_TAB",
               id: tab.id,
               changes: {
+                // Do NOT overwrite the friendly "Untitled-N" title with the
+                // UUID-based scratch filename — this is an internal backing
+                // store, not a user-chosen save location (S3-17).
                 filePath: path,
-                title: basename(path),
                 savedContent: tab.content,
                 isDirty: false,
               },
@@ -2523,6 +2535,16 @@ function AppInner() {
           .catch(() => {});
       }, 1200);
       scratchSaveTimersRef.current.set(tab.id, timer);
+    }
+
+    // Cancel timers for tabs that are no longer autosave candidates (closed,
+    // discarded, or reverted to clean) so a discarded scratch is not written
+    // to disk after the fact and resurrected on next launch (S3-16).
+    for (const [id, timer] of scratchSaveTimersRef.current) {
+      if (!activeCandidates.has(id)) {
+        window.clearTimeout(timer);
+        scratchSaveTimersRef.current.delete(id);
+      }
     }
   }, [
     state.tabs,
@@ -2546,9 +2568,7 @@ function AppInner() {
       }
     };
     w.__psforge_copy_last_run_output = async () => {
-      const copied = await copyLastRunOutputToClipboard(
-        lastRunOutputStartLineRef.current,
-      );
+      const copied = await copyLastRunOutputToClipboard();
       if (!copied) {
         void writeTerminalNotice(
           "[PSForge] No run output to copy yet. Run a script with F5 first.",
@@ -2892,32 +2912,30 @@ function AppInner() {
         trigger?.();
       }
 
-      // Ctrl+= or Ctrl+Plus: Increase editor (and terminal when linked) font size
+      // Ctrl+= or Ctrl+Plus: Increase editor font size. linkEditorOutputFonts
+      // governs font FAMILY only, not size, so the terminal size is left alone
+      // (S3-20) — consistent with the status-bar +/- control.
       if (e.ctrlKey && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
-        const linked = state.settings.linkEditorOutputFonts !== false;
         const next = Math.min(72, (state.settings.fontSize ?? 14) + 1);
         dispatch({
           type: "SET_SETTINGS",
           settings: {
             ...state.settings,
             fontSize: next,
-            outputFontSize: linked ? next : state.settings.outputFontSize,
           },
         });
       }
 
-      // Ctrl+- (Minus): Decrease editor (and terminal when linked) font size
+      // Ctrl+- (Minus): Decrease editor font size (terminal size untouched, S3-20).
       if (e.ctrlKey && e.key === "-") {
         e.preventDefault();
-        const linked = state.settings.linkEditorOutputFonts !== false;
         const next = Math.max(8, (state.settings.fontSize ?? 14) - 1);
         dispatch({
           type: "SET_SETTINGS",
           settings: {
             ...state.settings,
             fontSize: next,
-            outputFontSize: linked ? next : state.settings.outputFontSize,
           },
         });
       }

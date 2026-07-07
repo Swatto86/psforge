@@ -15,13 +15,26 @@ import * as cmd from "../commands";
  * segments are added one-at-a-time (right-to-left) until every label in
  * the conflict group is unique — matching VS Code's disambiguation behaviour.
  */
+/**
+ * The display path for a tab, or "" when the tab is only backed by a scratch
+ * auto-save file (named `<tab.id>.ps1`). That path is an internal backing
+ * store, not a user-chosen save location, so the tab keeps showing its
+ * friendly "Untitled-N" title instead of the raw UUID filename (S3-17).
+ */
+function displayFilePath(tab: EditorTab): string {
+  if (!tab.filePath) return "";
+  const name = tab.filePath.replace(/\\/g, "/").split("/").pop() ?? "";
+  return name === `${tab.id}.ps1` ? "" : tab.filePath;
+}
+
 function disambiguateTabs(tabs: EditorTab[]): Map<string, string> {
   const labels = new Map<string, string>();
 
   // Helper: extract the base filename from a tab.
   const baseName = (tab: EditorTab) => {
-    if (!tab.filePath) return tab.title;
-    const parts = tab.filePath.replace(/\\/g, "/").split("/");
+    const path = displayFilePath(tab);
+    if (!path) return tab.title;
+    const parts = path.replace(/\\/g, "/").split("/");
     return parts[parts.length - 1] || tab.title;
   };
 
@@ -45,11 +58,12 @@ function disambiguateTabs(tabs: EditorTab[]): Map<string, string> {
     while (!resolved) {
       const attempt = new Map<string, string>();
       for (const tab of group) {
-        if (!tab.filePath) {
+        const path = displayFilePath(tab);
+        if (!path) {
           attempt.set(tab.id, tab.title);
           continue;
         }
-        const parts = tab.filePath.replace(/\\/g, "/").split("/");
+        const parts = path.replace(/\\/g, "/").split("/");
         attempt.set(tab.id, parts.slice(-Math.min(depth, parts.length)).join("/"));
       }
       const values = Array.from(attempt.values());
@@ -257,7 +271,7 @@ export function TabBar() {
               isDragTarget ? "tab-item-drop-target" : ""
             }`}
           >
-            <span title={tab.filePath || undefined}>{displayLabel}</span>
+            <span title={displayFilePath(tab) || undefined}>{displayLabel}</span>
             {tab.isDirty && <span className="tab-dirty-dot" />}
             <button
               onClick={(e) => handleClose(e, tab.id)}

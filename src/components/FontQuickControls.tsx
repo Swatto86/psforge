@@ -46,10 +46,9 @@ export function FontQuickControls() {
       8,
       Math.min(72, (state.settings.fontSize ?? 14) + delta),
     );
-    patchSettings({
-      fontSize: next,
-      outputFontSize: linked ? next : state.settings.outputFontSize,
-    });
+    // linkEditorOutputFonts governs font FAMILY only, not size — don't clobber
+    // an independently-set terminal font size (S3-20).
+    patchSettings({ fontSize: next });
   };
 
   const bumpTerminalSize = (delta: number) => {

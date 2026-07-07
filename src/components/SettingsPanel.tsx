@@ -17,10 +17,7 @@ import {
   MONOSPACE_FONT_PRESETS,
   presetIdForFamily,
 } from "../font-presets";
-import {
-  applyRunDirPreset,
-  normalizeRunDirPresets,
-} from "../run-dir-presets";
+import { applyRunDirPreset } from "../run-dir-presets";
 import {
   applyAssistantMode,
   clearAssistantModeFlag,
@@ -237,7 +234,11 @@ export function SettingsPanel() {
   };
 
   const applyMonospacePreset = (family: string, target: "editor" | "output") => {
-    if (target === "editor" || state.settings.linkEditorOutputFonts !== false) {
+    const linked = state.settings.linkEditorOutputFonts !== false;
+    // Only set both families when fonts are linked. Previously the editor
+    // preset always wrote both, silently overwriting an independently-chosen
+    // terminal font even when unlinked (S3-19).
+    if (linked) {
       dispatch({
         type: "SET_SETTINGS",
         settings: {
@@ -248,7 +249,7 @@ export function SettingsPanel() {
       });
       return;
     }
-    updateSetting("outputFontFamily", family);
+    updateSetting(target === "editor" ? "fontFamily" : "outputFontFamily", family);
   };
 
   const pickWorkingDirectory = async (
@@ -913,6 +914,23 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Debugger Tools"
+                tooltip="Shows the Debugger bottom-panel tab (Locals, Call Stack, Watch) when a breakpoint is hit."
+              >
+                <div className="flex flex-col gap-1">
+                  <Toggle
+                    checked={state.settings.showDebuggerTools === true}
+                    onChange={(v) => updateSetting("showDebuggerTools", v)}
+                    label="Show the Debugger panel (Locals / Call Stack / Watch)"
+                  />
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Off keeps the bottom panel on Terminal. Turn on to inspect
+                    variables and the call stack while paused at a breakpoint.
+                  </p>
+                </div>
+              </SettingRow>
+
+              <SettingRow
                 label="Working Directory"
                 tooltip="Sets the current directory used for script execution and relative paths."
               >
@@ -1020,9 +1038,13 @@ export function SettingsPanel() {
                         value={preset.name}
                         placeholder="Name"
                         onChange={(e) => {
+                          // Commit raw (like the path field). Normalizing on
+                          // every keystroke dropped a freshly-added row the
+                          // instant its name was typed before its path (S3-18);
+                          // the empty-path rule is enforced at apply time.
                           const presets = [...(state.settings.runDirPresets ?? [])];
                           presets[index] = { ...preset, name: e.target.value };
-                          updateSetting("runDirPresets", normalizeRunDirPresets(presets));
+                          updateSetting("runDirPresets", presets);
                         }}
                       />
                       <input
@@ -1280,7 +1302,7 @@ export function SettingsPanel() {
               >
                 <NumberInput
                   min={1}
-                  max={50}
+                  max={100}
                   value={state.settings.maxRecentFiles ?? 20}
                   onChange={(v) => updateSetting("maxRecentFiles", v)}
                   error={validationErrors.maxRecentFiles}

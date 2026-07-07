@@ -311,21 +311,37 @@ pub async fn start_terminal(
     cmd.env("TERM", "xterm-256color");
     cmd.env("PSFORGE_PTY_HOST", "1");
 
-    let child = pair.slave.spawn_command(cmd).map_err(|e| AppError {
+    let mut child = pair.slave.spawn_command(cmd).map_err(|e| AppError {
         code: "TERMINAL_SPAWN_FAILED".to_string(),
         message: format!("Failed to start '{}': {}", program, e),
     })?;
     drop(pair.slave);
 
-    let mut reader = pair.master.try_clone_reader().map_err(|e| AppError {
-        code: "TERMINAL_READER_INIT_FAILED".to_string(),
-        message: format!("Failed to acquire PTY reader: {}", e),
-    })?;
+    // If reader/writer acquisition fails after a successful spawn, the child
+    // process is otherwise dropped without being terminated (portable-pty's
+    // WinChild has no Drop that kills it), leaking an unreachable PowerShell
+    // process. Kill it before returning the error (S3-12).
+    let mut reader = match pair.master.try_clone_reader() {
+        Ok(reader) => reader,
+        Err(e) => {
+            let _ = child.kill();
+            return Err(AppError {
+                code: "TERMINAL_READER_INIT_FAILED".to_string(),
+                message: format!("Failed to acquire PTY reader: {}", e),
+            });
+        }
+    };
 
-    let writer = pair.master.take_writer().map_err(|e| AppError {
-        code: "TERMINAL_WRITER_INIT_FAILED".to_string(),
-        message: format!("Failed to acquire PTY writer: {}", e),
-    })?;
+    let writer = match pair.master.take_writer() {
+        Ok(writer) => writer,
+        Err(e) => {
+            let _ = child.kill();
+            return Err(AppError {
+                code: "TERMINAL_WRITER_INIT_FAILED".to_string(),
+                message: format!("Failed to acquire PTY writer: {}", e),
+            });
+        }
+    };
 
     let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
 

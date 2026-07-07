@@ -23,31 +23,28 @@ export async function copyTerminalOutputToClipboard(
   return true;
 }
 
-/** Total lines in the active integrated terminal scrollback buffer. */
-export function getTerminalLineCount(): number {
+/**
+ * Number of output lines since the last run started, tracked by a
+ * reflow/eviction-safe xterm marker in TerminalPane (S3-13). Returns null when
+ * no run has started or the baseline row was evicted from scrollback.
+ */
+export function getRunOutputLineCount(): number | null {
   const w = window as unknown as Record<string, unknown>;
-  const count = w.__psforge_terminal_get_line_count as (() => number) | undefined;
-  return count?.() ?? 0;
+  const getCount = w.__psforge_terminal_get_run_output_line_count as
+    | (() => number | null)
+    | undefined;
+  return getCount?.() ?? null;
 }
 
-/** Copy terminal lines from `startLine` (0-based) through the end of the buffer. */
-export async function copyTerminalOutputFromLine(
-  startLine: number,
-): Promise<boolean> {
-  const total = getTerminalLineCount();
-  if (total <= startLine) return false;
-  const lineCount = total - startLine;
-  const text = getTerminalPlainContent(lineCount);
+export async function copyLastRunOutputToClipboard(): Promise<boolean> {
+  const count = getRunOutputLineCount();
+  // count === 0 means the last run produced no output — copy nothing rather
+  // than dumping the whole prior scrollback. Only a null baseline (no run yet,
+  // or the run-start row was evicted) falls back to the full scrollback.
+  if (count === 0) return false;
+  const text =
+    count !== null ? getTerminalPlainContent(count) : getTerminalPlainContent();
   if (!text.trim()) return false;
   await navigator.clipboard.writeText(text);
   return true;
-}
-
-export async function copyLastRunOutputToClipboard(
-  startLine: number | null,
-): Promise<boolean> {
-  if (startLine === null || startLine < 0) {
-    return copyTerminalOutputToClipboard();
-  }
-  return copyTerminalOutputFromLine(startLine);
 }

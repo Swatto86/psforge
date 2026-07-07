@@ -199,8 +199,21 @@ function splitPsStringSegments(
   return segments;
 }
 
+const BR_TAG_RE = /<br\b[^>]*>/gi;
+
+/** Converts `<br>` tags (outside PowerShell string literals) to newlines. Run
+ *  EARLY, before the line-based heuristics (gutters, prompt prefixes, prose),
+ *  so `<br>`-joined content is split into real lines first — tag REMOVAL stays
+ *  late to avoid prose apostrophes desyncing the string tracker (S3-14). */
+function normalizeHtmlLineBreaks(input: string): string {
+  return splitPsStringSegments(input)
+    .map((seg) => (seg.isString ? seg.text : seg.text.replace(BR_TAG_RE, "\n")))
+    .join("");
+}
+
 /** Strips HTML tags outside PowerShell string literals only — scripts that
- *  build HTML bodies (reports, Send-MailMessage) must keep their markup. */
+ *  build HTML bodies (reports, Send-MailMessage) must keep their markup. Any
+ *  `<br>` surviving normalizeHtmlLineBreaks is also converted here. */
 function stripSimpleHtml(input: string): string {
   return splitPsStringSegments(input)
     .map((seg) =>
@@ -302,12 +315,22 @@ function looksLikeLineNumberGutter(input: string): boolean {
   const lines = input.split("\n");
   const nums: number[] = [];
   let nonBlank = 0;
+  let allPipeCommands = true;
   for (const line of lines) {
     if (line.trim() !== "") nonBlank++;
     const m = LINE_NUMBER_GUTTER_RE.exec(line);
-    if (m) nums.push(parseInt(m[1], 10));
+    if (m) {
+      nums.push(parseInt(m[1], 10));
+      // `N | Command ...` is a valid PowerShell pipeline (e.g. Pester's
+      // `1 | Should -Be 1`), not a gutter label. A genuine multi-line gutter
+      // includes non-pipeline lines (braces, assignments, keywords, blanks).
+      if (!/^\s*\d{1,5}\s*\|\s*[A-Za-z]/.test(line)) allPipeCommands = false;
+    }
   }
   if (nums.length < 2 || nums.length < Math.ceil(nonBlank * 0.6)) return false;
+  // Every matched line pipes an integer into a command — treat as real code,
+  // not a copy-pasted line-number gutter (S3-15).
+  if (allPipeCommands) return false;
   for (let i = 1; i < nums.length; i++) {
     if (nums[i] <= nums[i - 1]) return false;
   }
@@ -408,8 +431,9 @@ export function sanitizePastedTextWithSummary(
     text = stripControlChars(text);
   }
   if (opts.stripSimpleHtml) {
-    summary.htmlTagsStripped = countHtmlTags(text);
-    text = stripSimpleHtml(text);
+    // Convert <br> to newlines up front so the line-based heuristics below see
+    // the real line structure; tag removal happens later (S3-14).
+    text = normalizeHtmlLineBreaks(text);
   }
   if (opts.extractEmbeddedFences) {
     const next = extractEmbeddedMarkdownFences(text);
@@ -436,6 +460,14 @@ export function sanitizePastedTextWithSummary(
     const before = text;
     text = stripProseWrappers(text);
     summary.proseLinesRemoved = countProseLinesRemoved(before, text);
+  }
+  // Strip HTML only after fences/prose are removed, so stripSimpleHtml's
+  // PowerShell-string tracker (the S2-12 guard) sees the code body alone. A
+  // stray apostrophe in surrounding chat prose would otherwise flip it into
+  // "inside a string" and leave HTML tags un-stripped inside the code (S3-14).
+  if (opts.stripSimpleHtml) {
+    summary.htmlTagsStripped = countHtmlTags(text);
+    text = stripSimpleHtml(text);
   }
   if (opts.fixTypography) {
     summary.typographyReplacements = countTypographyReplacements(text);

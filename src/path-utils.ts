@@ -24,11 +24,17 @@ export function basename(path: string): string {
 }
 
 /** Returns the parent directory of `path`, or `""` if there isn't one.
- *  A file directly under the root ("/script.ps1") has parent "/". */
+ *  A file directly under a root keeps the root's trailing separator:
+ *  Unix "/script.ps1" -> "/", Windows drive "C:\\script.ps1" -> "C:\\". */
 export function dirname(path: string): string {
   const idx = lastSeparatorIndex(path);
   if (idx === -1) return "";
-  return idx === 0 ? path[0] : path.slice(0, idx);
+  // Unix root.
+  if (idx === 0) return path[0];
+  // Windows drive root: "C:\\script.ps1" -> "C:\\", not "C:" (which is a
+  // drive-relative reference resolving to the remembered cwd on that drive).
+  if (idx === 2 && path[1] === ":") return path.slice(0, idx + 1);
+  return path.slice(0, idx);
 }
 
 /** Join directory and file segment using the dominant separator in `dir`. */

@@ -8,6 +8,71 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 3 (v1.3.1) — multi-agent bug sweep, 32 findings, all fixed
+
+116-agent audit (15 scoped finders → dedup → 3-lens adversarial verify → completeness critic). All 32 findings survived verification and are fixed. Compile-verified (vitest + tsc/vite build + `cargo fmt`/`clippy --all-targets -D warnings`/`cargo test`); not live-run verified.
+
+### HIGH
+
+- [x] **S3-1** — Output-line budget dropped the `<<PSFORGE_DONE|…>>` / `<<PSFORGE_DONE_ERR|…>>` completion markers once a run exceeded `MAX_OUTPUT_LINES`, so `execute()` blocked on `recv()` forever and — holding `execution_lock` — hung every subsequent run. `spawn_output_reader` now forwards marker lines unconditionally (bypassing the budget) so the run always completes.
+- [x] **S3-2** — Backend `AppSettings` had no `show_debugger_tools` field, so the frontend flag never persisted and the Debugger panel was kicked away even at a live breakpoint. Added the field (`#[serde(default)]`) + a Settings toggle; OutputPane now keeps/shows the Debugger tab whenever `isDebugging`, regardless of the toggle. Serde round-trip test added.
+- [x] **S3-3** — "Paste from clipboard + run" never auto-ran: `runOrDebugScript` guarded on the closed-over `activeTab` (still the Welcome tab in the scheduled `setTimeout`). It now reads `activeTabRef.current` like `runScript`/`startDebugSession`.
+- [x] **S3-4** — "Copy Output" copied only the last 80 lines (an E2E-helper default) instead of the full scrollback. The terminal content getter now defaults to the whole buffer when no line count is passed (also fixes the debug-bundle fallback).
+- [x] **S3-5** — `latest.json` only ever got a Windows entry, so macOS/Linux auto-update was permanently broken. `includeUpdaterJson` is now `true` on every matrix leg (tauri-action's `retry()` handles the concurrent-write race).
+- [x] **S3-6** — Temp `.ps1` files were written UTF-8 without a BOM, so Windows PowerShell 5.1 parsed non-ASCII source as ANSI and corrupted it. `write_secure_temp_file` now prepends a UTF-8 BOM for `.ps1` files. Test added.
+- [x] **S3-7** — `dirname("C:\\script.ps1")` returned `"C:"` (drive-relative) instead of `"C:\\"`, mis-resolving the run working dir. Added the Windows drive-root case. Tests added.
+- [x] **S3-8** — Show Command's module-load effect infinite-looped on an empty/failed module list (it depended on `state.modulesLoading`, retriggering on the true→false settle). Dropped `modulesLoading` from the deps (kept in the guard), matching Sidebar.
+- [x] **S3-19** — Editor Font Preset overwrote the terminal font family even when fonts were unlinked (`target === "editor" || linked` OR). Now sets both only when linked, else just the targeted family.
+- [x] **S3-20** — Status-bar Editor size +/- (and the Ctrl+=/Ctrl+- shortcuts) overwrote an independently-set terminal font size when linked; `linkEditorOutputFonts` governs family only. Size writes to `outputFontSize` removed from both.
+
+### MEDIUM
+
+- [x] **S3-9** — `get_script_parameters` lost all params when a `HelpMessage` wasn't a plain string literal (e.g. `HelpMessage=$true` → `null`), poisoning the whole `Vec<ScriptParameterInfo>` deserialize. The extraction script now coerces `[string]$__n.Argument.Value`.
+- [x] **S3-10** — `get_snippets_from` discarded all snippets (incl. built-ins) on a non-transient read failure (PermissionDenied) via `?`. It now logs and falls back to built-ins, matching the parse-error branch.
+- [x] **S3-11** — Debug breakpoints from a prior run were never removed in the persisted runspace, so Variable/Command breakpoints kept firing on later, unrelated runs. The wrapper now removes PSForge-owned breakpoints (matched by their action's internal hashtable name) before registering the current run's.
+- [x] **S3-12** — `start_terminal` orphaned the spawned PowerShell process if PTY reader/writer acquisition failed after spawn. Both error paths now `child.kill()` first.
+- [x] **S3-13** — "Copy Last Run Output" / "Copy Debug Bundle" used a raw xterm buffer index baseline invalidated by resize reflow and scrollback eviction. Replaced with a reflow/eviction-safe xterm `registerMarker` baseline read live at copy time.
+- [x] **S3-14** — `stripSimpleHtml` ran before fence/prose stripping, so a prose apostrophe desynced its PS-string tracker and HTML survived inside pasted code. Moved it after fence extraction + prose stripping. Test added.
+- [x] **S3-15** — The line-number-gutter heuristic stripped `N | Command` Pester assertions (`1 | Should -Be 1`). It now treats an all-`N | Command` block as real piped code, not a gutter. Tests added/updated.
+- [x] **S3-16** — A scratch auto-save timer was never cancelled when a tab stopped being a candidate (closed/discarded/reverted), so a discarded scratch could be written and resurrected. `finalizeCloseTab` and the autosave effect now clear stale timers.
+- [x] **S3-17** — First scratch auto-save renamed an untitled tab's title to the raw UUID scratch filename. Autosave no longer overwrites `title`, and TabBar hides the scratch backing path (`<tab.id>.ps1`), falling back to the friendly title.
+- [x] **S3-18** — Adding a Run Directory Preset and typing its name before its path deleted the row (name `onChange` normalized on every keystroke, dropping empty-path rows). The name field now commits raw like the path field; the empty-path rule is enforced at apply time.
+- [x] **S3-21** — Max Recent Files was UI-capped at 50 while the validator/backend allow 100. Changed `max` to 100.
+- [x] **S3-22** — Keyboard Shortcut panel auto-focused its search box but never trapped focus, so Tab escaped to the editor. Wired `useFocusTrap`.
+- [x] **S3-23** — Debug bundle fences broke when script/output contained a literal ```` ``` ````. Fence length is now chosen longer than any backtick run in the content. Test added.
+- [x] **S3-24** — `pathKey` normalized case but not separators, so a file opened via Open Folder ("/"-style) vs File→Open ("\\"-style) hashed to two keys and bookmarks/breakpoints didn't reattach. Now normalizes separators on Windows. Tests added.
+- [x] **S3-25** — Numeric parameter validation rejected `.5`, `5.`, `+5` (valid PowerShell numerics), blocking Run. Regex widened.
+- [x] **S3-26** — `quotePsArgument` (Show Command) left values with a leading `# - $ @` unquoted, corrupting the generated command. Now always single-quotes, matching TerminalPane's `quotePs`.
+- [x] **S3-27** — A PS-version change while the sidebar was hidden left Show Command serving the previous install's module list. Its path-change effect now invalidates the shared `state.modules` (and cancels any in-flight load) like Sidebar.
+- [x] **S3-28** — The `psforge-insert` handler silently no-op'd when no code editor was active (e.g. the Welcome tab). It now shows a toast ("Open a script tab to insert here.").
+
+### LOW
+
+- [x] **S3-29** — Marker-shaped output lines whose id didn't match the active command were swallowed. `execute()`'s loops now suppress a marker only when `done_id == command_id`, else surface the line as output.
+- [x] **S3-30** — The session-persist effect read `state.referenceSubview` but omitted it from the deps, so a Reference sub-tab change alone didn't persist. Added it to the dependency array.
+- [x] **S3-31** — `recoverScratchFiles` silently dropped unreadable candidates, closing the dialog with no feedback. It now surfaces a terminal notice naming the file.
+- [x] **S3-32** — AboutDialog had no focus trap, so keystrokes over the translucent backdrop leaked to the editor. Wired `useFocusTrap`.
+
+### Regression pass (5-lens adversarial review of the fix diff)
+
+Reviewed the whole Sweep-3 diff through 5 independent lenses, each finding adversarially verified. 16 confirmed findings (deduped to 9 unique issues); all resolved:
+
+- [x] **R-1** (regression of S3-1, HIGH) — the marker-bypass check ran on every line and wasn't scoped to a command id, so any marker-shaped output line (`Write-Output "<<PSFORGE_DONE|x|0>>"` in a loop) bypassed the output budget entirely, reintroducing the unbounded-IPC/flood risk the budget exists to cap. Reworked: markers are only checked in the budget-exhausted branch (no hot-path cost) and only the *active command's* marker (`is_active_completion_marker` against `active_command`) bypasses the budget.
+- [x] **R-2** (regression of S3-6, MEDIUM) — the unconditional `.ps1` BOM prepend doubled a BOM when the Monaco buffer already began with U+FEFF, producing a cryptic parse failure. Now guarded: `!content.starts_with(&[0xEF,0xBB,0xBF])`.
+- [x] **R-3** (regression of S3-27, MEDIUM) — the `prevPsPathRef` reset lived in ShowCommandPane, which unmounts on subview switch, so a PS-version change while it was unmounted still left a stale module list. Moved the module invalidation into the `SET_SELECTED_PS` reducer so it fires regardless of which components are mounted.
+- [x] **R-4** (regression of S3-17, MEDIUM/LOW) — the tab hover tooltip still read `tab.filePath`, leaking the raw scratch UUID path the label now hides. Tooltip now uses `displayFilePath(tab)`.
+- [x] **R-5** (regression of S3-14, MEDIUM) — moving `stripSimpleHtml` late broke `<br>`-delimited gutters (the `<br>`→newline conversion no longer ran before line-based heuristics). Split it: `normalizeHtmlLineBreaks` converts `<br>` early (string-aware); tag removal stays late. Test added.
+- [x] **R-6** (regression of S3-5, MEDIUM) — `includeUpdaterJson: true` on 3 parallel matrix legs still races on `latest.json` (both read empty, last upload wins), which tauri-action's retry doesn't resolve. Added `max-parallel: 1` so the legs serialize and each merges into the accumulating manifest.
+- [x] **R-7** (regression of S3-13/S3-4, LOW) — `getRunOutputLineCount() === 0` (a run with no output) was treated like a lost baseline and copied the whole prior scrollback. Now `0` copies nothing; only `null` falls back to the full buffer (terminal-utils + debug-bundle).
+- [x] **R-8** (regression of S3-18, LOW) — `normalizeRunDirPresets` became dead code and duplicate-named presets were no longer prevented. Removed the dead frontend export and added case-insensitive dedup to the backend `AppSettings::sanitize()` (the persistence boundary).
+- [x] **R-9** (dead code from S3-13, LOW) — the `getLineCount` handle method and `__psforge_terminal_get_line_count` bridge had no consumer after the marker rewrite. Removed.
+
+**Intended trade-offs (reviewed, not changed):**
+- **S3-15** — an all-`N | Command` block is no longer stripped as a gutter. This is deliberate: `N | Command` is ambiguous with a real pipeline (Pester `1 | Should -Be 1`), and leaving a rare genuine `|`-gutter's prefix visible (user-fixable) is safer than silently corrupting valid code. `:`-separator gutters are unaffected.
+- **S3-22** — with the focus trap added, initial focus lands on the Close button for ~50 ms before the panel's own delayed search-focus fires. Cosmetic; the end state (search focused, Tab trapped) is correct.
+
+---
+
 ## Sweep 2 (v1.3.0) — multi-agent bug sweep, 21 findings, all fixed
 
 ### CRITICAL

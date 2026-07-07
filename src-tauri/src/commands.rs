@@ -310,7 +310,11 @@ $__r = @(foreach ($__p in $__pb.Parameters) {
                     }
                 }
                 if ($__n.ArgumentName -eq 'HelpMessage') {
-                    try { $__help = $__n.Argument.Value } catch {}
+                    # Coerce to string: .Value is $null for non-constant
+                    # attribute args (e.g. HelpMessage=$true) and an Int32 for
+                    # HelpMessage=5, both of which serialize as non-strings and
+                    # break Vec<ScriptParameterInfo> deserialization (S3-9).
+                    try { $__help = [string]$__n.Argument.Value } catch {}
                 }
                 if ($__n.ArgumentName -eq 'Position') {
                     try { $__pos = [int]$__n.Argument.ToString() } catch {}
@@ -1868,7 +1872,21 @@ pub async fn get_snippets() -> Result<Vec<Snippet>, AppError> {
 pub fn get_snippets_from(user_path: std::path::PathBuf) -> Result<Vec<Snippet>, AppError> {
     let mut snippets = builtin_snippets();
     if user_path.exists() {
-        let content = with_retry("read_user_snippets", || std::fs::read_to_string(&user_path))?;
+        let content = match with_retry("read_user_snippets", || std::fs::read_to_string(&user_path))
+        {
+            Ok(content) => content,
+            Err(e) => {
+                // A transient/permission read failure (AV scan, OneDrive sync,
+                // restrictive ACL) must not discard the built-in snippets — log
+                // and fall back to built-ins only (S3-10). Matches the graceful
+                // degradation of the parse-error branch below.
+                warn!(
+                    "failed to read user snippets ({}); falling back to built-ins",
+                    e
+                );
+                return Ok(snippets);
+            }
+        };
         match serde_json::from_str::<Vec<Snippet>>(&content) {
             Ok(user_snippets) => snippets.extend(user_snippets),
             Err(e) => {

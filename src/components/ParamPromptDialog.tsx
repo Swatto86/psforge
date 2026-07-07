@@ -151,11 +151,11 @@ export function ParamPromptDialog({ params, onConfirm, onCancel }: Props) {
     if (value.trim() === "") return "Required";
     if (
       isNumericType(param.typeName) &&
-      // Accept integers, decimals, and scientific notation (1e5, 1.5e-3) so
-      // any value PowerShell would parse as a [double]/[int] is also accepted
-      // by this dialog. The previous regex rejected scientific notation that
-      // any production script using `[double]$Threshold = 1e9` would expect.
-      !/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value.trim())
+      // Accept everything PowerShell parses as a [double]/[int]: an optional
+      // leading + or -, a digitless integer part (.5), a trailing dot (5.),
+      // and scientific notation (1e5, 1.5e-3). The previous regex rejected
+      // `.5`, `5.`, and `+5`, blocking Run for valid shorthand values (S3-25).
+      !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())
     ) {
       return "Must be a number";
     }

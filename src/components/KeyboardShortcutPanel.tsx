@@ -11,6 +11,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useAppState } from "../store";
+import { useFocusTrap } from "./use-focus-trap";
 
 // ---------------------------------------------------------------------------
 // Data model
@@ -148,6 +149,11 @@ export function KeyboardShortcutPanel() {
   const { state, dispatch } = useAppState();
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Trap Tab within the modal so focus can't escape to the editor behind it
+  // (S3-22), matching the other PSForge dialogs.
+  useFocusTrap(panelRef, state.shortcutPanelOpen);
 
   // Focus the search input when the panel opens.
   useEffect(() => {
@@ -203,6 +209,8 @@ export function KeyboardShortcutPanel() {
     >
       {/* Panel card */}
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className="flex flex-col rounded shadow-xl"
         style={{
           width: "560px",

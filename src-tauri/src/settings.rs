@@ -151,6 +151,10 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub auto_save_scratch_scripts: bool,
 
+    /// Show the Debugger bottom-panel tab (Locals / Call Stack / Watch).
+    #[serde(default)]
+    pub show_debugger_tools: bool,
+
     /// PowerShell execution policy override ("Default" means no override).
     #[serde(default = "default_execution_policy")]
     pub execution_policy: String,
@@ -360,6 +364,7 @@ impl Default for AppSettings {
             persist_runspace_between_runs: true,
             pssa_run_gate: default_pssa_run_gate(),
             auto_save_scratch_scripts: true,
+            show_debugger_tools: false,
             execution_policy: default_execution_policy(),
             working_dir_mode: default_working_dir_mode(),
             custom_working_dir: String::new(),
@@ -458,6 +463,12 @@ impl AppSettings {
         self.recent_runs.truncate(self.max_recent_runs);
         self.run_dir_presets
             .retain(|preset| !preset.name.trim().is_empty() && !preset.path.trim().is_empty());
+        // Dedup by case-insensitive name (keep first) at the persistence
+        // boundary so the Settings UI can commit raw edits without a duplicate
+        // silently shadowing an earlier preset on Apply (S3-18 follow-up).
+        let mut seen_preset_names = HashSet::new();
+        self.run_dir_presets
+            .retain(|preset| seen_preset_names.insert(preset.name.trim().to_lowercase()));
         if self.run_dir_presets.len() > 12 {
             self.run_dir_presets.truncate(12);
         }
@@ -661,6 +672,23 @@ mod tests {
         assert!(s.font_size >= 8);
         assert!(!s.font_family.is_empty());
         assert!(s.split_position > 0.0 && s.split_position < 100.0);
+    }
+
+    #[test]
+    fn show_debugger_tools_round_trips() {
+        // S3-2: the field must exist on the backend struct (with camelCase
+        // serde) so the setting survives save/load. It was previously absent,
+        // so the frontend flag could never persist.
+        let defaulted: AppSettings =
+            serde_json::from_str("{}").expect("empty document must parse to defaults");
+        assert!(!defaulted.show_debugger_tools);
+
+        let enabled: AppSettings = serde_json::from_str(r#"{"showDebuggerTools":true}"#)
+            .expect("explicit value must parse");
+        assert!(enabled.show_debugger_tools);
+
+        let json = serde_json::to_string(&enabled).expect("must serialize");
+        assert!(json.contains("\"showDebuggerTools\":true"));
     }
 
     #[test]

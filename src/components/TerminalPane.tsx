@@ -239,7 +239,13 @@ interface TerminalSessionHandle {
   focus: () => void;
   restart: () => void;
   getContent: (lineCount?: number) => string;
-  getLineCount: () => number;
+  /** Register a reflow/eviction-safe marker at the current row as the
+   *  "last run" output baseline (S3-13). */
+  markRunStart: () => void;
+  /** Lines of output since the last markRunStart(), tracked via an xterm
+   *  marker so it survives resize reflow and scrollback eviction. Returns
+   *  null if no run has started or the baseline row was evicted. */
+  getRunOutputLineCount: () => number | null;
   isReady: () => boolean;
   submitCurrentInput: () => void;
   resetInput: () => void;
@@ -317,7 +323,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
     const focusFnRef = useRef<(() => void) | null>(null);
     const clearFnRef = useRef<(() => void) | null>(null);
     const contentFnRef = useRef<((lineCount?: number) => string) | null>(null);
-    const lineCountFnRef = useRef<(() => number) | null>(null);
+    const markRunStartFnRef = useRef<(() => void) | null>(null);
+    const runOutputLineCountFnRef = useRef<(() => number | null) | null>(null);
     const execFnRef = useRef<
       ((command: string) => Promise<number | null>) | null
     >(null);
@@ -334,7 +341,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         restart: () => startSessionFnRef.current?.(false),
         getContent: (lineCount?: number) =>
           contentFnRef.current?.(lineCount) ?? "",
-        getLineCount: () => lineCountFnRef.current?.() ?? 0,
+        markRunStart: () => markRunStartFnRef.current?.(),
+        getRunOutputLineCount: () => runOutputLineCountFnRef.current?.() ?? null,
         isReady: () => isReadyRef.current,
         submitCurrentInput: () => queueInputFnRef.current?.("\r", true),
         resetInput: () => queueInputFnRef.current?.("\u0003", true),
@@ -523,8 +531,11 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         term.write(text.replace(/\r?\n/g, "\r\n"));
       };
       contentFnRef.current = (lineCount?: number) => {
-        const count = lineCount ?? 80;
         const buf = term.buffer.active;
+        // No explicit count means "copy everything" (Copy Output, debug-bundle
+        // fallback) — return the full scrollback, not a stale 80-line default
+        // that silently truncated long runs (S3-4).
+        const count = lineCount ?? buf.length;
         const lines: string[] = [];
         const start = Math.max(0, buf.length - count);
         for (let i = start; i < buf.length; i++) {
@@ -533,7 +544,27 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         }
         return lines.join("\n");
       };
-      lineCountFnRef.current = () => term.buffer.active.length;
+      // Reflow/eviction-safe "last run" baseline. A raw buffer index goes
+      // stale the moment the terminal is resized (xterm re-wraps the whole
+      // scrollback) or the scrollback cap trims old lines; an xterm marker is
+      // kept current by xterm and disposed when its row is evicted (S3-13).
+      let runStartMarker: ReturnType<Terminal["registerMarker"]> | undefined =
+        undefined;
+      markRunStartFnRef.current = () => {
+        runStartMarker?.dispose();
+        runStartMarker = term.registerMarker() ?? undefined;
+      };
+      runOutputLineCountFnRef.current = () => {
+        if (
+          !runStartMarker ||
+          runStartMarker.isDisposed ||
+          runStartMarker.line < 0
+        ) {
+          return null;
+        }
+        const count = term.buffer.active.length - runStartMarker.line;
+        return count > 0 ? count : 0;
+      };
       execFnRef.current = async (command: string) => {
         if (cancelled || isStoppingRef.current) {
           throw new Error("Terminal session is unavailable.");
@@ -756,7 +787,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         focusFnRef.current = null;
         clearFnRef.current = null;
         contentFnRef.current = null;
-        lineCountFnRef.current = null;
+        markRunStartFnRef.current = null;
+        runOutputLineCountFnRef.current = null;
         execFnRef.current = null;
         writeLocalFnRef.current = null;
         rejectPendingCommands("Terminal session was disposed.");
@@ -993,11 +1025,6 @@ export function TerminalPane() {
       options?: {
         clearBeforeRun?: boolean;
         reveal?: boolean;
-        /** Reports the buffer line count AFTER any clear, right before the
-         *  command starts — the correct baseline for "copy last run output".
-         *  A pre-clear snapshot would exceed the post-clear buffer size and
-         *  make the copy silently return nothing. */
-        onStartLine?: (line: number) => void;
       },
     ) => {
       const tabId = ensureLocalExecutionTab();
@@ -1013,7 +1040,9 @@ export function TerminalPane() {
       if (options?.clearBeforeRun) {
         handle.clear();
       }
-      options?.onStartLine?.(handle.getLineCount());
+      // Mark the run-start baseline AFTER any clear, right before the command
+      // starts, via a reflow/eviction-safe xterm marker (S3-13).
+      handle.markRunStart();
       if (reveal) {
         handle.focus();
       }
@@ -1052,14 +1081,13 @@ export function TerminalPane() {
       options?: {
         clearBeforeRun?: boolean;
         reveal?: boolean;
-        onStartLine?: (line: number) => void;
       },
     ) => runCommandInLocalTerminal(command, options);
     w.__psforge_terminal_restart = () => getActiveHandle()?.restart();
     w.__psforge_terminal_get_content = (lineCount?: number) =>
       getActiveHandle()?.getContent(lineCount as number | undefined) ?? "";
-    w.__psforge_terminal_get_line_count = () =>
-      getActiveHandle()?.getLineCount() ?? 0;
+    w.__psforge_terminal_get_run_output_line_count = () =>
+      getActiveHandle()?.getRunOutputLineCount() ?? null;
     w.__psforge_terminal_is_ready = () => getActiveHandle()?.isReady() ?? false;
     w.__psforge_terminal_submit_current_input = () =>
       getActiveHandle()?.submitCurrentInput();
@@ -1076,7 +1104,7 @@ export function TerminalPane() {
       delete w.__psforge_terminal_run_command;
       delete w.__psforge_terminal_restart;
       delete w.__psforge_terminal_get_content;
-      delete w.__psforge_terminal_get_line_count;
+      delete w.__psforge_terminal_get_run_output_line_count;
       delete w.__psforge_terminal_is_ready;
       delete w.__psforge_terminal_submit_current_input;
       delete w.__psforge_terminal_write_notice;

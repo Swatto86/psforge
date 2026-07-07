@@ -9,14 +9,20 @@
  *  and ise-classic themes without any additional logic.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppState } from "../store";
+import { useFocusTrap } from "./use-focus-trap";
 
 export function AboutDialog() {
   const { dispatch } = useAppState();
   const [version, setVersion] = useState<string>("...");
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Trap Tab within the dialog and move initial focus into it, so keystrokes
+  // over the translucent backdrop can't leak to the editor behind it (S3-32).
+  useFocusTrap(cardRef, true);
 
   // Fetch the app version from Tauri once on mount.
   useEffect(() => {
@@ -64,6 +70,8 @@ export function AboutDialog() {
     >
       {/* Dialog card */}
       <div
+        ref={cardRef}
+        tabIndex={-1}
         data-testid="about-dialog"
         role="dialog"
         aria-modal="true"

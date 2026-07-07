@@ -8,7 +8,10 @@ import * as cmd from "../commands";
 import type { CommandInfo, CommandParameterInfo } from "../types";
 
 function quotePsArgument(value: string): string {
-  if (!/[\s'"`]/.test(value)) return value;
+  // Always single-quote. A whitelist fast path left values with a leading
+  // PowerShell-significant char (# - $ @) bare, which the parser then treated
+  // as a comment, switch, or variable — corrupting the generated command
+  // (S3-26). Quoting is always safe for a literal parameter value.
   return `'${value.replace(/'/g, "''")}'`;
 }
 
@@ -57,6 +60,9 @@ export function ShowCommandPane() {
   }, [state.selectedPsPath, dispatch]);
 
   useEffect(() => {
+    // Reset this pane's local selection when the PS version changes. The shared
+    // module list is invalidated centrally in the SET_SELECTED_PS reducer so it
+    // works even while this pane is unmounted (S3-27).
     setSelectedModule("");
     setSelectedCommand("");
     setCommandsByModule({});
@@ -71,12 +77,11 @@ export function ShowCommandPane() {
     if (!state.selectedPsPath) return;
     if (state.modules.length > 0 || state.modulesLoading) return;
     void loadModules();
-  }, [
-    loadModules,
-    state.selectedPsPath,
-    state.modules.length,
-    state.modulesLoading,
-  ]);
+    // state.modulesLoading is intentionally NOT a dependency: including it made
+    // a settled load (empty result or error) flip modulesLoading true->false
+    // and immediately re-trigger the effect, spawning a fresh get_installed_
+    // modules subprocess in a tight loop (S3-8). It stays in the guard above.
+  }, [loadModules, state.selectedPsPath, state.modules.length]);
 
   const filteredModules = useMemo(() => {
     if (!moduleFilter.trim()) return state.modules;

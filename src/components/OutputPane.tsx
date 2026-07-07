@@ -159,10 +159,18 @@ export function OutputPane({
   const showDebuggerTools = state.settings.showDebuggerTools === true;
 
   useEffect(() => {
-    if (!showDebuggerTools && state.bottomPanelTab === "debugger") {
+    // Only leave the Debugger tab when the tools are hidden AND no debug
+    // session is live. Otherwise a breakpoint hit — which auto-selects the
+    // Debugger tab — would be instantly kicked back to Terminal, leaving no
+    // way to inspect state or continue/step while paused (S3-2).
+    if (
+      !showDebuggerTools &&
+      !state.isDebugging &&
+      state.bottomPanelTab === "debugger"
+    ) {
       dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
     }
-  }, [showDebuggerTools, state.bottomPanelTab, dispatch]);
+  }, [showDebuggerTools, state.isDebugging, state.bottomPanelTab, dispatch]);
   useEffect(() => {
     const tab = state.bottomPanelTab;
     if (tab === "problems" || tab === "show-command" || tab === "help") {
@@ -257,7 +265,9 @@ export function OutputPane({
 
   const utilityBottomTabs: BottomTabDescriptor[] = [
     { id: "reference", label: "Reference", secondary: true },
-    ...(showDebuggerTools
+    // Surface the Debugger tab when the tools are enabled, or whenever a debug
+    // session is live so a breakpoint hit is always actionable (S3-2).
+    ...(showDebuggerTools || state.isDebugging
       ? [{ id: "debugger" as const, label: "Debugger", secondary: true }]
       : []),
   ];

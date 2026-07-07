@@ -88,6 +88,18 @@ pub(crate) fn write_secure_temp_file(
             .open(&path)
         {
             Ok(mut f) => {
+                // Windows PowerShell 5.1 (powershell.exe) parses a BOM-less file
+                // using the system ANSI code page, silently corrupting any
+                // non-ASCII source before the script runs. Prepend a UTF-8 BOM
+                // for .ps1 temp files so both powershell.exe and pwsh.exe decode
+                // them as UTF-8 (S3-6). The BOM is harmless for pure-ASCII
+                // bootstrap/wrapper scripts and is stripped by PowerShell's parser.
+                // Guard against a double BOM if the content already begins with
+                // one (e.g. a Monaco buffer that retained a leading U+FEFF).
+                if suffix.eq_ignore_ascii_case(".ps1") && !content.starts_with(&[0xEF, 0xBB, 0xBF])
+                {
+                    f.write_all(&[0xEF, 0xBB, 0xBF])?;
+                }
                 f.write_all(content)?;
                 f.flush()?;
                 return Ok(path);
@@ -339,6 +351,39 @@ mod tests {
             Some(PSFORGE_TEMP_DIR_NAME)
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_secure_temp_file_prepends_bom_only_for_ps1() {
+        let ps1 = write_secure_temp_file("psforge_test_bom", ".ps1", b"$x = 1")
+            .expect("temp file must be created");
+        let ps1_bytes = std::fs::read(&ps1).expect("temp file must be readable");
+        assert_eq!(
+            &ps1_bytes[..3],
+            &[0xEF, 0xBB, 0xBF],
+            ".ps1 temp file must start with a UTF-8 BOM"
+        );
+        assert_eq!(&ps1_bytes[3..], b"$x = 1");
+        let _ = std::fs::remove_file(ps1);
+
+        let txt = write_secure_temp_file("psforge_test_bom", ".txt", b"$x = 1")
+            .expect("temp file must be created");
+        let txt_bytes = std::fs::read(&txt).expect("temp file must be readable");
+        assert_eq!(
+            txt_bytes, b"$x = 1",
+            "non-.ps1 temp file must not gain a BOM"
+        );
+        let _ = std::fs::remove_file(txt);
+
+        // Content that already begins with a BOM must not be double-BOM'd (R-2).
+        let with_bom = write_secure_temp_file("psforge_test_bom", ".ps1", b"\xEF\xBB\xBF$x = 1")
+            .expect("temp file must be created");
+        let with_bom_bytes = std::fs::read(&with_bom).expect("temp file must be readable");
+        assert_eq!(
+            with_bom_bytes, b"\xEF\xBB\xBF$x = 1",
+            ".ps1 content that already has a BOM must not gain a second one"
+        );
+        let _ = std::fs::remove_file(with_bom);
     }
 
     #[test]

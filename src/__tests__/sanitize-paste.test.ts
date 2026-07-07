@@ -89,10 +89,34 @@ describe("sanitizePastedText", () => {
     expect(sanitizePastedText(input, FULL_PASTE_SANITIZE_OPTIONS)).toBe(input);
   });
 
+  it("does NOT strip multi-line Pester integer pipelines (S3-15)", () => {
+    const input = "1 | Should -Be 1\n2 | Should -Be 2\n3 | Should -Be 3";
+    expect(sanitizePastedText(input, FULL_PASTE_SANITIZE_OPTIONS)).toBe(input);
+  });
+
   it("still strips genuine line-number gutters", () => {
-    const input = "1 | Get-Process\n2 | Sort-Object CPU\n3 | Select-Object -First 5";
+    // A real gutter includes non-pipeline lines (assignments, keywords, braces),
+    // unlike `N | Command` which is ambiguous with a pipeline (S3-15).
+    const input =
+      "1 | $items = Get-Process\n2 | foreach ($i in $items) {\n3 |     Write-Output $i.Name\n4 | }";
     expect(sanitizePastedText(input, FULL_PASTE_SANITIZE_OPTIONS)).toBe(
-      "Get-Process\nSort-Object CPU\nSelect-Object -First 5",
+      "$items = Get-Process\nforeach ($i in $items) {\n    Write-Output $i.Name\n}",
+    );
+  });
+
+  it("strips HTML inside code even when preceded by prose with an apostrophe (S3-14)", () => {
+    const input =
+      "Here's the script:\n```powershell\n<pre>Get-ChildItem</pre>\n```\nNote: run as admin";
+    expect(sanitizePastedText(input, FULL_PASTE_SANITIZE_OPTIONS)).toBe(
+      "Get-ChildItem",
+    );
+  });
+
+  it("converts <br> to newlines before gutter stripping (S3-14 regression)", () => {
+    // <br> must split lines up front so the line-number gutter is then removed.
+    const input = "1: Get-Process<br>2: Stop-Process<br>";
+    expect(sanitizePastedText(input, FULL_PASTE_SANITIZE_OPTIONS)).toBe(
+      "Get-Process\nStop-Process",
     );
   });
 });

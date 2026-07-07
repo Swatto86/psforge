@@ -37,4 +37,23 @@ describe("buildDebugBundleMarkdown", () => {
     expect(md).toContain("Write-Host hi");
     expect(md).toContain("Get-Process");
   });
+
+  it("widens the fence when content contains a triple backtick (S3-23)", () => {
+    const md = buildDebugBundleMarkdown({
+      tab: {
+        ...tab,
+        content: "$md = @'\n```powershell\nGet-Date\n```\n'@",
+      },
+      lastRun: null,
+      workingDir: "C:\\Scripts",
+      problems: [],
+      getRunOutput: () => "",
+    });
+    // The script snapshot fence must be longer than the embedded ``` so it
+    // cannot be closed prematurely.
+    expect(md).toContain("````powershell");
+    expect(md).toContain("\n````");
+    // The embedded fence survives verbatim inside the wrapping fence.
+    expect(md).toContain("```powershell\nGet-Date\n```");
+  });
 });

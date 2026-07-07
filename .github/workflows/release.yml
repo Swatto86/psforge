@@ -105,6 +105,13 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
+      # Serialize the matrix so each leg's latest.json read-merge-upload sees
+      # the previous leg's file and accumulates its platform entry. Running the
+      # legs in parallel lets two read an empty/stale latest.json and clobber
+      # each other on upload, so the published manifest can end up with only one
+      # platform — tauri-action's retry() does not resolve that clobber because
+      # both uploads "succeed" (S3-5). Serial builds are slower but correct.
+      max-parallel: 1
       matrix:
         include:
           - platform: macos-latest
@@ -154,8 +161,13 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
           retryAttempts: 5
-          # Only one matrix leg updates latest.json to avoid parallel delete/upload races.
-          includeUpdaterJson: ${{ matrix.platform == 'windows-latest' }}
+          # Every leg must merge its own platform entry into latest.json, or
+          # macOS/Linux auto-update is permanently broken (only windows-x86_64
+          # ever appeared) — the in-app updater then finds no entry for its
+          # platform and never offers an update (S3-5). tauri-action's own
+          # retry() wraps the read-merge-delete-upload cycle to handle the
+          # concurrent-write race, matching the upstream multi-platform example.
+          includeUpdaterJson: true
 
   publish-release:
     permissions:

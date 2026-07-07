@@ -302,7 +302,13 @@ export function EditorPane() {
   useEffect(() => {
     const handler = (e: Event) => {
       const text = (e as CustomEvent<string>).detail;
-      if (!text || !editorRef.current) return;
+      if (!text) return;
+      if (!editorRef.current) {
+        // No code editor is mounted (e.g. the Welcome tab is active). Tell the
+        // user instead of silently discarding the snippet/command (S3-28).
+        showAppToast("Open a script tab to insert here.");
+        return;
+      }
       const editor = editorRef.current;
       editor.focus();
       const selection = editor.getSelection();

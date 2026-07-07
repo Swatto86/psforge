@@ -1,9 +1,21 @@
 import {
-  getTerminalLineCount,
+  getRunOutputLineCount,
   getTerminalPlainContent,
 } from "./terminal-utils";
 import type { EditorTab, LastRunResult, PssaDiagnostic } from "./types";
 import { isPssaErrorSeverity } from "./run-utils";
+
+/** Choose a fence delimiter longer than any backtick run in `content`, so an
+ *  embedded ``` inside the script or its output cannot prematurely close the
+ *  fence and spill the rest of the bundle outside any code block (S3-23). */
+function fenceFor(content: string): string {
+  let max = 0;
+  const runs = content.match(/`+/g);
+  if (runs) {
+    for (const run of runs) max = Math.max(max, run.length);
+  }
+  return "`".repeat(Math.max(3, max + 1));
+}
 
 export interface DebugBundleInput {
   tab: EditorTab | undefined;
@@ -67,13 +79,16 @@ export function buildDebugBundleMarkdown(input: DebugBundleInput): string {
   const output = input.getRunOutput().trim();
   lines.push("", "### Terminal output (last run)", "");
   if (output) {
-    lines.push("```text", output, "```");
+    const fence = fenceFor(output);
+    lines.push(`${fence}text`, output, fence);
   } else {
     lines.push("_No captured output for the last run._");
   }
 
   if (tab?.content?.trim()) {
-    lines.push("", "### Script snapshot", "", "```powershell", tab.content.trimEnd(), "```");
+    const body = tab.content.trimEnd();
+    const fence = fenceFor(body);
+    lines.push("", "### Script snapshot", "", `${fence}powershell`, body, fence);
   }
 
   return lines.join("\n");
@@ -91,14 +106,13 @@ export async function copyDebugBundleToClipboard(
 /** Build bundle using terminal scrollback from the last F5 run when possible. */
 export async function copyDebugBundleWithRunOutput(
   input: DebugBundleInput,
-  lastRunStartLine: number | null,
 ): Promise<boolean> {
-  let runOutput = "";
-  const total = getTerminalLineCount();
-  if (lastRunStartLine !== null && lastRunStartLine >= 0 && total > lastRunStartLine) {
-    runOutput = getTerminalPlainContent(total - lastRunStartLine);
-  }
-  if (!runOutput.trim()) {
+  // Reflow/eviction-safe count of the last run's output lines (S3-13).
+  // count === 0 means the run produced no output (leave it empty); only a null
+  // baseline (no run / evicted) falls back to the full scrollback.
+  const count = getRunOutputLineCount();
+  let runOutput = count !== null ? getTerminalPlainContent(count) : "";
+  if (count === null && !runOutput.trim()) {
     runOutput = getTerminalPlainContent();
   }
   return copyDebugBundleToClipboard({

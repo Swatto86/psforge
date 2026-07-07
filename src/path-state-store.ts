@@ -38,12 +38,17 @@ function isWindowsRuntime(): boolean {
 }
 
 /**
- * Returns the lookup key for `filePath`. Lower-cases on Windows so the same
- * file accessed through differently-cased paths shares one marker set.
+ * Returns the lookup key for `filePath`. On Windows the same file surfaces
+ * with both separator styles — native open returns "C:\\dir\\f.ps1" while Open
+ * Folder forward-slashes to "C:/dir/f.ps1" — so normalize separators and case
+ * to a single key (S3-24). On Unix "\\" is a valid filename character, so the
+ * path is left untouched.
  */
 export function pathKey(filePath: string): string {
   if (!filePath) return "";
-  return isWindowsRuntime() ? filePath.toLowerCase() : filePath;
+  return isWindowsRuntime()
+    ? filePath.replace(/\\/g, "/").toLowerCase()
+    : filePath;
 }
 
 function load(): PathState {

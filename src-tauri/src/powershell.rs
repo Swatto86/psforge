@@ -419,12 +419,31 @@ impl ProcessManager {
         }
     }
 
+    /// Returns true when `line` is the completion marker of the command whose
+    /// id is currently in `active_command`. Used to let the real marker of the
+    /// running command bypass an exhausted output budget without letting an
+    /// arbitrary marker-shaped output line do the same.
+    async fn is_active_completion_marker(
+        line: &str,
+        active_command: &Mutex<Option<String>>,
+    ) -> bool {
+        let marker_id = match parse_run_complete_marker(line) {
+            Some((id, _)) => id,
+            None => match parse_run_complete_stderr_marker(line) {
+                Some(id) => id,
+                None => return false,
+            },
+        };
+        active_command.lock().await.as_deref() == Some(marker_id.as_str())
+    }
+
     fn spawn_output_reader(
         stdout_or_stderr: impl tokio::io::AsyncRead + Unpin + Send + 'static,
         stream_name: &'static str,
         tx: mpsc::UnboundedSender<SessionEvent>,
         output_budget: Arc<AtomicUsize>,
         output_budget_warned: Arc<AtomicBool>,
+        active_command: Arc<Mutex<Option<String>>>,
     ) {
         tokio::spawn(async move {
             let reader = BufReader::new(stdout_or_stderr);
@@ -433,6 +452,20 @@ impl ProcessManager {
                 match lines.next_line().await {
                     Ok(Some(line)) => {
                         if Self::try_consume_output_budget(&output_budget) {
+                            let _ = tx.send(SessionEvent::Output(OutputLine {
+                                stream: stream_name.to_string(),
+                                text: line,
+                                timestamp: chrono_now(),
+                            }));
+                        } else if Self::is_active_completion_marker(&line, &active_command).await {
+                            // The running command's completion marker must reach
+                            // execute()'s wait loop even after the budget is
+                            // exhausted, or a >MAX_OUTPUT_LINES run drops its
+                            // final <<PSFORGE_DONE|...>> marker and execute()
+                            // blocks on recv() forever, hanging every future run
+                            // (it holds execution_lock). Scoped to the active
+                            // command id so a coincidental marker-shaped output
+                            // line can't defeat the budget (S3-1).
                             let _ = tx.send(SessionEvent::Output(OutputLine {
                                 stream: stream_name.to_string(),
                                 text: line,
@@ -512,6 +545,7 @@ impl ProcessManager {
     async fn start_session(
         ps_path: &str,
         exec_policy: &str,
+        active_command: Arc<Mutex<Option<String>>>,
     ) -> Result<Arc<PersistentSession>, AppError> {
         let bootstrap_script = persistent_host_bootstrap_script();
         let bootstrap_script_path = write_secure_temp_file(
@@ -600,6 +634,7 @@ impl ProcessManager {
             event_tx.clone(),
             output_budget.clone(),
             output_budget_warned.clone(),
+            active_command.clone(),
         );
         Self::spawn_output_reader(
             stderr,
@@ -607,6 +642,7 @@ impl ProcessManager {
             event_tx.clone(),
             output_budget.clone(),
             output_budget_warned.clone(),
+            active_command.clone(),
         );
         Self::spawn_process_monitor(child.clone(), stdin_writer.clone(), event_tx.clone());
 
@@ -641,7 +677,8 @@ impl ProcessManager {
         }
 
         self.stop().await?;
-        let session = Self::start_session(ps_path, exec_policy).await?;
+        let session =
+            Self::start_session(ps_path, exec_policy, self.active_command.clone()).await?;
         let mut guard = self.session.lock().await;
         *guard = Some(session.clone());
         Ok(session)
@@ -876,6 +913,15 @@ function __psforge_invoke_user_script {
             // Register debugger breakpoints. Supports line breakpoints plus
             // variable breakpoints, with optional condition/hit-count/action.
             wrapper_script.push_str("$global:__psforge_debug_scope = 0\n");
+            // Remove PSForge-owned breakpoints left over from a prior debug run
+            // in this persisted runspace (persistRunspaceBetweenRuns defaults on).
+            // Variable/Command breakpoints are registered without a -Script
+            // filter, so they stay live runspace-wide and would otherwise keep
+            // firing on later, unrelated runs — even after the user removes them
+            // from the UI (S3-11). Match on the internal hashtable name their
+            // action scriptblocks always reference so we never remove a
+            // breakpoint the user set themselves.
+            wrapper_script.push_str("Get-PSBreakpoint | Where-Object { $_.Action -and $_.Action.ToString() -match '__psforge_bp_hits' } | Remove-PSBreakpoint\n");
             // Use global scope so breakpoint action scriptblocks can always
             // resolve these dictionaries even when they execute in a different
             // script scope than this wrapper.
@@ -1090,11 +1136,18 @@ function __psforge_invoke_user_script {
                             if done_id == command_id {
                                 break code;
                             }
+                            // Marker for a different command id — surface it.
+                            on_output(line);
                             continue;
                         }
-                        if parse_run_complete_marker(&line.text).is_some() {
-                            // Stray stdout marker (this or another command);
-                            // never surface marker lines as output.
+                        if let Some((done_id, _)) = parse_run_complete_marker(&line.text) {
+                            if done_id == command_id {
+                                // Duplicate stdout marker for this command; swallow.
+                                continue;
+                            }
+                            // Marker-shaped line for another/unknown command id:
+                            // surface it rather than silently dropping it (S3-29).
+                            on_output(line);
                             continue;
                         }
                         on_output(line);
@@ -1119,8 +1172,11 @@ function __psforge_invoke_user_script {
                                         break code;
                                     }
                                     stdout_done = Some(code);
+                                    continue;
                                 }
-                                // Marker for an unrelated command; do not surface.
+                                // Marker-shaped line for another/unknown command
+                                // id: surface it rather than dropping it (S3-29).
+                                on_output(line);
                                 continue;
                             }
                             if let Some(done_id) = parse_run_complete_stderr_marker(&line.text) {
@@ -1129,7 +1185,10 @@ function __psforge_invoke_user_script {
                                         break code;
                                     }
                                     stderr_done = true;
+                                    continue;
                                 }
+                                // Marker for a different command id — surface it.
+                                on_output(line);
                                 continue;
                             }
                             on_output(line);

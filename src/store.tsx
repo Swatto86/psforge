@@ -578,7 +578,20 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, psVersions: action.versions };
 
     case "SET_SELECTED_PS":
-      return { ...state, selectedPsPath: action.path };
+      // Invalidate the shared module list when the PowerShell version actually
+      // changes, so every consumer (Sidebar, Show Command) reloads for the new
+      // install — even the ones currently unmounted/hidden. Component-level
+      // resets miss a change that happens while the component isn't mounted
+      // (S3-27). Cancel any in-flight load too so the reload isn't blocked.
+      if (action.path === state.selectedPsPath) {
+        return { ...state, selectedPsPath: action.path };
+      }
+      return {
+        ...state,
+        selectedPsPath: action.path,
+        modules: [],
+        modulesLoading: false,
+      };
 
     case "SET_WORKING_DIR":
       return { ...state, workingDir: action.dir };
@@ -1285,6 +1298,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     state.tabs,
     state.activeTabId,
     state.bottomPanelTab,
+    // Included so a Reference sub-tab change (Problems/Help/Show Command) is
+    // re-persisted even when no other tracked field changes (S3-30).
+    state.referenceSubview,
     state.workingDir,
     state.selectedPsPath,
     state.breakpoints,
