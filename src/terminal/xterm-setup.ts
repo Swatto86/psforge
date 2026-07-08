@@ -58,12 +58,29 @@ export function createTerminalWithAddons(
 
   const webgl = tryLoadWebglAddon(term);
 
+  // Right-click pastes, like a classic PowerShell console. The native browser
+  // context menu is suppressed app-wide (main.tsx), so without this the
+  // terminal would have no mouse paste path at all. term.paste() routes
+  // through xterm's normal (bracketed) paste handling into the PTY.
+  const onContextMenu = () => {
+    void navigator.clipboard
+      .readText()
+      .then((text) => {
+        if (text) term.paste(text);
+      })
+      .catch(() => {
+        // Clipboard unavailable (permission/empty) — nothing to paste.
+      });
+  };
+  container.addEventListener("contextmenu", onContextMenu);
+
   return {
     terminal: term,
     addons: {
       fit,
       webgl,
       dispose: () => {
+        container.removeEventListener("contextmenu", onContextMenu);
         webgl?.dispose();
         fit.dispose();
       },

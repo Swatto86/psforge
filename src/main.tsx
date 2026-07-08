@@ -24,4 +24,11 @@ import "./styles.css";
 
 loader.config({ monaco });
 
+// Suppress the WebView's native browser context menu (Back/Reload/Inspect…)
+// everywhere — it reads as a web page, not a desktop app. In-app menus are
+// unaffected: Monaco renders its own context menu, the tab bar's custom menu
+// has its own onContextMenu handler, and the terminal right-click pastes
+// (classic PowerShell console behavior, wired in xterm-setup).
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
 ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
