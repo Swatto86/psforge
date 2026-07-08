@@ -39,6 +39,18 @@ fn pm() -> &'static ProcessManager {
     PROCESS_MANAGER.get_or_init(ProcessManager::new)
 }
 
+/// App-exit cleanup (S6-19): an *idle* persistent host exits on its own when
+/// the app dies (its stdin pipe closes and the bootstrap read loop breaks),
+/// but one still executing a user script never returns to that loop and would
+/// outlive the app — forever, for an infinite loop. Hard-kill it in that case.
+/// Fast: the active-command path in `stop()` skips the graceful wait.
+pub async fn kill_active_run_on_exit() {
+    let manager = pm();
+    if manager.has_active_command().await {
+        let _ = manager.stop().await;
+    }
+}
+
 #[cfg(not(test))]
 fn parse_debug_break_marker(text: &str) -> Option<u32> {
     text.trim()

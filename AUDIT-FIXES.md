@@ -8,7 +8,7 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
-## Sweep 6 (v1.4.2) — full-repo multi-agent sweep, 8 findings (8 fixed)
+## Sweep 6 (v1.4.2) — full-repo multi-agent sweep, three rounds, 20 findings (20 fixed)
 
 Four parallel lenses over the whole codebase (Rust backend, frontend logic, React components, TS↔Rust contracts), each finding adversarially verified against the source before fixing. The contracts lens returned no findings (all 50 commands, 6 events, 58 settings fields, capabilities, and CI/release workflows verified clean).
 
@@ -40,6 +40,15 @@ Four parallel lenses over the whole codebase (Rust backend, frontend logic, Reac
 - [x] **S6-12** (MEDIUM) — Settings persisted only through a 1 s debounce with no flush on exit; any change made within a second of closing the window was dropped (previously known and fixed only for the sidebar toggles). A `CloseRequested` handler now flushes the pending settings write before completing the close (`core:window:allow-destroy`/`allow-close` capabilities added).
 - [x] **S6-13** (HIGH) — All ~14 ad-hoc PowerShell helper spawns (param inspection, Get-Help, module enumeration, PSSA, completions, formatter, signing, …) decoded stdout as UTF-8, but a piped windowless PowerShell writes the OEM code page (empirically CP850 on this machine, both PS 5.1 and 7): every non-ASCII character in help text, param messages, module paths, or PSSA messages arrived as U+FFFD. All helper scripts now run through a shared `ps_utf8_script` wrapper that forces `[Console]::OutputEncoding` to UTF-8 — the same fix the persistent host and terminal bootstrap already had.
 - [x] **S6-14** (HIGH) — `refreshDebugInspector`'s guard read `state.isDebugging`/`state.debugPaused` from a stale closure; the break handlers invoke it in the same tick as the pause dispatch, so the guard failed on **every** breakpoint and Locals/Call Stack/Watches never auto-populated (manual Refresh was the only path). The guard now reads live refs that the break/complete handlers update synchronously alongside their dispatches.
+
+### Round 3 — verification workflow over the round-1/2 fixes + two fresh lenses (5 finders, paired adversarial refuters; 6 findings, 6 fixed)
+
+- [x] **S6-15** (MEDIUM) — The S6-14 ref sync missed the continue/step **error-recovery** paths: their catch blocks re-dispatch `debugPaused: true` and call `refreshDebugInspector` in the same tick, so the refresh no-op'd exactly when a failed step needed it. The four handlers now share one `sendDebugCommand` helper that syncs the refs alongside every dispatch.
+- [x] **S6-16** (HIGH) — After a lossy save (e.g. emoji in a windows1252 file), `savedContent` kept the pre-encode buffer, so the S6-10 conflict check flagged PSForge's *own* save as an external change on every subsequent save — and a cautious "Cancel" then silently dropped the user's edits. All three save paths (saveTab, run auto-save, debug auto-save) now re-read the file after a warned lossy save and use the on-disk round-trip as the baseline.
+- [x] **S6-17** (HIGH) — `startDebugSession`'s auto-save block was a third clobber path the S6-10 guard missed: Start Debugging silently overwrote external edits that Run would have refused to. It now uses the same `fileChangedOnDisk` skip-with-notice guard as `runScript`.
+- [x] **S6-18** (HIGH) — Debugger pause detection matched the bare substring `[DBG]:` in script output, so a script logging `Write-Host "[DBG]: …"` flipped the UI into a fake paused state and queued inspector commands into the still-running script's stdin (later swallowed by any `Read-Host`). The match now also requires the prompt's trailing `>>`.
+- [x] **S6-19** (MEDIUM, narrowed from the reported HIGH) — Closing the window mid-run left the hidden persistent PowerShell host executing the script indefinitely (forever, for an infinite loop). One refuter empirically showed an *idle* host self-terminates when the app's stdin pipe closes, so the fix targets the real gap: a `RunEvent::Exit` handler hard-kills the host only when a command is still active (`kill_active_run_on_exit`), keeping normal exits instant.
+- [x] **S6-20** (HIGH) — "Copy Last Run", the debug bundle, and the AI run-context read whichever console **sub-tab was currently active**, not the tab that ran the script: after opening a second console (+ Local / + Remote), they silently returned the wrong terminal's scrollback. TerminalPane now tracks the last-run tab and routes the run-output bridges (`get_run_output_line_count`, and `get_content` when called with a line count) to it.
 
 ---
 

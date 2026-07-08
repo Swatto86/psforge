@@ -984,8 +984,13 @@ function AppInner() {
       }
 
       // [DBG]: prompt indicates the PowerShell debugger is paused and ready
-      // for continue/step commands.
-      if (trimmed.includes("[DBG]:")) {
+      // for continue/step commands. Require the prompt's trailing ">>" too:
+      // a bare substring match let ordinary script output like
+      // `Write-Host "[DBG]: cache miss"` flip the UI into a fake paused state
+      // and queue inspector commands into the still-running script's stdin
+      // (S6-18). The real prompt is `[DBG]: PS C:\...>>` (or the nested
+      // `[DBG]: [Process:..]: ... >>` variants), all ending in ">>".
+      if (/\[DBG\]:.*>>/.test(trimmed)) {
         // Sync refs first: the dispatch won't be visible until the next
         // render, but refreshDebugInspector's guard runs right now (S6-14).
         isDebuggingRef.current = true;
@@ -1388,8 +1393,18 @@ function AppInner() {
           tab.content,
           tab.encoding,
         );
+        let savedBaseline = tab.content;
         if (saveWarning) {
           void writeTerminalNotice(`[PSForge] ${saveWarning}`, { reveal: true });
+          // A lossy encode (e.g. emoji saved as windows1252) means the bytes
+          // on disk no longer decode back to the buffer; keeping the buffer as
+          // the baseline would make fileChangedOnDisk flag our own save as an
+          // external change on every future save (S6-16).
+          try {
+            savedBaseline = (await cmd.readFileContent(filePath)).content;
+          } catch {
+            // Keep the buffer baseline; worst case is the old behavior.
+          }
         }
         const fileName = basename(filePath);
         dispatch({
@@ -1398,7 +1413,7 @@ function AppInner() {
           changes: {
             filePath,
             title: fileName,
-            savedContent: tab.content,
+            savedContent: savedBaseline,
             isDirty: false,
           },
         });
@@ -1668,10 +1683,18 @@ function AppInner() {
             tab.content,
             tab.encoding,
           );
+          let savedBaseline = tab.content;
           if (saveWarning) {
             void writeTerminalNotice(`[PSForge] ${saveWarning}`, {
               reveal: true,
             });
+            // Re-read after a lossy encode so the baseline matches disk and
+            // fileChangedOnDisk doesn't flag our own save (S6-16).
+            try {
+              savedBaseline = (await cmd.readFileContent(savePath)).content;
+            } catch {
+              // Keep the buffer baseline.
+            }
           }
           dispatch({
             type: "UPDATE_TAB",
@@ -1680,7 +1703,7 @@ function AppInner() {
               // Keep the friendly title; a scratch save is an internal backing
               // store, not a user-chosen save location (S3-17).
               filePath: savePath,
-              savedContent: tab.content,
+              savedContent: savedBaseline,
               isDirty: false,
             },
           });
@@ -2007,30 +2030,47 @@ function AppInner() {
     debugSessionRef.current = true;
     debugLocationRef.current = null;
 
-    // Auto-save before debugging when enabled.
+    // Auto-save before debugging when enabled. Same external-change guard as
+    // runScript's auto-save: never silently clobber edits made outside
+    // PSForge — skip the save and debug the in-memory buffer (S6-17).
     if (
       state.settings.autoSaveOnRun &&
       activeTab.isDirty &&
       activeTab.filePath
     ) {
-      try {
-        const saveWarning = await cmd.saveFileContent(
-          activeTab.filePath,
-          activeTab.content,
-          activeTab.encoding,
+      if (await fileChangedOnDisk(activeTab)) {
+        void writeTerminalNotice(
+          `[PSForge] Auto-save skipped: "${basename(activeTab.filePath)}" changed on disk since it was opened. Save manually to resolve.`,
+          { reveal: false },
         );
-        if (saveWarning) {
-          void writeTerminalNotice(`[PSForge] ${saveWarning}`, {
-            reveal: true,
+      } else {
+        try {
+          const saveWarning = await cmd.saveFileContent(
+            activeTab.filePath,
+            activeTab.content,
+            activeTab.encoding,
+          );
+          let savedBaseline = activeTab.content;
+          if (saveWarning) {
+            void writeTerminalNotice(`[PSForge] ${saveWarning}`, {
+              reveal: true,
+            });
+            // Re-read after a lossy encode so the baseline matches disk (S6-16).
+            try {
+              savedBaseline = (await cmd.readFileContent(activeTab.filePath))
+                .content;
+            } catch {
+              // Keep the buffer baseline.
+            }
+          }
+          dispatch({
+            type: "UPDATE_TAB",
+            id: activeTab.id,
+            changes: { savedContent: savedBaseline, isDirty: false },
           });
+        } catch {
+          // Save failed -- continue with in-memory content.
         }
-        dispatch({
-          type: "UPDATE_TAB",
-          id: activeTab.id,
-          changes: { savedContent: activeTab.content, isDirty: false },
-        });
-      } catch {
-        // Save failed -- continue with in-memory content.
       }
     }
 
@@ -2168,55 +2208,47 @@ function AppInner() {
     setParamPrompt,
     dispatch,
     writeTerminalNotice,
+    fileChangedOnDisk,
   ]);
 
-  const debugContinue = useCallback(async () => {
-    if (!state.isDebugging || !state.debugPaused) return;
-    dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
-    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
-    try {
-      await cmd.debugContinue();
-    } catch {
-      dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
-      void refreshDebugInspector();
-    }
-  }, [state.isDebugging, state.debugPaused, dispatch, refreshDebugInspector]);
+  /** Shared continue/step dispatcher. The pause refs are synced alongside
+   *  every dispatch: the error path calls refreshDebugInspector in the same
+   *  tick as its re-pause dispatch, so a state/effect-lagged ref would still
+   *  read paused=false and the refresh would silently no-op (S6-15 — same
+   *  mechanism S6-14 fixed at the breakpoint-hit sites). */
+  const sendDebugCommand = useCallback(
+    async (send: () => Promise<void>) => {
+      if (!isDebuggingRef.current || !debugPausedRef.current) return;
+      debugPausedRef.current = false;
+      dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
+      dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
+      try {
+        await send();
+      } catch {
+        debugPausedRef.current = true;
+        dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
+        void refreshDebugInspector();
+      }
+    },
+    [dispatch, refreshDebugInspector],
+  );
 
-  const debugStepOver = useCallback(async () => {
-    if (!state.isDebugging || !state.debugPaused) return;
-    dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
-    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
-    try {
-      await cmd.debugStepOver();
-    } catch {
-      dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
-      void refreshDebugInspector();
-    }
-  }, [state.isDebugging, state.debugPaused, dispatch, refreshDebugInspector]);
-
-  const debugStepInto = useCallback(async () => {
-    if (!state.isDebugging || !state.debugPaused) return;
-    dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
-    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
-    try {
-      await cmd.debugStepInto();
-    } catch {
-      dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
-      void refreshDebugInspector();
-    }
-  }, [state.isDebugging, state.debugPaused, dispatch, refreshDebugInspector]);
-
-  const debugStepOut = useCallback(async () => {
-    if (!state.isDebugging || !state.debugPaused) return;
-    dispatch({ type: "SET_DEBUG_STATE", debugPaused: false });
-    dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
-    try {
-      await cmd.debugStepOut();
-    } catch {
-      dispatch({ type: "SET_DEBUG_STATE", debugPaused: true });
-      void refreshDebugInspector();
-    }
-  }, [state.isDebugging, state.debugPaused, dispatch, refreshDebugInspector]);
+  const debugContinue = useCallback(
+    () => sendDebugCommand(cmd.debugContinue),
+    [sendDebugCommand],
+  );
+  const debugStepOver = useCallback(
+    () => sendDebugCommand(cmd.debugStepOver),
+    [sendDebugCommand],
+  );
+  const debugStepInto = useCallback(
+    () => sendDebugCommand(cmd.debugStepInto),
+    [sendDebugCommand],
+  );
+  const debugStepOut = useCallback(
+    () => sendDebugCommand(cmd.debugStepOut),
+    [sendDebugCommand],
+  );
 
   const runOrDebugScript = useCallback(() => {
     if (state.isDebugging && state.debugPaused) {

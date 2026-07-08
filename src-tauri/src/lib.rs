@@ -129,6 +129,13 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill a persistent host that is still mid-script (S6-19);
+                // idle hosts self-terminate when their stdin pipe closes.
+                tauri::async_runtime::block_on(commands::kill_active_run_on_exit());
+            }
+        });
 }

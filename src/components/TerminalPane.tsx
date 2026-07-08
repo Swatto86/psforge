@@ -889,6 +889,16 @@ export function TerminalPane() {
 
   const getActiveHandle = () => sessionRefs.current[activeTabId] ?? null;
 
+  /** Console tab that ran the most recent F5/paste-run script. "Copy Last
+   *  Run", the debug bundle, and the AI run-context must read THAT tab —
+   *  reading whichever sub-tab is currently active silently returns the
+   *  wrong terminal's content after the user opens/switches tabs (S6-20). */
+  const lastRunTabIdRef = useRef<string | null>(null);
+  const getRunHandle = () =>
+    lastRunTabIdRef.current
+      ? (sessionRefs.current[lastRunTabIdRef.current] ?? null)
+      : null;
+
   const addLocalTab = () => {
     tabCounterRef.current += 1;
     const id = `console-${tabCounterRef.current}`;
@@ -1043,6 +1053,7 @@ export function TerminalPane() {
       // Mark the run-start baseline AFTER any clear, right before the command
       // starts, via a reflow/eviction-safe xterm marker (S3-13).
       handle.markRunStart();
+      lastRunTabIdRef.current = tabId;
       if (reveal) {
         handle.focus();
       }
@@ -1084,10 +1095,17 @@ export function TerminalPane() {
       },
     ) => runCommandInLocalTerminal(command, options);
     w.__psforge_terminal_restart = () => getActiveHandle()?.restart();
+    // A lineCount argument only ever comes from run-output consumers (Copy
+    // Last Run, debug bundle, AI context) pairing it with the run-output line
+    // count below — both must read the tab that ran the script, not whichever
+    // console sub-tab is active (S6-20). The no-arg form stays active-tab:
+    // that's "Copy Output" of the console the user is looking at.
     w.__psforge_terminal_get_content = (lineCount?: number) =>
-      getActiveHandle()?.getContent(lineCount as number | undefined) ?? "";
+      lineCount !== undefined
+        ? ((getRunHandle() ?? getActiveHandle())?.getContent(lineCount) ?? "")
+        : (getActiveHandle()?.getContent() ?? "");
     w.__psforge_terminal_get_run_output_line_count = () =>
-      getActiveHandle()?.getRunOutputLineCount() ?? null;
+      getRunHandle()?.getRunOutputLineCount() ?? null;
     w.__psforge_terminal_is_ready = () => getActiveHandle()?.isReady() ?? false;
     w.__psforge_terminal_submit_current_input = () =>
       getActiveHandle()?.submitCurrentInput();

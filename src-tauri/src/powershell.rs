@@ -713,6 +713,11 @@ impl ProcessManager {
         Ok(())
     }
 
+    /// True while a run/debug command is currently executing in the session.
+    pub async fn has_active_command(&self) -> bool {
+        self.active_command.lock().await.is_some()
+    }
+
     /// Sends input to the active command's stdin (Read-Host/debugger support).
     pub async fn send_stdin(&self, input: &str) -> Result<(), AppError> {
         let is_active = {
