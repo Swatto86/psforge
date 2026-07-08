@@ -547,6 +547,7 @@ impl ProcessManager {
         exec_policy: &str,
         active_command: Arc<Mutex<Option<String>>>,
     ) -> Result<Arc<PersistentSession>, AppError> {
+        let ps_path = normalize_ps_path(ps_path);
         let bootstrap_script = persistent_host_bootstrap_script();
         let bootstrap_script_path = write_secure_temp_file(
             "psforge_host_bootstrap",
@@ -568,7 +569,7 @@ impl ProcessManager {
         ps_args.push("-File".to_string());
         ps_args.push(bootstrap_script_path.to_string_lossy().into_owned());
 
-        let mut child = Command::new(ps_path)
+        let mut child = Command::new(&ps_path)
             .args(ps_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -647,7 +648,7 @@ impl ProcessManager {
         Self::spawn_process_monitor(child.clone(), stdin_writer.clone(), event_tx.clone());
 
         Ok(Arc::new(PersistentSession {
-            ps_path: ps_path.to_string(),
+            ps_path,
             exec_policy: exec_policy.to_string(),
             child,
             stdin_writer,
@@ -756,6 +757,7 @@ impl ProcessManager {
         F: Fn(OutputLine) + Send + Sync + 'static,
     {
         validate_ps_path(ps_path)?;
+        let ps_path = normalize_ps_path(ps_path);
         let _exec_guard = self.execution_lock.lock().await;
         self.clear_last_variables_json();
         info!(
@@ -768,7 +770,7 @@ impl ProcessManager {
             // Force a fresh process-local runspace for this invocation.
             self.stop().await?;
         }
-        let session = self.ensure_session(ps_path, exec_policy).await?;
+        let session = self.ensure_session(&ps_path, exec_policy).await?;
 
         // Write the user script to a uniquely-named temp file.
         // Using -File instead of -Command removes the "inline PowerShell command"
@@ -1278,7 +1280,8 @@ fn resolve_working_dir(working_dir: &str) -> Result<String, AppError> {
 /// PATH. Bare-name lookup is done by scanning `$PATH` directly so the check
 /// works on Linux/macOS where `where.exe` does not exist.
 pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
-    let trimmed = ps_path.trim().trim_matches('"');
+    let normalized = normalize_ps_path(ps_path);
+    let trimmed = normalized.as_str();
     if trimmed.is_empty() {
         return Err(AppError {
             code: "INVALID_PS_PATH".to_string(),
@@ -1302,6 +1305,10 @@ pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+pub fn normalize_ps_path(ps_path: &str) -> String {
+    ps_path.trim().trim_matches('"').to_string()
 }
 
 /// Returns the first PATH entry containing `name` as an executable file.

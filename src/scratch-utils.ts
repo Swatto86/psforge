@@ -5,13 +5,16 @@ import type { EditorTab } from "./types";
 /** Build the on-disk path for an untitled tab's scratch file. */
 export function scratchPathForTab(scratchDir: string, tabId: string): string {
   const sep = scratchDir.includes("\\") ? "\\" : "/";
-  return `${scratchDir}${sep}${tabId}.ps1`;
+  return `${scratchDir.replace(/[/\\]+$/, "")}${sep}${tabId}.ps1`;
 }
 
 /** True when the tab's backing path lives under the scratch directory. */
 export function isScratchBackedTab(tab: EditorTab, scratchDir: string): boolean {
   if (!tab.filePath || !scratchDir) return false;
-  const normalizedScratch = scratchDir.replace(/\\/g, "/").toLowerCase();
+  const normalizedScratch = scratchDir
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .toLowerCase();
   const normalizedPath = tab.filePath.replace(/\\/g, "/").toLowerCase();
   return normalizedPath.startsWith(`${normalizedScratch}/`);
 }

@@ -63,8 +63,8 @@ fn ps_single_quoted(value: &str) -> String {
 /// `kill_on_drop` set. tokio defaults to leaving the child running when its
 /// future is dropped, so every helper wrapped in `tokio::time::timeout` would
 /// otherwise be orphaned (a live pwsh.exe, forever) each time it timed out.
-fn ps_command(ps_path: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(ps_path);
+fn ps_command(ps_path: &str) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(powershell::normalize_ps_path(ps_path));
     cmd.kill_on_drop(true);
     cmd
 }
@@ -118,6 +118,7 @@ pub async fn prepare_terminal_script_command(
         ps_path
     );
     powershell::validate_ps_path(&ps_path)?;
+    let ps_path = powershell::normalize_ps_path(&ps_path);
 
     let effective_working_dir = resolve_terminal_working_dir(&working_dir)?;
     let user_script_path =
@@ -128,7 +129,7 @@ pub async fn prepare_terminal_script_command(
             }
         })?;
 
-    let ps_path_ps = ps_single_quoted(ps_path.trim().trim_matches('"'));
+    let ps_path_ps = ps_single_quoted(&ps_path);
     let work_dir_ps = ps_single_quoted(&effective_working_dir);
     let user_script_path_lossy = user_script_path.to_string_lossy();
     let user_script_path_ps = ps_single_quoted(user_script_path_lossy.as_ref());
@@ -3342,6 +3343,20 @@ mod tests {
         assert_eq!(vars[0].name, "E2ENoRerunVar");
         assert_eq!(vars[0].value, "snapshot");
         assert_eq!(vars[0].type_name, "String");
+    }
+
+    #[tokio::test]
+    async fn ps_command_spawns_quote_wrapped_executable_path() {
+        let exe = std::env::current_exe().expect("test executable path");
+        let quoted = format!("\"{}\"", exe.to_string_lossy());
+
+        let output = ps_command(&quoted)
+            .arg("--help")
+            .output()
+            .await
+            .expect("quote-wrapped executable path should spawn");
+
+        assert!(output.status.success());
     }
 
     // ----- find_last_json tests -----

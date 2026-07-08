@@ -112,6 +112,14 @@ describe("sanitizePastedText", () => {
     );
   });
 
+  it("strips HTML prose wrappers with apostrophes before code blocks", () => {
+    const input =
+      "<p>Here's the script:</p>\n<pre><code>Get-Process\nStop-Process -Id 1234</code></pre>";
+    expect(sanitizePastedText(input, FULL_PASTE_SANITIZE_OPTIONS)).toBe(
+      "Get-Process\nStop-Process -Id 1234",
+    );
+  });
+
   it("converts <br> to newlines before gutter stripping (S3-14 regression)", () => {
     // <br> must split lines up front so the line-number gutter is then removed.
     const input = "1: Get-Process<br>2: Stop-Process<br>";

@@ -266,7 +266,7 @@ pub async fn start_terminal(
             })?
     } else {
         validate_ps_path(&shell_path)?;
-        shell_path
+        crate::powershell::normalize_ps_path(&shell_path)
     };
 
     let pty_system = native_pty_system();

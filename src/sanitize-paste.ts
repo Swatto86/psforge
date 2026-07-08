@@ -109,6 +109,10 @@ const SIMPLE_HTML_RE =
 const PROSE_LINE_RE =
   /^(?:\*{0,2}\s*)?(?:here(?:'s| is)|below (?:is|are)|copy(?: and)? (?:paste|the)|paste (?:this|the)|run (?:this|the following)?|the (?:following )?(?:script|code|powershell)|use (?:this|the following)|i(?:'ve| have) (?:written|provided|included)|note:|warning:|tip:|usage:|expected (?:output|result):)/i;
 
+function isProseLine(line: string): boolean {
+  return PROSE_LINE_RE.test(line.replace(SIMPLE_HTML_RE, "").trim());
+}
+
 function fixTypography(input: string): string {
   return input.replace(TYPOGRAPHY_PATTERN, (ch) => REPLACEMENTS[ch] ?? ch);
 }
@@ -259,7 +263,7 @@ function extractEmbeddedMarkdownFences(input: string): string {
   outside += input.slice(cursor);
   const hasNonProseOutside = outside
     .split("\n")
-    .some((line) => line.trim() !== "" && !PROSE_LINE_RE.test(line.trim()));
+    .some((line) => line.trim() !== "" && !isProseLine(line));
   if (hasNonProseOutside) return input;
 
   const psBlock = blocks.find((b) => PS_FENCE_LANG_RE.test(b.lang));
@@ -282,7 +286,7 @@ function stripProseWrappers(input: string): string {
       start++;
       continue;
     }
-    if (PROSE_LINE_RE.test(line)) {
+    if (isProseLine(line)) {
       start++;
       continue;
     }
@@ -295,7 +299,7 @@ function stripProseWrappers(input: string): string {
       end--;
       continue;
     }
-    if (PROSE_LINE_RE.test(line)) {
+    if (isProseLine(line)) {
       end--;
       continue;
     }
