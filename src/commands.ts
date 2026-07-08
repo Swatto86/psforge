@@ -3,6 +3,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
+  AiAssistantRequest,
+  AiAssistantResponse,
   AssociationStatus,
   BatchResult,
   CertInfo,
@@ -20,6 +22,14 @@ import type {
   Snippet,
   VariableInfo,
 } from "./types";
+
+/** Ask the configured AI provider for script help/code. */
+export async function askAi(
+  settings: AppSettings,
+  request: AiAssistantRequest,
+): Promise<AiAssistantResponse> {
+  return invoke<AiAssistantResponse>("ask_ai", { settings, request });
+}
 
 /** Execute a script under the debugger with optional line breakpoints. */
 export async function executeScriptDebug(

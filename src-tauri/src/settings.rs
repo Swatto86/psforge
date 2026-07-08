@@ -129,6 +129,42 @@ pub struct AppSettings {
     #[serde(default)]
     pub assistant_mode: bool,
 
+    /// AI provider used by the in-app Assistant tab.
+    #[serde(default = "default_ai_provider")]
+    pub ai_provider: String,
+
+    /// AI model name. Empty lets each provider use its cheapest default where possible.
+    #[serde(default)]
+    pub ai_model: String,
+
+    /// Reasoning effort: low|medium|high|xhigh|max, empty = provider default.
+    #[serde(default)]
+    pub ai_effort: String,
+
+    /// Anthropic API key for provider = "anthropic".
+    #[serde(default)]
+    pub ai_anthropic_api_key: String,
+
+    /// OpenRouter API key for provider = "openrouter".
+    #[serde(default)]
+    pub ai_openrouter_api_key: String,
+
+    /// Optional path to the Claude CLI binary.
+    #[serde(default)]
+    pub ai_claude_cli_path: String,
+
+    /// Optional Windows user profile whose Claude CLI login should be used.
+    #[serde(default)]
+    pub ai_claude_user_profile: String,
+
+    /// Optional path to the Kilo CLI binary.
+    #[serde(default)]
+    pub ai_kilo_cli_path: String,
+
+    /// Optional Windows user profile whose Kilo CLI login should be used.
+    #[serde(default)]
+    pub ai_kilo_cli_user_profile: String,
+
     /// Save the active file automatically before running (F5).
     /// Default matches the frontend (types.ts DEFAULT_SETTINGS) — a mismatch
     /// here silently overrides the frontend default on first launch.
@@ -337,6 +373,26 @@ fn default_split_position() -> f64 {
     28.0
 }
 
+fn default_ai_provider() -> String {
+    "anthropic".to_string()
+}
+
+fn normalize_ai_effort(value: &str) -> String {
+    match value.trim().to_lowercase().as_str() {
+        e @ ("low" | "medium" | "high" | "xhigh" | "max") => e.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn normalize_ai_provider(value: &str) -> String {
+    match value.trim().to_lowercase().as_str() {
+        "claude_cli" => "claude_cli".to_string(),
+        "openrouter" | "open_router" => "openrouter".to_string(),
+        "kilo_cli" | "kilocode" | "kilo" => "kilo_cli".to_string(),
+        _ => default_ai_provider(),
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -359,6 +415,15 @@ impl Default for AppSettings {
             run_after_paste_clean_format: true,
             run_after_sanitized_paste: false,
             assistant_mode: false,
+            ai_provider: default_ai_provider(),
+            ai_model: String::new(),
+            ai_effort: String::new(),
+            ai_anthropic_api_key: String::new(),
+            ai_openrouter_api_key: String::new(),
+            ai_claude_cli_path: String::new(),
+            ai_claude_user_profile: String::new(),
+            ai_kilo_cli_path: String::new(),
+            ai_kilo_cli_user_profile: String::new(),
             auto_save_on_run: true,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,
@@ -442,6 +507,8 @@ impl AppSettings {
         if !matches!(self.pssa_run_gate.as_str(), "off" | "warn" | "block") {
             self.pssa_run_gate = default_pssa_run_gate();
         }
+        self.ai_provider = normalize_ai_provider(&self.ai_provider);
+        self.ai_effort = normalize_ai_effort(&self.ai_effort);
         if !matches!(self.sidebar_position.as_str(), "left" | "right") {
             self.sidebar_position = default_sidebar_position();
         }
@@ -689,6 +756,21 @@ mod tests {
 
         let json = serde_json::to_string(&enabled).expect("must serialize");
         assert!(json.contains("\"showDebuggerTools\":true"));
+    }
+
+    #[test]
+    fn ai_settings_default_and_sanitize() {
+        let defaulted: AppSettings =
+            serde_json::from_str("{}").expect("empty document must parse to defaults");
+        assert_eq!(defaulted.ai_provider, "anthropic");
+        assert!(defaulted.ai_model.is_empty());
+
+        let mut settings: AppSettings =
+            serde_json::from_str(r#"{"aiProvider":"open_router","aiEffort":"HIGH"}"#)
+                .expect("settings parse");
+        settings.sanitize();
+        assert_eq!(settings.ai_provider, "openrouter");
+        assert_eq!(settings.ai_effort, "high");
     }
 
     #[test]

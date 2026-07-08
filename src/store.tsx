@@ -59,6 +59,7 @@ function migrateLoadedSettings(loaded: AppSettings): AppSettings {
 type BottomPanelTab =
   | "variables"
   | "terminal"
+  | "assistant"
   | "reference"
   | "debugger"
   | "problems"
@@ -80,6 +81,9 @@ function normalizeBottomPanelTab(tab: unknown): {
   }
   if (tab === "variables") {
     return { tab: "variables", referenceSubview: "problems" };
+  }
+  if (tab === "assistant") {
+    return { tab: "assistant", referenceSubview: "problems" };
   }
   if (tab === "reference") {
     return { tab: "reference", referenceSubview: "problems" };

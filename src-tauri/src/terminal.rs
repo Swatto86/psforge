@@ -241,7 +241,7 @@ fn get_terminals() -> &'static Mutex<HashMap<u64, Session>> {
 /// Emits Tauri events:
 /// - `terminal-output` with `{ sessionId, data }` UTF-8 chunks
 /// - `terminal-exit` with `{ sessionId, exitCode }` when session ends
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn start_terminal(
     window: Window,
     shell_path: String,
@@ -482,7 +482,7 @@ pub async fn start_terminal(
 }
 
 /// Writes raw input data to the active PTY session.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn terminal_write(session_id: Option<u64>, data: String) -> Result<(), AppError> {
     terminal_write_for_session(session_id, data).await
 }
@@ -533,13 +533,13 @@ async fn terminal_write_for_session(session_id: Option<u64>, data: String) -> Re
 }
 
 /// Compatibility shim: submits a full command followed by Enter.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn terminal_exec(session_id: Option<u64>, command: String) -> Result<(), AppError> {
     terminal_write_for_session(session_id, format!("{}\r", command)).await
 }
 
 /// Resizes the active PTY to match the xterm.js viewport.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn terminal_resize(
     session_id: Option<u64>,
     cols: u16,
@@ -582,7 +582,7 @@ pub async fn terminal_resize(
 }
 
 /// Stops the active terminal session and cleans up the child process.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn stop_terminal(session_id: Option<u64>) -> Result<(), AppError> {
     info!("stop_terminal called (session_id={:?})", session_id);
     if let Some(id) = session_id {

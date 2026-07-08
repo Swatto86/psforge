@@ -219,6 +219,24 @@ export interface AppSettings {
   runAfterSanitizedPaste: boolean;
   /** When true, paste/run/scratch settings match the Assistant mode profile. */
   assistantMode: boolean;
+  /** AI provider used by the Assistant pane. */
+  aiProvider: "anthropic" | "claude_cli" | "openrouter" | "kilo_cli";
+  /** AI model name; blank uses the provider default where supported. */
+  aiModel: string;
+  /** Provider reasoning effort. */
+  aiEffort: "" | "low" | "medium" | "high" | "xhigh" | "max";
+  /** Anthropic API key for provider = "anthropic". */
+  aiAnthropicApiKey: string;
+  /** OpenRouter API key for provider = "openrouter". */
+  aiOpenrouterApiKey: string;
+  /** Optional Claude CLI binary path. */
+  aiClaudeCliPath: string;
+  /** Optional Windows profile root for Claude CLI login reuse. */
+  aiClaudeUserProfile: string;
+  /** Optional Kilo CLI binary path. */
+  aiKiloCliPath: string;
+  /** Optional Windows profile root for Kilo CLI login reuse. */
+  aiKiloCliUserProfile: string;
 
   // ---- Execution ----
   /** Save the active file automatically before running (F5). */
@@ -304,6 +322,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
   runAfterPasteCleanFormat: true,
   runAfterSanitizedPaste: false,
   assistantMode: false,
+  aiProvider: "anthropic",
+  aiModel: "",
+  aiEffort: "",
+  aiAnthropicApiKey: "",
+  aiOpenrouterApiKey: "",
+  aiClaudeCliPath: "",
+  aiClaudeUserProfile: "",
+  aiKiloCliPath: "",
+  aiKiloCliUserProfile: "",
   autoSaveOnRun: true,
   clearOutputOnRun: true,
   persistRunspaceBetweenRuns: true,
@@ -471,6 +498,24 @@ export interface ModuleInstallSuggestion {
   repository: string;
   /** Ready-to-run install command for this module. */
   installCommand: string;
+}
+
+export type AiMode = "ask" | "write" | "fix";
+
+export interface AiAssistantRequest {
+  mode: AiMode;
+  question: string;
+  scriptPath: string;
+  script: string;
+  terminalOutput: string;
+  diagnostics: string;
+}
+
+export interface AiAssistantResponse {
+  answer: string;
+  code?: string | null;
+  provider: string;
+  model: string;
 }
 
 /** A code-signing certificate from the current user's certificate store. */

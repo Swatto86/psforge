@@ -1,18 +1,23 @@
 /// PSForge - Modern PowerShell Editor
 /// Main library module that registers all Tauri commands and plugins.
+pub mod ai;
 pub mod commands;
 pub mod errors;
 pub mod powershell;
 pub mod settings;
+#[cfg(not(test))]
 pub mod terminal;
 pub mod utils;
 pub mod win_compat;
 
+#[cfg(not(test))]
 use log::{info, warn};
+#[cfg(not(test))]
 use tauri::{Listener, Manager};
 
 /// Entry point for the Tauri application.
 /// Registers all plugins and command handlers.
+#[cfg(not(test))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -72,6 +77,7 @@ pub fn run() {
             commands::delete_scratch_file,
             commands::get_signing_certificates,
             commands::sign_script,
+            ai::ask_ai,
             terminal::start_terminal,
             terminal::terminal_write,
             terminal::terminal_exec,

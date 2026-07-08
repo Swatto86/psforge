@@ -30,6 +30,7 @@ type Section =
   | "editor"
   | "intellisense"
   | "execution"
+  | "ai"
   | "output"
   | "appearance"
   | "associations";
@@ -39,6 +40,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: "editor", label: "Editor" },
   { id: "intellisense", label: "IntelliSense" },
   { id: "execution", label: "Execution" },
+  { id: "ai", label: "AI" },
   { id: "output", label: "Output" },
   { id: "appearance", label: "Appearance" },
   { id: "associations", label: "File Associations" },
@@ -1434,6 +1436,149 @@ export function SettingsPanel() {
             </div>
           )}
 
+          {/* AI */}
+          {activeSection === "ai" && (
+            <div className="flex flex-col gap-4">
+              <SectionHeading>AI Assistant</SectionHeading>
+
+              <InfoBox warn>
+                API keys are stored in PSForge settings on this Windows account.
+                Claude CLI and Kilo CLI reuse your local logged-in CLI session.
+              </InfoBox>
+
+              <SettingRow
+                label="Provider"
+                tooltip="Uses the same provider styles as Eir: Anthropic API, Claude CLI, OpenRouter, or Kilo CLI."
+              >
+                <select
+                  data-testid="settings-ai-provider"
+                  value={state.settings.aiProvider}
+                  onChange={(e) =>
+                    updateSetting(
+                      "aiProvider",
+                      e.target.value as typeof state.settings.aiProvider,
+                    )
+                  }
+                  className="w-56 text-sm"
+                >
+                  <option value="anthropic">Anthropic API</option>
+                  <option value="claude_cli">Claude CLI</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="kilo_cli">Kilo CLI</option>
+                </select>
+              </SettingRow>
+
+              <SettingRow
+                label="Model"
+                tooltip="Blank uses the provider default where supported. Kilo CLI requires a model."
+              >
+                <TextInput
+                  value={state.settings.aiModel}
+                  onChange={(v) => updateSetting("aiModel", v)}
+                  placeholder="haiku, sonnet, openrouter/free, kilo/..."
+                  width="w-96"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Reasoning Effort"
+                tooltip="Optional provider reasoning effort."
+              >
+                <select
+                  value={state.settings.aiEffort}
+                  onChange={(e) =>
+                    updateSetting(
+                      "aiEffort",
+                      e.target.value as typeof state.settings.aiEffort,
+                    )
+                  }
+                  className="w-48 text-sm"
+                >
+                  <option value="">Provider default</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="xhigh">Extra high</option>
+                  <option value="max">Max</option>
+                </select>
+              </SettingRow>
+
+              <SectionHeading>API Providers</SectionHeading>
+
+              <SettingRow
+                label="Anthropic API Key"
+                tooltip="Used when Provider is Anthropic API."
+              >
+                <SecretInput
+                  value={state.settings.aiAnthropicApiKey}
+                  onChange={(v) => updateSetting("aiAnthropicApiKey", v)}
+                  placeholder="sk-ant-..."
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="OpenRouter API Key"
+                tooltip="Used when Provider is OpenRouter. If blank, PSForge also checks ~/.openrouter/config.json."
+              >
+                <SecretInput
+                  value={state.settings.aiOpenrouterApiKey}
+                  onChange={(v) => updateSetting("aiOpenrouterApiKey", v)}
+                  placeholder="sk-or-..."
+                />
+              </SettingRow>
+
+              <SectionHeading>CLI Providers</SectionHeading>
+
+              <SettingRow
+                label="Claude CLI Path"
+                tooltip="Optional. Blank auto-detects the standard Claude CLI path, then PATH."
+              >
+                <TextInput
+                  value={state.settings.aiClaudeCliPath}
+                  onChange={(v) => updateSetting("aiClaudeCliPath", v)}
+                  placeholder="C:\\Users\\You\\.local\\bin\\claude.exe"
+                  width="w-96"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Claude User Profile"
+                tooltip="Optional Windows profile root whose Claude CLI login should be used."
+              >
+                <TextInput
+                  value={state.settings.aiClaudeUserProfile}
+                  onChange={(v) => updateSetting("aiClaudeUserProfile", v)}
+                  placeholder="C:\\Users\\You"
+                  width="w-96"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Kilo CLI Path"
+                tooltip="Optional. Blank auto-detects the Kilo CLI install path, then PATH."
+              >
+                <TextInput
+                  value={state.settings.aiKiloCliPath}
+                  onChange={(v) => updateSetting("aiKiloCliPath", v)}
+                  placeholder="C:\\Users\\You\\AppData\\Roaming\\npm\\kilo.cmd"
+                  width="w-96"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Kilo User Profile"
+                tooltip="Optional Windows profile root whose Kilo CLI login should be used."
+              >
+                <TextInput
+                  value={state.settings.aiKiloCliUserProfile}
+                  onChange={(v) => updateSetting("aiKiloCliUserProfile", v)}
+                  placeholder="C:\\Users\\You"
+                  width="w-96"
+                />
+              </SettingRow>
+            </div>
+          )}
+
           {/* FILE ASSOCIATIONS */}
           {activeSection === "associations" && (
             <div className="flex flex-col gap-4">
@@ -1759,6 +1904,26 @@ function TextInput({
         </p>
       )}
     </div>
+  );
+}
+
+function SecretInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <input
+      type="password"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-96 text-sm"
+    />
   );
 }
 

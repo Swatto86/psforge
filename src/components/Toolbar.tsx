@@ -287,6 +287,16 @@ export function Toolbar({
         Copy for AI
       </button>
 
+      <button
+        type="button"
+        data-testid="toolbar-ai"
+        title="Open in-app AI assistant"
+        onClick={() => dispatch({ type: "SET_BOTTOM_TAB", tab: "assistant" })}
+        className="tb-action tb-action-accent"
+      >
+        AI
+      </button>
+
       <div className="tb-divider" />
 
       <div ref={overflowRef} className="relative">

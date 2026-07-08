@@ -1,7 +1,9 @@
 /// PSForge Tauri command handlers.
-/// Each function annotated with #[tauri::command] is callable from the frontend via invoke().
+/// Exported commands are callable from the frontend via invoke().
 use crate::errors::{AppError, BatchResult};
-use crate::powershell::{self, OutputLine, ProcessManager};
+#[cfg(not(test))]
+use crate::powershell::OutputLine;
+use crate::powershell::{self, ProcessManager};
 use crate::settings::{self, AppSettings};
 use crate::utils::{atomic_write, with_retry, write_secure_temp_file};
 #[cfg(not(windows))]
@@ -10,6 +12,7 @@ use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+#[cfg(not(test))]
 use tauri::{Emitter, Window};
 
 /// Maximum file size (bytes) that PSForge will read into memory (Rule 11).
@@ -28,6 +31,7 @@ const MODULE_TIMEOUT_SECS: u64 = 120;
 /// Global process manager for the running PowerShell instance.
 /// OnceLock ensures single initialization; Mutex inside ProcessManager handles concurrency.
 static PROCESS_MANAGER: OnceLock<ProcessManager> = OnceLock::new();
+#[cfg(not(test))]
 const DEBUG_BREAK_MARKER_PREFIX: &str = "<<PSF_DEBUG_BREAK>>";
 
 /// Returns the global ProcessManager, initializing it on first access.
@@ -35,6 +39,7 @@ fn pm() -> &'static ProcessManager {
     PROCESS_MANAGER.get_or_init(ProcessManager::new)
 }
 
+#[cfg(not(test))]
 fn parse_debug_break_marker(text: &str) -> Option<u32> {
     text.trim()
         .strip_prefix(DEBUG_BREAK_MARKER_PREFIX)?
@@ -43,6 +48,7 @@ fn parse_debug_break_marker(text: &str) -> Option<u32> {
         .ok()
 }
 
+#[cfg(not(test))]
 fn variables_marker_payload(text: &str) -> Option<&str> {
     text.trim()
         .strip_prefix(powershell::VARIABLES_MARKER_PREFIX)
@@ -99,7 +105,7 @@ fn resolve_terminal_working_dir(working_dir: &str) -> Result<String, AppError> {
 /// - optionally applies an execution policy override, and
 /// - removes the temp file afterwards so terminal-driven runs do not leave
 ///   stale wrapper scripts behind.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn prepare_terminal_script_command(
     ps_path: String,
     script: String,
@@ -163,7 +169,8 @@ pub async fn prepare_terminal_script_command(
 
 /// Executes a script in debugger mode with line breakpoints.
 /// Breakpoints are 1-indexed line numbers relative to the script content.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
+#[cfg(not(test))]
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_script_debug(
     window: Window,
@@ -225,45 +232,45 @@ pub async fn execute_script_debug(
 }
 
 /// Stops the currently running PowerShell process.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn stop_script() -> Result<(), AppError> {
     info!("stop_script called");
     pm().stop().await
 }
 
 /// Sends text to the running process's stdin (for Read-Host support).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn send_stdin(input: String) -> Result<(), AppError> {
     debug!("send_stdin called");
     pm().send_stdin(&input).await
 }
 
 /// Continue execution from the current debugger stop point.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn debug_continue() -> Result<(), AppError> {
     pm().send_stdin("c").await
 }
 
 /// Step over the next statement in the debugger.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn debug_step_over() -> Result<(), AppError> {
     pm().send_stdin("v").await
 }
 
 /// Step into the next statement in the debugger.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn debug_step_into() -> Result<(), AppError> {
     pm().send_stdin("s").await
 }
 
 /// Step out of the current scope in the debugger.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn debug_step_out() -> Result<(), AppError> {
     pm().send_stdin("o").await
 }
 
 /// Select debugger frame scope for subsequent inspector evaluations.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn debug_set_frame(frame_index: u32) -> Result<(), AppError> {
     pm().send_stdin(&format!("$global:__psforge_debug_scope = {}", frame_index))
         .await
@@ -368,7 +375,7 @@ pub struct ScriptParameterInfo {
 /// Windows env-var size limit is ~32 767 chars; scripts larger than that
 /// will be skipped (the command will return an empty list and the frontend
 /// will fall through to a normal run).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_script_parameters(
     ps_path: String,
     script: String,
@@ -461,7 +468,7 @@ pub async fn get_script_parameters(
 /// Returns all discovered PowerShell installations on the system.
 /// Runs discovery in a blocking thread pool so the async runtime is not stalled
 /// by `where.exe` invocations and filesystem scans (Rule 2 -- no blocking in async).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_ps_versions() -> Result<Vec<powershell::PsVersion>, AppError> {
     info!("get_ps_versions called");
     tokio::task::spawn_blocking(powershell::discover_ps_versions)
@@ -512,7 +519,7 @@ fn is_windows_powershell(ps_path: &str) -> bool {
 ///   checks, cutting enumeration time on PS 7 by ~50%.
 /// - Timeout raised to `MODULE_TIMEOUT_SECS` (120 s) to accommodate Windows
 ///   PowerShell 5.1 which ships with hundreds of in-box modules.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_installed_modules(ps_path: String) -> Result<Vec<ModuleInfo>, AppError> {
     info!("get_installed_modules called (ps_path={})", ps_path);
     powershell::validate_ps_path(&ps_path)?;
@@ -674,7 +681,7 @@ pub struct CommandHelpInfo {
 }
 
 /// Returns exported commands for a specific module.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_module_commands(
     ps_path: String,
     module_name: String,
@@ -749,7 +756,7 @@ pub async fn get_module_commands(
 const COMMAND_PARAMS_TIMEOUT_SECS: u64 = 30;
 
 /// Returns parameter metadata for a command/cmdlet/function.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_command_parameters(
     ps_path: String,
     command_name: String,
@@ -853,7 +860,7 @@ if ($__params.Count -eq 0) { '[]' } else { $__params | ConvertTo-Json -Compress 
 const COMMAND_HELP_TIMEOUT_SECS: u64 = 30;
 
 /// Returns context-sensitive help for a command/topic (Get-Help -Full).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_command_help(
     ps_path: String,
     command_name: String,
@@ -979,7 +986,7 @@ fn parse_variable_info_json(json_str: &str) -> Vec<VariableInfo> {
 ///
 /// This command no longer re-executes the user script. It simply returns the
 /// most recent snapshot emitted by the PowerShell host after a successful run.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_variables_after_run(
     _ps_path: String,
     _script: String,
@@ -1071,7 +1078,7 @@ pub struct FileContent {
 }
 
 /// Reads a file's content, detecting encoding.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn read_file_content(path: String) -> Result<FileContent, AppError> {
     debug!("read_file_content: {}", path);
 
@@ -1123,7 +1130,7 @@ pub async fn read_file_content(path: String) -> Result<FileContent, AppError> {
 /// (e.g. Windows-1252 replaced unencodable characters with '?') — mirrors the
 /// warning channel on the read path (`FileContent.warning`). The frontend
 /// surfaces it; a silent lossy save is permanent, invisible corruption.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn save_file_content(
     path: String,
     content: String,
@@ -1286,13 +1293,13 @@ fn decode_no_bom_fallback(bytes: &[u8]) -> (String, String, Option<String>) {
 // ---------------------------------------------------------------------------
 
 /// Loads user settings from disk.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn load_settings() -> Result<AppSettings, AppError> {
     settings::load()
 }
 
 /// Saves user settings to disk.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn save_settings(settings: AppSettings) -> Result<(), AppError> {
     settings::save(&settings)
 }
@@ -1442,7 +1449,7 @@ fn ensure_open_with_application(
 
 /// Registers PSForge as the handler for a specific file extension.
 /// Uses HKCU (per-user, no admin required).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn register_file_association(extension: String) -> Result<(), AppError> {
     info!("Registering file association for {}", extension);
     validate_extension(&extension)?;
@@ -1537,7 +1544,7 @@ pub async fn register_file_association(extension: String) -> Result<(), AppError
 }
 
 /// Unregisters the PSForge handler for a specific file extension.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn unregister_file_association(extension: String) -> Result<(), AppError> {
     info!("Unregistering file association for {}", extension);
     validate_extension(&extension)?;
@@ -1584,7 +1591,7 @@ const CONTEXT_MENU_VERB_PATH: &str = r"Software\Classes\*\shell\PSForge";
 /// Adds an "Open with PSForge" item (with the PSForge icon) to the Explorer
 /// right-click menu for all files. Uses HKCU so no administrator rights are
 /// required. This is opt-in via the Settings panel.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn register_context_menu() -> Result<(), AppError> {
     info!("Registering 'Open with PSForge' context menu");
 
@@ -1638,7 +1645,7 @@ pub async fn register_context_menu() -> Result<(), AppError> {
 }
 
 /// Removes the "Open with PSForge" right-click menu item.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn unregister_context_menu() -> Result<(), AppError> {
     info!("Unregistering 'Open with PSForge' context menu");
 
@@ -1658,7 +1665,7 @@ pub async fn unregister_context_menu() -> Result<(), AppError> {
 }
 
 /// Returns whether the "Open with PSForge" right-click menu item is registered.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_context_menu_status() -> Result<bool, AppError> {
     #[cfg(target_os = "windows")]
     {
@@ -1677,7 +1684,7 @@ pub async fn get_context_menu_status() -> Result<bool, AppError> {
 }
 
 /// Returns the current file association status for all PS extensions.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_file_association_status() -> Result<Vec<AssociationStatus>, AppError> {
     let mut statuses = Vec::new();
 
@@ -1777,7 +1784,7 @@ fn reg_err(e: std::io::Error) -> AppError {
 ///
 /// Returns `BatchResult<String>` where `items` contains extensions that were registered
 /// successfully and `errors` describes any partial failures.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn batch_register_file_associations(
     extensions: Vec<String>,
 ) -> Result<BatchResult<String>, AppError> {
@@ -1812,7 +1819,7 @@ pub async fn batch_register_file_associations(
 /// Accumulates per-item errors without aborting on first failure (Rule 11).
 ///
 /// Returns `BatchResult<String>` where `items` contains successfully unregistered extensions.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn batch_unregister_file_associations(
     extensions: Vec<String>,
 ) -> Result<BatchResult<String>, AppError> {
@@ -1861,7 +1868,7 @@ pub struct Snippet {
 }
 
 /// Returns built-in snippets plus any user-defined snippets.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_snippets() -> Result<Vec<Snippet>, AppError> {
     let user_path = settings::snippets_path()?;
     get_snippets_from(user_path)
@@ -1911,7 +1918,7 @@ pub fn get_snippets_from(user_path: std::path::PathBuf) -> Result<Vec<Snippet>, 
 }
 
 /// Saves user-defined snippets to disk.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn save_user_snippets(snippets: Vec<Snippet>) -> Result<(), AppError> {
     let dir = settings::settings_dir()?;
     if !dir.exists() {
@@ -1934,7 +1941,7 @@ pub fn save_user_snippets_to(path: &std::path::Path, snippets: &[Snippet]) -> Re
 
 /// Opens a file path in Windows Explorer, selecting the file.
 /// Opens the parent directory on non-Windows platforms.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn reveal_in_explorer(path: String) -> Result<(), AppError> {
     info!("reveal_in_explorer: {}", path);
 
@@ -2225,7 +2232,7 @@ pub struct ModuleInstallSuggestion {
 ///
 /// This ensures the frontend always gets a typed result without crashing the editor
 /// (Rule 11 graceful degradation).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn analyze_script(
     ps_path: String,
     script_content: String,
@@ -2327,7 +2334,7 @@ if (-not $d) {{ '[]'; exit }}\
 ///
 /// Silently returns an empty list on timeout, process failure, or parse error
 /// (Rule 11 graceful degradation - completions must never crash the editor).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_completions(
     ps_path: String,
     script_content: String,
@@ -2475,7 +2482,7 @@ if (Get-Command -Name Find-Module -ErrorAction SilentlyContinue) {
 ///
 /// This is used by the integrated terminal to provide actionable "command not
 /// found" hints without hard-failing if discovery tooling/network is missing.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn suggest_modules_for_command(
     ps_path: String,
     command_name: String,
@@ -2564,7 +2571,7 @@ const ALLOWED_POLICIES: &[&str] = &[
 
 /// Returns the current PowerShell execution policy for the current user scope.
 /// Silently returns "Unknown" when the ps_path is inaccessible or PS fails.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
     info!("get_execution_policy called");
     let ps_path = ps_path.trim();
@@ -2621,7 +2628,7 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
 
 /// Sets the PowerShell execution policy for the current user scope (HKCU -- no admin needed).
 /// Only the values in ALLOWED_POLICIES are accepted (Rule 11 -- input validation).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(), AppError> {
     info!("set_execution_policy called with policy={}", policy);
 
@@ -2691,7 +2698,7 @@ pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(),
 ///
 /// The frontend calls this once on mount and, if a path is returned, opens
 /// the file immediately so the user sees the file they clicked on.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub fn get_launch_path() -> Option<String> {
     // Skip argv[0] (the executable path).  The first real argument is the
     // file path passed by Windows when the app is the registered handler.
@@ -2728,7 +2735,7 @@ const FORMAT_TIMEOUT_SECS: u64 = 10;
 /// case the original content is returned unchanged so the editor never
 /// surfaces a user-visible error for a missing optional module
 /// (Rule 11 graceful degradation).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn format_script(ps_path: String, script_content: String) -> Result<String, AppError> {
     debug!("format_script called ({} chars)", script_content.len());
     powershell::validate_ps_path(&ps_path)?;
@@ -2817,7 +2824,7 @@ const PROFILE_TIMEOUT_SECS: u64 = 10;
 /// Creates the profile's parent directory if it does not already exist so
 /// the frontend can immediately open (or create) the file.  The profile
 /// file itself is NOT created here; that is left to the user.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_ps_profile_path(ps_path: String) -> Result<String, AppError> {
     info!("get_ps_profile_path called");
     powershell::validate_ps_path(&ps_path)?;
@@ -2886,7 +2893,7 @@ pub async fn get_ps_profile_path(ps_path: String) -> Result<String, AppError> {
 }
 
 /// Returns the scratch directory path for auto-saved untitled scripts, creating it if needed.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_scratch_dir() -> Result<String, AppError> {
     let dir = settings::scratch_dir()?;
     if !dir.exists() {
@@ -2904,7 +2911,7 @@ pub struct ScratchFileInfo {
 }
 
 /// Lists `.ps1` scratch files (tab id is the filename stem).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn list_scratch_files() -> Result<Vec<ScratchFileInfo>, AppError> {
     let dir = settings::scratch_dir()?;
     if !dir.exists() {
@@ -2965,7 +2972,7 @@ fn scratch_delete_target(path: &str, scratch_dir: &std::path::Path) -> Option<st
 }
 
 /// Deletes a scratch file when the user discards an untitled buffer.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn delete_scratch_file(path: String) -> Result<(), AppError> {
     let scratch_dir = settings::scratch_dir()?;
     let target = scratch_delete_target(&path, &scratch_dir).ok_or_else(|| AppError {
@@ -3004,7 +3011,7 @@ const CERT_ENUM_TIMEOUT_SECS: u64 = 10;
 ///
 /// Returns an empty list when no certificates are found or the query
 /// fails (graceful degradation -- the signing UI disables itself when the list is empty).
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn get_signing_certificates(ps_path: String) -> Result<Vec<CertInfo>, AppError> {
     info!("get_signing_certificates called");
     let ps_path = ps_path.trim();
@@ -3094,7 +3101,7 @@ const SIGN_TIMEOUT_SECS: u64 = 30;
 /// user's My certificate store (validated before reaching PowerShell).
 ///
 /// Returns the `SignatureStatus` string (e.g. "Valid") on success.
-#[tauri::command]
+#[cfg_attr(not(test), tauri::command)]
 pub async fn sign_script(
     ps_path: String,
     script_path: String,

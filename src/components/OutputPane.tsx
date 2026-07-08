@@ -17,6 +17,7 @@ import { TerminalPane } from "./TerminalPane";
 import { ShowCommandPane } from "./ShowCommandPane";
 import { HelpPane } from "./HelpPane";
 import { ReferencePane } from "./ReferencePane";
+import { AssistantPane } from "./AssistantPane";
 import type { ReferenceSubview } from "../types";
 
 function breakpointLabel(bp: DebugBreakpoint): string {
@@ -75,6 +76,7 @@ function formatProblemLocation(problem: PssaDiagnostic): string {
 
 type BottomTabId =
   | "terminal"
+  | "assistant"
   | "variables"
   | "reference"
   | "debugger"
@@ -260,6 +262,7 @@ export function OutputPane({
 
   const primaryBottomTabs: BottomTabDescriptor[] = [
     { id: "terminal", label: "Terminal" },
+    { id: "assistant", label: "AI" },
     { id: "variables", label: "Variables" },
   ];
 
@@ -322,6 +325,13 @@ export function OutputPane({
           chipLabel:
             state.variables.length === 0 ? "No variables" : variableCountText,
           chipTone: state.variables.length === 0 ? "default" : "accent",
+        };
+      case "assistant":
+        return {
+          title: "AI Assistant",
+          subtitle: "Ask questions, write scripts, and prepare fixes for the active editor.",
+          chipLabel: state.settings.aiProvider,
+          chipTone: "accent",
         };
       case "reference":
         return {
@@ -404,6 +414,8 @@ export function OutputPane({
         return state.variables.length === 0
           ? "Run a script to capture variables here."
           : `Showing ${formatCount(filteredVars.length, "match")} from ${variableCountText}.`;
+      case "assistant":
+        return "AI uses the active script, PSSA diagnostics, and last run output as context.";
       case "debugger":
         return !state.isDebugging
           ? "Start a debug session to inspect locals and watches here."
@@ -689,6 +701,12 @@ export function OutputPane({
                 "Cascadia Code, Consolas, monospace"
               }
             />
+          </div>
+        )}
+
+        {state.bottomPanelTab === "assistant" && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <AssistantPane />
           </div>
         )}
 
