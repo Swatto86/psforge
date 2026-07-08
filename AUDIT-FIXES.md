@@ -29,7 +29,7 @@ Five lenses (correctness, lost-access, contract, edge-cases, docs-consistency) o
 - [x] **S5-7** — No serde round-trip test for the new `disable_ai` field (same failure shape as the historical `showDebuggerTools` persistence bug). Added `disable_ai_round_trips` plus an `ask_ai_refuses_when_disabled` guard test.
 - [x] **S5-8** — `KeyboardShortcutPanel` header comment still referenced the removed toolbar "?" button. Updated to Help → Keyboard Shortcuts.
 - [x] **S5-9** — Shortcut panel rows pointed at removed toolbar icon buttons ("Toolbar: Profile/Print/Sign button"). Now reference the File menu entries.
-- [x] **S5-10** — Welcome pane step 3 hardcoded "Copy for AI" even with AI disabled. Label and hint now follow `disableAi`.
+- [x] **S5-10** — Welcome pane step 3 hardcoded "Copy for AI" even with AI disabled. Label and hint now follow `disableAi`. *(Superseded in v1.4.1: "Copy for AI" is an external-AI clipboard workflow, independent of the in-app assistant, so it keeps its name everywhere regardless of the toggle.)*
 
 ---
 

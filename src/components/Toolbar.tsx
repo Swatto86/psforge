@@ -70,7 +70,6 @@ export function Toolbar({
 }: ToolbarProps) {
   const { state, dispatch, activeTab } = useAppState();
   const showDebuggerTools = state.settings.showDebuggerTools === true;
-  const aiEnabled = state.settings.disableAi !== true;
   const hasSavableTabs = state.tabs.some(
     (t) => t.tabType !== "welcome" && (t.isDirty || !t.filePath),
   );
@@ -448,6 +447,9 @@ export function Toolbar({
         Stop
       </button>
 
+      {/* "Copy for AI" targets EXTERNAL AI chats (copy bundle → paste into a
+          conversation), so it stays — with this name — even when the in-app
+          AI assistant is disabled. */}
       <button
         type="button"
         data-testid="toolbar-copy-bundle"
@@ -459,20 +461,8 @@ export function Toolbar({
         <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
           <path d="M4 2a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1v1a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h1V2zm1 1h6a1 1 0 0 1 1 1v8h1V2H5v1zM3 4v10h8V4H3z" />
         </svg>
-        {aiEnabled ? "Copy for AI" : "Copy Debug Bundle"}
+        Copy for AI
       </button>
-
-      {aiEnabled && (
-        <button
-          type="button"
-          data-testid="toolbar-ai"
-          title="Open in-app AI assistant"
-          onClick={() => dispatch({ type: "SET_BOTTOM_TAB", tab: "assistant" })}
-          className="tb-action tb-action-accent"
-        >
-          AI
-        </button>
-      )}
 
       <div className="tb-divider" />
 

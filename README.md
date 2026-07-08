@@ -14,7 +14,7 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.4.0](https://github.com/Swatto86/psforge/releases/tag/v1.4.0)
+**Current version:** [1.4.1](https://github.com/Swatto86/psforge/releases/tag/v1.4.1)
 
 ## AI-assisted workflow (paste → run → debug)
 
@@ -88,7 +88,7 @@ More shortcuts: **Help → Keyboard Shortcuts** (`Ctrl+F1`).
 ## Other capabilities
 
 - Classic **File / Edit / View / Help** menu bar — every action is discoverable with its shortcut listed
-- In-app **AI assistant** (Ask / Write / Fix) using Anthropic API, Claude CLI, OpenRouter, or Kilo CLI — or turn every AI feature off with one switch in **Settings → AI**
+- In-app **AI assistant** (Ask / Write / Fix) using Anthropic API, Claude CLI, OpenRouter, or Kilo CLI — or turn it off entirely with one switch in **Settings → AI** ("Copy for AI" keeps working; it's clipboard-only, for external AI chats)
 - Multi-tab editor with session restore
 - PowerShell 5.1 / 7 detection and selection
 - Mandatory `param()` prompt before run

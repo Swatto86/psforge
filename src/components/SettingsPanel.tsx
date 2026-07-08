@@ -1440,7 +1440,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="AI Features"
-                tooltip="Master switch for every AI feature in PSForge. When off, the AI assistant tab and toolbar button are hidden and no AI requests can be sent."
+                tooltip="Master switch for the in-app AI assistant. When off, the AI tab is hidden and no AI requests can be sent from PSForge."
               >
                 <div className="flex flex-col gap-1">
                   <Toggle
@@ -1451,9 +1451,11 @@ export function SettingsPanel() {
                     label="Enable AI features"
                   />
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Turn off to completely disable AI: the assistant pane,
-                    the toolbar AI button, and all provider requests. API keys
-                    below are kept but unused.
+                    Turn off to completely disable the in-app assistant: the
+                    AI tab disappears and no AI requests leave PSForge. API
+                    keys below are kept but unused. &quot;Copy for AI&quot;
+                    stays available — it only copies to the clipboard for
+                    external AI chats.
                   </p>
                 </div>
               </SettingRow>
