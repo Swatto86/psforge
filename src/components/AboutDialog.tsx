@@ -15,6 +15,14 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppState } from "../store";
 import { useFocusTrap } from "./use-focus-trap";
 
+export function normalizeAppVersion(version: string | null | undefined): string {
+  return version?.trim() || "unknown";
+}
+
+export function formatAppVersionLabel(version: string): string {
+  return version === "unknown" ? "Version unknown" : `v${version}`;
+}
+
 export function AboutDialog() {
   const { dispatch } = useAppState();
   const [version, setVersion] = useState<string>("...");
@@ -27,8 +35,8 @@ export function AboutDialog() {
   // Fetch the app version from Tauri once on mount.
   useEffect(() => {
     getVersion()
-      .then((v) => setVersion(v))
-      .catch(() => setVersion("1.2.2"));
+      .then((v) => setVersion(normalizeAppVersion(v)))
+      .catch(() => setVersion(normalizeAppVersion(null)));
   }, []);
 
   // Close on Escape key.
@@ -113,7 +121,7 @@ export function AboutDialog() {
             marginBottom: "16px",
           }}
         >
-          v{version}
+          {formatAppVersionLabel(version)}
         </div>
 
         {/* Description */}
@@ -127,7 +135,7 @@ export function AboutDialog() {
             marginBottom: "16px",
           }}
         >
-          A powerful PowerShell IDE for Windows.{"\n"}
+          A powerful desktop PowerShell IDE.{"\n"}
           Syntax highlighting, IntelliSense,{"\n"}
           an integrated terminal and more.
         </div>

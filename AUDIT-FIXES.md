@@ -8,6 +8,34 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 4 (v1.3.5) — user-facing bug sweep + regression sweep
+
+Focused pass over release/version surfaces, About, Settings file associations, and existing gates.
+
+### MEDIUM
+
+- [x] **S4-1** — README advertised `1.2.18` while app metadata was `1.3.4`, sending users to the wrong release tag. Added a release-metadata regression test covering `package.json`, `package-lock.json`, Tauri config, Cargo metadata, Cargo lock, and README current-version link; bumped all release metadata to `1.3.5`.
+- [x] **S4-2** — About dialog fell back to hard-coded `1.2.2` when Tauri version lookup failed, showing a stale version in degraded/runtime-test contexts. It now normalizes empty/missing versions to `unknown`.
+
+### LOW
+
+- [x] **S4-3** — About dialog described PSForge as Windows-only even though the release table and build metadata include macOS/Linux artifacts. Copy now says "desktop PowerShell IDE."
+- [x] **S4-4** — Settings → File Associations could show the requested context-menu toggle state if register/unregister failed and the status refresh also failed. The toggle now keeps the previous state when refresh is unavailable, and only updates from a real refreshed boolean.
+
+### Regression pass
+
+- [x] **R4-1** — New `release-metadata.test.ts` catches future version drift before release.
+- [x] **R4-2** — New `ui-regressions.test.ts` covers About version fallback and context-menu toggle refresh fallback.
+- [x] **R4-3** — Diff review caught the initial fallback label rendering as `vunknown`; the dialog now renders `Version unknown`.
+- [x] **R4-4** — Production build caught Node-type usage in the release metadata test; rewired it to Vite JSON/raw imports so `tsc` stays clean without adding dependencies.
+
+### Verification
+
+- `bash scripts/ci-local.sh` could not run because WSL has no installed distro on this host.
+- Manual equivalent passed: `npm ci`, `npm test`, `npm run build`, `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`.
+
+---
+
 ## Sweep 3 (v1.3.1) — multi-agent bug sweep, 32 findings, all fixed
 
 116-agent audit (15 scoped finders → dedup → 3-lens adversarial verify → completeness critic). All 32 findings survived verification and are fixed. Compile-verified (vitest + tsc/vite build + `cargo fmt`/`clippy --all-targets -D warnings`/`cargo test`); not live-run verified.

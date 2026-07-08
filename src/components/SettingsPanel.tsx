@@ -84,6 +84,13 @@ function isLikelyAbsolutePath(path: string): boolean {
   );
 }
 
+export function contextMenuStateAfterRefresh(
+  previous: boolean,
+  refreshed: boolean | null | undefined,
+): boolean {
+  return typeof refreshed === "boolean" ? refreshed : previous;
+}
+
 export function SettingsPanel() {
   const { state, dispatch } = useAppState();
   const [activeSection, setActiveSection] = useState<Section>("editor");
@@ -336,6 +343,7 @@ export function SettingsPanel() {
   const toggleContextMenu = async (enable: boolean) => {
     if (contextMenuBusy) return;
     setContextMenuBusy(true);
+    const previous = contextMenuEnabled;
     try {
       if (enable) {
         await cmd.registerContextMenu();
@@ -347,7 +355,10 @@ export function SettingsPanel() {
     } finally {
       // Always re-read so the toggle mirrors what is actually registered,
       // even if the register/unregister call failed partway through.
-      setContextMenuEnabled(await cmd.getContextMenuStatus().catch(() => enable));
+      const refreshed = await cmd.getContextMenuStatus().catch(() => null);
+      setContextMenuEnabled(
+        contextMenuStateAfterRefresh(previous, refreshed),
+      );
       setContextMenuBusy(false);
     }
   };
