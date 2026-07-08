@@ -220,15 +220,6 @@ function platformHomeFallback(): string {
   return "/";
 }
 
-function appendRunRecord(
-  settings: AppSettings,
-  record: ScriptRunRecord,
-): AppSettings {
-  const cap = settings.maxRecentRuns ?? 20;
-  const recentRuns = [record, ...(settings.recentRuns ?? [])].slice(0, cap);
-  return { ...settings, recentRuns };
-}
-
 function resolveFallbackWorkDir(activeTab: EditorTab): string {
   return (
     (activeTab.filePath ? dirname(activeTab.filePath) : "") ||
@@ -795,10 +786,24 @@ function AppInner() {
     );
   }, [state.debugSelectedFrame]);
 
+  // Live mirrors of the debug pause state. The break handlers below call
+  // refreshDebugInspector in the SAME tick as the SET_DEBUG_STATE dispatch;
+  // a state-closure guard would still see the pre-dispatch values and no-op
+  // on every single pause, so the inspector never auto-populated (S6-14).
+  // The handlers update these refs synchronously alongside the dispatch.
+  const isDebuggingRef = useRef(state.isDebugging);
+  const debugPausedRef = useRef(state.debugPaused);
+  useEffect(() => {
+    isDebuggingRef.current = state.isDebugging;
+  }, [state.isDebugging]);
+  useEffect(() => {
+    debugPausedRef.current = state.debugPaused;
+  }, [state.debugPaused]);
+
   const evaluateDebugWatch = useCallback(
     async (expression: string, frameIndex?: number) => {
       const expr = expression.trim();
-      if (!expr || !state.isDebugging || !state.debugPaused) return;
+      if (!expr || !isDebuggingRef.current || !debugPausedRef.current) return;
       const scope = normalizeFrameIndex(
         frameIndex ?? debugSelectedFrameRef.current,
       );
@@ -811,29 +816,26 @@ function AppInner() {
         });
       }
     },
-    [state.isDebugging, state.debugPaused, dispatch],
+    [dispatch],
   );
 
-  const refreshDebugInspector = useCallback(
-    async (frameIndex?: number) => {
-      if (!state.isDebugging || !state.debugPaused) return;
-      const scope = normalizeFrameIndex(
-        frameIndex ?? debugSelectedFrameRef.current,
-      );
-      try {
-        await cmd.sendStdin(buildDebugLocalsCommand(scope));
-        await cmd.sendStdin(DEBUG_STACK_COMMAND);
-        for (const watch of debugWatchesRef.current) {
-          const expr = watch.expression.trim();
-          if (!expr) continue;
-          await cmd.sendStdin(buildWatchEvalCommand(expr, scope));
-        }
-      } catch {
-        // Best-effort only; debugger execution should continue.
+  const refreshDebugInspector = useCallback(async (frameIndex?: number) => {
+    if (!isDebuggingRef.current || !debugPausedRef.current) return;
+    const scope = normalizeFrameIndex(
+      frameIndex ?? debugSelectedFrameRef.current,
+    );
+    try {
+      await cmd.sendStdin(buildDebugLocalsCommand(scope));
+      await cmd.sendStdin(DEBUG_STACK_COMMAND);
+      for (const watch of debugWatchesRef.current) {
+        const expr = watch.expression.trim();
+        if (!expr) continue;
+        await cmd.sendStdin(buildWatchEvalCommand(expr, scope));
       }
-    },
-    [state.isDebugging, state.debugPaused],
-  );
+    } catch {
+      // Best-effort only; debugger execution should continue.
+    }
+  }, []);
 
   const runCommandInTerminal = useCallback(
     async (
@@ -984,6 +986,10 @@ function AppInner() {
       // [DBG]: prompt indicates the PowerShell debugger is paused and ready
       // for continue/step commands.
       if (trimmed.includes("[DBG]:")) {
+        // Sync refs first: the dispatch won't be visible until the next
+        // render, but refreshDebugInspector's guard runs right now (S6-14).
+        isDebuggingRef.current = true;
+        debugPausedRef.current = true;
         dispatch({
           type: "SET_DEBUG_STATE",
           isDebugging: true,
@@ -1017,6 +1023,9 @@ function AppInner() {
       const line = event.payload;
       const hasLine = Number.isFinite(line) && line >= 1;
       debugLocationRef.current = hasLine ? { line, column: 1 } : null;
+      // Sync refs first so the immediate refresh below passes its guard (S6-14).
+      isDebuggingRef.current = true;
+      debugPausedRef.current = true;
       dispatch({
         type: "SET_DEBUG_STATE",
         isDebugging: true,
@@ -1046,6 +1055,8 @@ function AppInner() {
       // Clear the synchronous run guard so subsequent runs are possible.
       runGuardRef.current = false;
       debugSessionRef.current = false;
+      isDebuggingRef.current = false;
+      debugPausedRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
       dispatch({
         type: "SET_DEBUG_STATE",
@@ -1297,11 +1308,34 @@ function AppInner() {
     };
   }, [openFile, openWelcomePage, dispatch]);
 
+  /** True when the tab's backing file on disk no longer matches the content
+   *  PSForge last loaded or saved — i.e. it was modified externally (git
+   *  pull, another editor) and a blind save would clobber those changes
+   *  (S6-10). Missing/unreadable files return false: nothing to clobber. */
+  const fileChangedOnDisk = useCallback(
+    async (tab: EditorTab): Promise<boolean> => {
+      if (!tab.filePath) return false;
+      try {
+        const onDisk = await cmd.readFileContent(tab.filePath);
+        return onDisk.content !== tab.savedContent;
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+
   const saveTab = useCallback(
     async (
       tab: EditorTab,
     ): Promise<{ saved: boolean; cancelled: boolean; path?: string }> => {
-      let filePath = tab.filePath;
+      // A scratch backing path is internal, not a user-chosen save location:
+      // saving must offer Save As, never silently write the UUID file, retitle
+      // the tab to it, or push it into recent files (S6-8).
+      const scratchDir = scratchDirRef.current;
+      const isScratchPath =
+        !!scratchDir && !!tab.filePath && isScratchBackedTab(tab, scratchDir);
+      let filePath = isScratchPath ? "" : tab.filePath;
 
       if (!filePath) {
         // Save As dialog for untitled tabs.
@@ -1324,6 +1358,28 @@ function AppInner() {
         } catch {
           return { saved: false, cancelled: true };
         }
+      }
+
+      // Saving over the file we originally loaded: refuse to silently clobber
+      // changes made outside PSForge (S6-10). Save As to a different path is
+      // covered by the OS dialog's own overwrite confirmation.
+      if (filePath === tab.filePath && (await fileChangedOnDisk(tab))) {
+        let overwrite = false;
+        try {
+          const { confirm } = await import("@tauri-apps/plugin-dialog");
+          overwrite = await confirm(
+            `"${basename(filePath)}" has changed on disk since it was opened in PSForge.\n\nOverwrite the external changes?`,
+            {
+              title: "PSForge",
+              kind: "warning",
+              okLabel: "Overwrite",
+              cancelLabel: "Cancel",
+            },
+          );
+        } catch {
+          overwrite = false;
+        }
+        if (!overwrite) return { saved: false, cancelled: true };
       }
 
       try {
@@ -1353,13 +1409,24 @@ function AppInner() {
           dispatch({ type: "SET_WORKING_DIR", dir });
         }
 
+        // The content now lives at a user-chosen path; drop the scratch file
+        // so it can't resurface as a bogus recovery candidate on a later
+        // launch (mirrors finalizeCloseTab's save-as cleanup).
+        if (isScratchPath && tab.filePath !== filePath) {
+          try {
+            await cmd.deleteScratchFile(tab.filePath);
+          } catch {
+            // best-effort cleanup
+          }
+        }
+
         return { saved: true, cancelled: false, path: filePath };
       } catch (err) {
         console.error(`saveTab failed for "${tab.title}":`, err);
         return { saved: false, cancelled: false };
       }
     },
-    [dispatch],
+    [dispatch, fileChangedOnDisk],
   );
 
   const saveCurrentFile = useCallback(async () => {
@@ -1379,16 +1446,21 @@ function AppInner() {
   }, [activeTab, saveTab, state.settings, dispatch]);
 
   const saveAllFiles = useCallback(async () => {
-    // Save all code tabs that are dirty OR unsaved (untitled).
+    // Save all code tabs that are dirty OR have no user-chosen path. A scratch
+    // backing path is internal, so scratch-backed tabs count as unsaved even
+    // when auto-save has marked them clean (S6-8).
+    const scratchDir = scratchDirRef.current;
+    const hasUserPath = (tab: EditorTab) =>
+      !!tab.filePath && !(scratchDir && isScratchBackedTab(tab, scratchDir));
     const targets = state.tabs.filter(
-      (tab) => tab.tabType !== "welcome" && (tab.isDirty || !tab.filePath),
+      (tab) => tab.tabType !== "welcome" && (tab.isDirty || !hasUserPath(tab)),
     );
     if (targets.length === 0) return;
 
     // Save existing-path tabs first so one unsaved-tab Save-As cancel does not
     // prevent already-named files from being written.
-    const withPath = targets.filter((tab) => !!tab.filePath);
-    const withoutPath = targets.filter((tab) => !tab.filePath);
+    const withPath = targets.filter(hasUserPath);
+    const withoutPath = targets.filter((tab) => !hasUserPath(tab));
     const orderedTargets = [...withPath, ...withoutPath];
 
     const savedPaths: string[] = [];
@@ -1559,6 +1631,13 @@ function AppInner() {
     });
     dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
 
+    // Identity of the tab actually being executed, captured up front so the
+    // completion callback can't mislabel the run when the user switches tabs
+    // while the script is running (S6-3). Updated below if auto-save-on-run
+    // assigns a scratch path to a previously untitled tab.
+    let recordScriptPath = tab.filePath;
+    const recordTabTitle = tab.title;
+
     // Auto-save before running when the setting is enabled (Rule 11 -- pre-flight).
     if (state.settings.autoSaveOnRun && tab.isDirty) {
       let savePath = tab.filePath;
@@ -1567,6 +1646,20 @@ function AppInner() {
         if (scratchDir) {
           savePath = scratchPathForTab(scratchDir, tab.id);
         }
+      }
+      // Auto-save must not silently clobber external edits either (S6-10);
+      // skip the save (the run still uses the in-memory buffer) and tell the
+      // user why the tab is still dirty.
+      if (
+        savePath &&
+        savePath === tab.filePath &&
+        (await fileChangedOnDisk(tab))
+      ) {
+        void writeTerminalNotice(
+          `[PSForge] Auto-save skipped: "${basename(savePath)}" changed on disk since it was opened. Save manually to resolve.`,
+          { reveal: false },
+        );
+        savePath = "";
       }
       if (savePath) {
         try {
@@ -1591,6 +1684,7 @@ function AppInner() {
               isDirty: false,
             },
           });
+          recordScriptPath = savePath;
         } catch {
           // Save failed -- continue running with unsaved content
         }
@@ -1721,8 +1815,6 @@ function AppInner() {
       exitCode: number | null,
       workingDirForRecord: string,
     ) => {
-      const tabForRecord = activeTabRef.current;
-      if (!tabForRecord) return;
       const durationMs = Math.max(
         0,
         Math.round(performance.now() - runStartedAt),
@@ -1732,15 +1824,15 @@ function AppInner() {
         result: { exitCode, durationMs },
       });
       dispatch({
-        type: "SET_SETTINGS",
-        settings: appendRunRecord(state.settings, {
-          scriptPath: tabForRecord.filePath,
-          tabTitle: tabForRecord.title,
+        type: "APPEND_RUN_RECORD",
+        record: {
+          scriptPath: recordScriptPath,
+          tabTitle: recordTabTitle,
           exitCode,
           durationMs,
           runAt: new Date().toISOString(),
           workingDir: workingDirForRecord,
-        }),
+        },
       });
     };
 
@@ -1790,6 +1882,7 @@ function AppInner() {
     dispatch,
     runCommandInTerminal,
     writeTerminalNotice,
+    fileChangedOnDisk,
   ]);
 
   const rerunFromRecord = useCallback(
@@ -2470,8 +2563,9 @@ function AppInner() {
   useEffect(() => {
     void cmd.getScratchDir().then((dir) => {
       scratchDirRef.current = dir;
+      dispatch({ type: "SET_SCRATCH_DIR", dir });
     });
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     if (!state.settingsLoaded || scratchRecoveryCheckedRef.current) return;
@@ -2505,7 +2599,12 @@ function AppInner() {
 
     const activeCandidates = new Set<string>();
     for (const tab of state.tabs) {
-      if (tab.tabType === "welcome" || tab.filePath || !tab.isDirty) continue;
+      if (tab.tabType === "welcome" || !tab.isDirty) continue;
+      // Untitled tabs and tabs already backed by a scratch file both need
+      // continuous protection; skipping any tab with a filePath made the
+      // auto-save a one-shot — everything typed after the first save was
+      // never written to disk again (S6-1).
+      if (tab.filePath && !isScratchBackedTab(tab, scratchDir)) continue;
       activeCandidates.add(tab.id);
 
       const existing = scratchSaveTimersRef.current.get(tab.id);

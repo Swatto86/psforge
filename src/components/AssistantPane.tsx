@@ -29,6 +29,10 @@ export function AssistantPane() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [code, setCode] = useState("");
+  /** Tab the current `code` response was generated for. Applying an AI fix to
+   *  whichever tab happens to be active at click time would overwrite an
+   *  unrelated script if the user switched tabs while waiting (S6-4). */
+  const [codeTabId, setCodeTabId] = useState<string | null>(null);
   const [meta, setMeta] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,6 +61,7 @@ export function AssistantPane() {
     setError("");
     setAnswer("");
     setCode("");
+    setCodeTabId(null);
     setMeta("");
     try {
       const terminalOutput = getLastRunOutput();
@@ -73,6 +78,7 @@ export function AssistantPane() {
       });
       setAnswer(response.answer);
       setCode(response.code ?? "");
+      setCodeTabId(codeTab?.id ?? null);
       setMeta(`${response.provider} · ${response.model}`);
     } catch (err) {
       const message =
@@ -85,17 +91,24 @@ export function AssistantPane() {
     }
   };
 
+  /** Tab the response targets, if it is still open. */
+  const targetTab = codeTabId
+    ? state.tabs.find((t) => t.id === codeTabId)
+    : undefined;
+
   const replaceScript = () => {
     if (!code.trim()) return;
-    if (codeTab) {
+    if (targetTab) {
       dispatch({
         type: "UPDATE_TAB",
-        id: codeTab.id,
+        id: targetTab.id,
         changes: {
           content: code,
-          isDirty: code !== codeTab.savedContent,
+          isDirty: code !== targetTab.savedContent,
         },
       });
+      // Reveal the tab that was modified so the change is never silent.
+      dispatch({ type: "SET_ACTIVE_TAB", id: targetTab.id });
       return;
     }
     const id = newTabId();
@@ -113,6 +126,10 @@ export function AssistantPane() {
         tabType: "code",
       },
     });
+    // The new tab now holds this response: rebind so the button flips to
+    // "Replace Script" (no duplicate tabs on repeat clicks) and Insert at
+    // Cursor re-enables instead of pointing at a tab that may be gone.
+    setCodeTabId(id);
   };
 
   const insertAtCursor = () => {
@@ -213,9 +230,22 @@ export function AssistantPane() {
           <>
             <div className="flex flex-wrap gap-2">
               <button onClick={replaceScript} className="bottom-pane-action bottom-pane-action-primary">
-                {hasCodeTab ? "Replace Script" : "New Script"}
+                {targetTab ? "Replace Script" : "New Script"}
               </button>
-              <button onClick={insertAtCursor} className="bottom-pane-action" disabled={!hasCodeTab}>
+              {/* psforge-insert lands in whichever editor is mounted, so only
+                  offer it while the response's own tab is the active one. */}
+              <button
+                onClick={insertAtCursor}
+                className="bottom-pane-action"
+                disabled={
+                  !hasCodeTab || (codeTabId !== null && codeTab?.id !== codeTabId)
+                }
+                title={
+                  codeTabId !== null && codeTab?.id !== codeTabId
+                    ? "Switch back to the tab this response was generated for to insert"
+                    : undefined
+                }
+              >
                 Insert at Cursor
               </button>
             </div>

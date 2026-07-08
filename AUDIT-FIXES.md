@@ -8,6 +8,41 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 6 (v1.4.2) — full-repo multi-agent sweep, 8 findings (8 fixed)
+
+Four parallel lenses over the whole codebase (Rust backend, frontend logic, React components, TS↔Rust contracts), each finding adversarially verified against the source before fixing. The contracts lens returned no findings (all 50 commands, 6 events, 58 settings fields, capabilities, and CI/release workflows verified clean).
+
+### HIGH
+
+- [x] **S6-1** — Scratch auto-save was a one-shot: once a dirty untitled tab got its scratch `filePath`, the auto-save effect skipped it forever (`tab.filePath` guard), so everything typed after the first 1.2 s debounce was never re-written to disk and crash recovery restored stale content. Guard now keeps scratch-backed tabs as candidates (`isScratchBackedTab`).
+- [x] **S6-2** — `recordRunOutcome` dispatched `SET_SETTINGS` built from the settings snapshot captured when Run was pressed, so any setting changed while a script was running was silently reverted at run completion. Replaced with a delta `APPEND_RUN_RECORD` reducer action that appends against current state.
+- [x] **S6-3** — `recordRunOutcome` attributed the run to `activeTabRef.current` at *completion* time: switching tabs mid-run mislabeled the Recent-Runs entry with the other tab's path/title, and its "Re-run" then executed the wrong script. Run tab identity (title + path, including a freshly assigned scratch path) is now snapshotted at run start.
+- [x] **S6-4** — Assistant "Replace Script"/"Insert at Cursor" applied the AI response to whichever tab was active at click time, not the tab the code was generated for — switching tabs while waiting for the response then clicking Replace overwrote an unrelated script. Responses now carry the source tab id; Replace targets (and reveals) that tab, Insert is disabled until it is active again, and a closed source tab falls back to "New Script".
+
+### MEDIUM
+
+- [x] **S6-5** — `get_installed_modules` log truncation used byte-index slicing (`&trimmed[..min(200)]`), which panics when byte 200 lands inside a multi-byte UTF-8 char (e.g. non-ASCII usernames in module paths) on the JSON-parse-failure path. Now uses the char-safe `char_preview` (moved to `utils.rs`, shared with `ai.rs`); regression test added.
+- [x] **S6-6** — `start_terminal` inserted the session into `TERMINALS` *after* spawning the PTY reader thread; a child that died instantly could have the reader's `stop_session` run before the insert, permanently leaking the session (ConPTY handle + bootstrap temp script). Session is now registered before the reader thread starts.
+
+### LOW
+
+- [x] **S6-7** — Help pane `lookup` had no request-ordering guard: a slow `Get-Help` resolving after a newer lookup overwrote the newer result with stale content. Added a generation counter (same pattern as Sidebar's `loadGenRef`).
+
+### Found during fix verification
+
+- [x] **S6-8** — `saveTab` treated the internal scratch backing path as a user-chosen location: Ctrl+S on a scratch-backed tab silently wrote the UUID file, retitled the tab to the UUID filename (defeating S3-17), and pushed the scratch path into Recent Files; worse, a *clean* scratch-backed tab had File → Save disabled entirely, leaving no way to Save As. `saveTab` now treats scratch paths as unsaved (Save As dialog + scratch cleanup after saving elsewhere, mirroring `finalizeCloseTab`), `saveAllFiles` includes clean scratch tabs, and the Toolbar save gates use the shared scratch-aware predicate (`scratchDir` is now exposed in app state).
+
+### Round 2 — verification workflow over the fixes + fresh failure-mode lenses (7 finders, paired adversarial refuters; 6 findings, 6 fixed)
+
+- [x] **S6-9** (MEDIUM) — The S6-4 fix's "New Script" fallback never rebound `codeTabId` to the tab it just created: repeat clicks duplicated tabs, and after the source tab was closed, Insert at Cursor stayed permanently disabled with an unsatisfiable tooltip. The fallback now calls `setCodeTabId(id)`.
+- [x] **S6-10** (HIGH) — Saving silently clobbered files modified outside PSForge (git pull, another editor): no mtime/content check existed anywhere. `saveTab` now compares on-disk content against the loaded baseline and asks before overwriting external changes; the auto-save-on-run path skips its save with a terminal notice instead of clobbering.
+- [x] **S6-11** (MEDIUM) — UTF-32 LE's BOM (`FF FE 00 00`) begins with the UTF-16 LE BOM, so UTF-32 files were misdetected, decoded as NUL-interleaved garbage with **no warning** (the odd-byte guard can never fire — the payload is always even), and destroyed on save. UTF-32 LE/BE BOMs are now detected first, decoded properly, and surfaced with a convert-to-UTF-8 warning; regression tests added.
+- [x] **S6-12** (MEDIUM) — Settings persisted only through a 1 s debounce with no flush on exit; any change made within a second of closing the window was dropped (previously known and fixed only for the sidebar toggles). A `CloseRequested` handler now flushes the pending settings write before completing the close (`core:window:allow-destroy`/`allow-close` capabilities added).
+- [x] **S6-13** (HIGH) — All ~14 ad-hoc PowerShell helper spawns (param inspection, Get-Help, module enumeration, PSSA, completions, formatter, signing, …) decoded stdout as UTF-8, but a piped windowless PowerShell writes the OEM code page (empirically CP850 on this machine, both PS 5.1 and 7): every non-ASCII character in help text, param messages, module paths, or PSSA messages arrived as U+FFFD. All helper scripts now run through a shared `ps_utf8_script` wrapper that forces `[Console]::OutputEncoding` to UTF-8 — the same fix the persistent host and terminal bootstrap already had.
+- [x] **S6-14** (HIGH) — `refreshDebugInspector`'s guard read `state.isDebugging`/`state.debugPaused` from a stale closure; the break handlers invoke it in the same tick as the pause dispatch, so the guard failed on **every** breakpoint and Locals/Call Stack/Watches never auto-populated (manual Refresh was the only path). The guard now reads live refs that the break/complete handlers update synchronously alongside their dispatches.
+
+---
+
 ## Sweep 5 (v1.4.0) — multi-agent sweep of the menu-bar rework + AI kill-switch, 10 findings (8 fixed, 2 rejected)
 
 Five lenses (correctness, lost-access, contract, edge-cases, docs-consistency) over the UI-rework diff, each finding adversarially verified.

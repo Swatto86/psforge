@@ -2,7 +2,7 @@
  *  Resolves command help via Get-Help and renders it in a dedicated bottom tab.
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { CommandHelpInfo } from "../types";
@@ -30,8 +30,13 @@ export function HelpPane() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<CommandHelpInfo | null>(null);
 
+  // Generation counter so a slow Get-Help that resolves after a newer lookup
+  // can't overwrite the newer result (same pattern as Sidebar's loadGenRef).
+  const lookupGenRef = useRef(0);
+
   const lookup = useCallback(
     async (raw: string) => {
+      const gen = ++lookupGenRef.current;
       const q = raw.trim();
       setQuery(q);
       setError("");
@@ -43,11 +48,13 @@ export function HelpPane() {
       setLoading(true);
       try {
         const help = await cmd.getCommandHelp(state.selectedPsPath, q);
+        if (gen !== lookupGenRef.current) return;
         setResult(help);
         if (!help) {
           setError(`No help found for "${q}".`);
         }
       } catch (err) {
+        if (gen !== lookupGenRef.current) return;
         const message =
           err && typeof err === "object" && "message" in err
             ? String((err as { message: unknown }).message)
@@ -55,7 +62,9 @@ export function HelpPane() {
         setResult(null);
         setError(message);
       } finally {
-        setLoading(false);
+        if (gen === lookupGenRef.current) {
+          setLoading(false);
+        }
       }
     },
     [state.selectedPsPath],

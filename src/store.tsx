@@ -24,6 +24,7 @@ import type {
   PssaDiagnostic,
   ReferenceSubview,
   LastRunResult,
+  ScriptRunRecord,
 } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import * as cmd from "./commands";
@@ -344,6 +345,10 @@ export interface AppState {
   workingDir: string;
   settings: AppSettings;
   settingsLoaded: boolean;
+  /** Scratch auto-save directory (empty until resolved on startup). Lets
+   *  components distinguish internal scratch backing paths from user-chosen
+   *  file paths (S6-8). */
+  scratchDir: string;
   variables: VariableInfo[];
   modules: ModuleInfo[];
   modulesLoading: boolean;
@@ -427,6 +432,7 @@ const initialState: AppState = {
   workingDir: "",
   settings: DEFAULT_SETTINGS,
   settingsLoaded: false,
+  scratchDir: "",
   variables: [],
   modules: [],
   modulesLoading: false,
@@ -472,7 +478,9 @@ type Action =
   | { type: "SET_SELECTED_PS"; path: string }
   | { type: "SET_WORKING_DIR"; dir: string }
   | { type: "SET_SETTINGS"; settings: AppSettings }
+  | { type: "APPEND_RUN_RECORD"; record: ScriptRunRecord }
   | { type: "SET_SETTINGS_LOADED"; loaded: boolean }
+  | { type: "SET_SCRATCH_DIR"; dir: string }
   | { type: "SET_VARIABLES"; variables: VariableInfo[] }
   | { type: "SET_MODULES"; modules: ModuleInfo[] }
   | { type: "SET_MODULES_LOADING"; loading: boolean }
@@ -604,8 +612,24 @@ function reducer(state: AppState, action: Action): AppState {
     case "SET_SETTINGS":
       return { ...state, settings: action.settings };
 
+    // Appends against the CURRENT settings rather than a caller-supplied
+    // snapshot: a run can take arbitrarily long, and dispatching a whole
+    // settings object captured at run start would revert every setting the
+    // user changed while the script was executing (S6-2).
+    case "APPEND_RUN_RECORD": {
+      const cap = state.settings.maxRecentRuns ?? 20;
+      const recentRuns = [
+        action.record,
+        ...(state.settings.recentRuns ?? []),
+      ].slice(0, cap);
+      return { ...state, settings: { ...state.settings, recentRuns } };
+    }
+
     case "SET_SETTINGS_LOADED":
       return { ...state, settingsLoaded: action.loaded };
+
+    case "SET_SCRATCH_DIR":
+      return { ...state, scratchDir: action.dir };
 
     case "SET_VARIABLES":
       return { ...state, variables: action.variables };
@@ -1151,12 +1175,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // (e.g. AppData unwritable, disk full). We dedupe the notice so a
   // recurring failure does not spam the terminal on every change.
   const lastSettingsErrorRef = useRef<string | null>(null);
+  // Latest settings object not yet confirmed written to disk. The close
+  // handler below flushes it: without that, any change made within the 1 s
+  // debounce window before quitting was silently dropped (S6-12).
+  const pendingSettingsRef = useRef<AppSettings | null>(null);
   const saveSettingsDebounced = useCallback(
     debounce((s: AppSettings) => {
       cmd
         .saveSettings(s)
         .then(() => {
           lastSettingsErrorRef.current = null;
+          // Only clear when no newer change superseded this one.
+          if (pendingSettingsRef.current === s) {
+            pendingSettingsRef.current = null;
+          }
         })
         .catch((err) => {
           const message =
@@ -1190,9 +1222,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (state.settingsLoaded) {
+      pendingSettingsRef.current = state.settings;
       saveSettingsDebounced(state.settings);
     }
   }, [state.settings, state.settingsLoaded, saveSettingsDebounced]);
+
+  // Flush any pending (debounced, not-yet-written) settings when the window
+  // is asked to close, then complete the close ourselves (S6-12). When
+  // nothing is pending the close proceeds untouched.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const win = getCurrentWindow();
+        const stop = await win.onCloseRequested(async (event) => {
+          const pending = pendingSettingsRef.current;
+          if (!pending) return;
+          event.preventDefault();
+          pendingSettingsRef.current = null;
+          try {
+            await cmd.saveSettings(pending);
+          } catch {
+            // Best effort — never hold the window hostage over a failed save.
+          }
+          // destroy() skips re-firing close-requested; fall back to close()
+          // (pending is now null, so the handler lets it through).
+          void win.destroy().catch(() => void win.close());
+        });
+        if (disposed) stop();
+        else unlisten = stop;
+      } catch {
+        // Window API unavailable (tests / browser preview): debounce-only.
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Keep selected shell valid when the available PowerShell list changes.
   useEffect(() => {

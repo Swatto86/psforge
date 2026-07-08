@@ -7,6 +7,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { basename } from "../path-utils";
+import { isScratchBackedTab } from "../scratch-utils";
 import { useAppState } from "../store";
 import type { ThemeName } from "../types";
 
@@ -70,8 +71,15 @@ export function Toolbar({
 }: ToolbarProps) {
   const { state, dispatch, activeTab } = useAppState();
   const showDebuggerTools = state.settings.showDebuggerTools === true;
+  // A scratch backing path is internal, not a user-chosen save location, so
+  // scratch-backed tabs always need Save (As) — even when auto-save has
+  // marked them clean (S6-8).
+  const needsSave = (t: (typeof state.tabs)[number]) =>
+    t.isDirty ||
+    !t.filePath ||
+    (!!state.scratchDir && isScratchBackedTab(t, state.scratchDir));
   const hasSavableTabs = state.tabs.some(
-    (t) => t.tabType !== "welcome" && (t.isDirty || !t.filePath),
+    (t) => t.tabType !== "welcome" && needsSave(t),
   );
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
@@ -121,8 +129,7 @@ export function Toolbar({
 
   const hasCodeTab = !!activeTab && activeTab.tabType !== "welcome";
   const pasteRuns = state.settings.runAfterPasteCleanFormat !== false;
-  const canSave =
-    hasCodeTab && !!activeTab && (activeTab.isDirty || !activeTab.filePath);
+  const canSave = hasCodeTab && !!activeTab && needsSave(activeTab);
   const recentFiles = state.settings.recentFiles.slice(0, MENU_RECENT_LIMIT);
 
   /** Runs a menu action and closes the menu. */

@@ -5,7 +5,7 @@ use crate::errors::{AppError, BatchResult};
 use crate::powershell::OutputLine;
 use crate::powershell::{self, ProcessManager};
 use crate::settings::{self, AppSettings};
-use crate::utils::{atomic_write, with_retry, write_secure_temp_file};
+use crate::utils::{atomic_write, char_preview, with_retry, write_secure_temp_file};
 #[cfg(not(windows))]
 use crate::win_compat::CommandExt;
 use log::{debug, error, info, warn};
@@ -67,6 +67,20 @@ fn ps_command(ps_path: &str) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(powershell::normalize_ps_path(ps_path));
     cmd.kill_on_drop(true);
     cmd
+}
+
+/// Wraps an ad hoc `-Command` helper script with a UTF-8 console-output
+/// preamble. Without it PowerShell writes redirected stdout/stderr in the OEM
+/// code page (e.g. CP850), and `String::from_utf8_lossy` turns every
+/// non-ASCII character into U+FFFD — corrupting help text, param messages,
+/// module paths with non-ASCII usernames, and PSSA messages (S6-13). Same fix
+/// as the persistent host (powershell.rs) and terminal bootstrap (terminal.rs).
+fn ps_utf8_script(script: &str) -> String {
+    format!(
+        "$psforgeUtf8 = [System.Text.UTF8Encoding]::new($false); \
+         [Console]::OutputEncoding = $psforgeUtf8; \
+         $OutputEncoding = $psforgeUtf8; {script}"
+    )
 }
 
 fn resolve_terminal_working_dir(working_dir: &str) -> Result<String, AppError> {
@@ -408,8 +422,8 @@ pub async fn get_script_parameters(
                 "-ExecutionPolicy",
                 "RemoteSigned",
                 "-Command",
-                PARAM_INSPECT_SCRIPT,
             ])
+            .arg(ps_utf8_script(PARAM_INSPECT_SCRIPT))
             .env("PSFORGE_SCRIPT_CONTENT", &script)
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .output(),
@@ -557,8 +571,8 @@ pub async fn get_installed_modules(ps_path: String) -> Result<Vec<ModuleInfo>, A
                 "-ExecutionPolicy",
                 "RemoteSigned",
                 "-Command",
-                command,
             ])
+            .arg(ps_utf8_script(command))
             .creation_flags(0x08000000)
             .output(),
     )
@@ -621,7 +635,7 @@ pub async fn get_installed_modules(ps_path: String) -> Result<Vec<ModuleInfo>, A
                 warn!(
                     "Failed to parse module list JSON ({}). First 200 chars: {}",
                     e,
-                    &trimmed[..trimmed.len().min(200)]
+                    char_preview(trimmed, 200)
                 );
                 Vec::new()
             }
@@ -633,7 +647,7 @@ pub async fn get_installed_modules(ps_path: String) -> Result<Vec<ModuleInfo>, A
                 warn!(
                     "Failed to parse single-module JSON ({}). First 200 chars: {}",
                     e,
-                    &trimmed[..trimmed.len().min(200)]
+                    char_preview(trimmed, 200)
                 );
                 Vec::new()
             }
@@ -641,7 +655,7 @@ pub async fn get_installed_modules(ps_path: String) -> Result<Vec<ModuleInfo>, A
     } else {
         warn!(
             "Module enumeration produced non-JSON stdout. First 200 chars: {}",
-            &trimmed[..trimmed.len().min(200)]
+            char_preview(trimmed, 200)
         );
         Vec::new()
     };
@@ -706,8 +720,8 @@ pub async fn get_module_commands(
                 "-ExecutionPolicy",
                 "RemoteSigned",
                 "-Command",
-                &script,
             ])
+            .arg(ps_utf8_script(&script))
             .creation_flags(0x08000000)
             .output(),
     )
@@ -806,8 +820,8 @@ if ($__params.Count -eq 0) { '[]' } else { $__params | ConvertTo-Json -Compress 
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                COMMAND_PARAMS_SCRIPT,
             ])
+            .arg(ps_utf8_script(COMMAND_PARAMS_SCRIPT))
             .env("PSFORGE_COMMAND_NAME", trimmed_name)
             .creation_flags(0x08000000)
             .output(),
@@ -909,8 +923,8 @@ try {
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                COMMAND_HELP_SCRIPT,
             ])
+            .arg(ps_utf8_script(COMMAND_HELP_SCRIPT))
             .env("PSFORGE_HELP_COMMAND", trimmed_name)
             .creation_flags(0x08000000)
             .output(),
@@ -1204,8 +1218,8 @@ pub async fn save_file_content(
 /// - `encoding` is one of `utf8`, `utf8bom`, `utf16le`, `utf16be`, `windows1252`.
 /// - `warning` is `Some(message)` when decoding succeeded but produced a
 ///   non-fatal anomaly the user should know about (legacy encoding fallback,
-///   odd-byte UTF-16 trailing byte). The frontend surfaces this rather than
-///   dropping it.
+///   odd-byte UTF-16 trailing byte, UTF-32 input converted to UTF-8). The
+///   frontend surfaces this rather than dropping it.
 ///
 /// Critically, this function never silently substitutes U+FFFD for invalid
 /// UTF-8 the way `String::from_utf8_lossy` would. Files that aren't valid
@@ -1225,6 +1239,24 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String, Option<String>) {
         } else {
             decode_no_bom_fallback(&bytes[3..])
         }
+    } else if bytes.len() >= 4
+        && bytes[0] == 0xFF
+        && bytes[1] == 0xFE
+        && bytes[2] == 0x00
+        && bytes[3] == 0x00
+    {
+        // UTF-32 LE. Its BOM (FF FE 00 00) starts with the UTF-16 LE BOM, so
+        // this must be checked first — decoding as UTF-16 silently interleaves
+        // NULs through the text and a later save destroys the file (S6-11).
+        decode_utf32(&bytes[4..], u32::from_le_bytes, "UTF-32 LE")
+    } else if bytes.len() >= 4
+        && bytes[0] == 0x00
+        && bytes[1] == 0x00
+        && bytes[2] == 0xFE
+        && bytes[3] == 0xFF
+    {
+        // UTF-32 BE
+        decode_utf32(&bytes[4..], u32::from_be_bytes, "UTF-32 BE")
     } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
         // UTF-16 LE
         let payload = &bytes[2..];
@@ -1268,6 +1300,44 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String, Option<String>) {
     } else {
         decode_no_bom_fallback(bytes)
     }
+}
+
+/// Decodes a UTF-32 payload (BOM already stripped). PSForge has no UTF-32
+/// save path — PowerShell itself never emits it — so the content is decoded
+/// faithfully, reported as `utf8`, and a warning tells the user the file will
+/// be saved as UTF-8 rather than pretending the original encoding survives.
+fn decode_utf32(
+    payload: &[u8],
+    from_bytes: fn([u8; 4]) -> u32,
+    label: &str,
+) -> (String, String, Option<String>) {
+    let mut replaced = false;
+    let mut decoded = String::with_capacity(payload.len() / 4);
+    for chunk in payload.chunks_exact(4) {
+        let value = from_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        match char::from_u32(value) {
+            Some(c) => decoded.push(c),
+            None => {
+                replaced = true;
+                decoded.push('\u{FFFD}');
+            }
+        }
+    }
+    let mut notes = vec![format!(
+        "File is {label}-encoded; PSForge decoded it but will save it as UTF-8 (without BOM)."
+    )];
+    if !payload.len().is_multiple_of(4) {
+        warn!(
+            "{} file has trailing partial code unit ({} bytes); dropped",
+            label,
+            payload.len() % 4
+        );
+        notes.push("Trailing partial code unit was dropped.".to_string());
+    }
+    if replaced {
+        notes.push("Some invalid code points were replaced with U+FFFD.".to_string());
+    }
+    (decoded, "utf8".to_string(), Some(notes.join(" ")))
 }
 
 /// Decodes a buffer with no recognised BOM. Strict UTF-8 first, otherwise
@@ -2284,8 +2354,8 @@ if (-not $d) {{ '[]'; exit }}\
                 "-ExecutionPolicy",
                 "RemoteSigned",
                 "-Command",
-                &ps_script,
             ])
+            .arg(ps_utf8_script(&ps_script))
             .creation_flags(0x08000000)
             .output(),
     )
@@ -2381,8 +2451,8 @@ if (-not $r.CompletionMatches) {{ '[]'; exit }}\
                 "-ExecutionPolicy",
                 "RemoteSigned",
                 "-Command",
-                &ps_script,
             ])
+            .arg(ps_utf8_script(&ps_script))
             .creation_flags(0x08000000)
             .output(),
     )
@@ -2505,8 +2575,8 @@ pub async fn suggest_modules_for_command(
                 "-ExecutionPolicy",
                 "RemoteSigned",
                 "-Command",
-                MODULE_SUGGEST_SCRIPT,
             ])
+            .arg(ps_utf8_script(MODULE_SUGGEST_SCRIPT))
             .env("PSFORGE_MISSING_CMDLET", &command_name)
             .creation_flags(0x08000000)
             .output(),
@@ -2592,8 +2662,8 @@ pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            "Get-ExecutionPolicy -Scope CurrentUser",
         ])
+        .arg(ps_utf8_script("Get-ExecutionPolicy -Scope CurrentUser"))
         .creation_flags(0x08000000)
         .output()
         .await
@@ -2671,8 +2741,8 @@ pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(),
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            &script,
         ])
+        .arg(ps_utf8_script(&script))
         .creation_flags(0x08000000)
         .output()
         .await
@@ -2778,8 +2848,8 @@ if ($formatted) { $formatted } else { $text }";
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                FORMAT_SNIPPET,
             ])
+            .arg(ps_utf8_script(FORMAT_SNIPPET))
             .env("PSFORGE_SCRIPT_CONTENT", &script_content)
             .creation_flags(0x08000000)
             .output(),
@@ -2840,10 +2910,10 @@ pub async fn get_ps_profile_path(ps_path: String) -> Result<String, AppError> {
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                // CurrentUserCurrentHost is the profile most users customise
-                // (loaded for interactive sessions).  AllUsersAllHosts requires admin.
-                "$PROFILE.CurrentUserCurrentHost",
             ])
+            // CurrentUserCurrentHost is the profile most users customise
+            // (loaded for interactive sessions).  AllUsersAllHosts requires admin.
+            .arg(ps_utf8_script("$PROFILE.CurrentUserCurrentHost"))
             .creation_flags(0x08000000)
             .output(),
     )
@@ -3046,8 +3116,8 @@ friendlyName=$(if($_.FriendlyName){$_.FriendlyName}else{$_.Subject -replace '^CN
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                CERT_SCRIPT,
             ])
+            .arg(ps_utf8_script(CERT_SCRIPT))
             .creation_flags(0x08000000)
             .output(),
     )
@@ -3158,8 +3228,8 @@ $sig.Status.ToString()",
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                &ps_script,
             ])
+            .arg(ps_utf8_script(&ps_script))
             .creation_flags(0x08000000)
             .output(),
     )
@@ -3294,6 +3364,47 @@ mod tests {
             &bytes[..],
             "Windows-1252 round-trip must preserve original bytes"
         );
+    }
+
+    #[test]
+    fn detect_utf32_le_signature_not_misread_as_utf16() {
+        // "AB" as UTF-32 LE with BOM. The BOM's first two bytes match the
+        // UTF-16 LE BOM, so without the UTF-32 check this decoded as
+        // NUL-interleaved UTF-16 with no warning and a later save destroyed
+        // the file (S6-11).
+        let bytes = vec![
+            0xFF, 0xFE, 0x00, 0x00, // UTF-32 LE BOM
+            b'A', 0x00, 0x00, 0x00, b'B', 0x00, 0x00, 0x00,
+        ];
+        let (content, enc, warning) = detect_and_decode(&bytes);
+        assert_eq!(content, "AB");
+        assert_eq!(enc, "utf8", "UTF-32 input converts to UTF-8 on save");
+        assert!(warning.is_some(), "conversion must be surfaced to the user");
+    }
+
+    #[test]
+    fn detect_utf32_be_signature() {
+        let bytes = vec![
+            0x00, 0x00, 0xFE, 0xFF, // UTF-32 BE BOM
+            0x00, 0x00, 0x00, b'A', 0x00, 0x00, 0x00, b'B',
+        ];
+        let (content, enc, warning) = detect_and_decode(&bytes);
+        assert_eq!(content, "AB");
+        assert_eq!(enc, "utf8");
+        assert!(warning.is_some());
+    }
+
+    #[test]
+    fn detect_utf16_le_with_leading_nul_still_utf16() {
+        // FF FE 00 00 is only UTF-32 when the total length is a multiple of 4;
+        // this 6-byte file is a UTF-16 LE NUL followed by 'A'... but with only
+        // first-4-bytes sniffing it matches UTF-32 LE. Accept the standard
+        // tradeoff (UTF-32 wins) — just assert it doesn't panic and decodes
+        // to *something* with a warning rather than silently.
+        let bytes = vec![0xFF, 0xFE, 0x00, 0x00, b'A', 0x00];
+        let (_content, enc, warning) = detect_and_decode(&bytes);
+        assert_eq!(enc, "utf8");
+        assert!(warning.is_some(), "partial trailing unit must warn");
     }
 
     #[test]

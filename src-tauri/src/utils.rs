@@ -54,6 +54,12 @@ where
     unreachable!("retry loop exited unexpectedly")
 }
 
+/// First `max_chars` characters of `value` — safe to call on any UTF-8 string,
+/// unlike byte slicing which panics when the cut lands inside a multi-byte char.
+pub(crate) fn char_preview(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
 /// Returns `true` for error kinds that indicate a transient condition:
 /// file lock contention, resource temporarily busy, or interrupted syscall.
 /// Permanent errors (file not found, permission denied, invalid path, etc.) return `false`.
@@ -384,6 +390,15 @@ mod tests {
             ".ps1 content that already has a BOM must not gain a second one"
         );
         let _ = std::fs::remove_file(with_bom);
+    }
+
+    #[test]
+    fn char_preview_never_splits_multibyte_chars() {
+        // A byte-index slice would panic here: byte 200 lands mid-codepoint.
+        let s = "é".repeat(150); // 300 bytes, 150 chars
+        assert_eq!(char_preview(&s, 200).chars().count(), 150);
+        assert_eq!(char_preview(&s, 100).chars().count(), 100);
+        assert_eq!(char_preview("abc", 200), "abc");
     }
 
     #[test]

@@ -345,6 +345,24 @@ pub async fn start_terminal(
 
     let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
 
+    // Register the session BEFORE spawning the reader thread. If the child
+    // dies instantly, the reader hits EOF and calls stop_session; were the
+    // insert to happen after the spawn, that removal could run first and the
+    // late insert would leak an unstoppable orphan session in TERMINALS.
+    {
+        let mut guard = get_terminals().lock().unwrap_or_else(|e| e.into_inner());
+        guard.insert(
+            session_id,
+            Session {
+                id: session_id,
+                child,
+                writer,
+                master: pair.master,
+                bootstrap_script,
+            },
+        );
+    }
+
     // Reader thread: forward raw PTY UTF-8 chunks directly to xterm.js.
     //
     // We buffer trailing partial UTF-8 between reads so a multi-byte
@@ -464,18 +482,6 @@ pub async fn start_terminal(
         stop_session(session_id, false);
         debug!("Terminal PTY reader exited (session_id={})", session_id);
     });
-
-    let mut guard = get_terminals().lock().unwrap_or_else(|e| e.into_inner());
-    guard.insert(
-        session_id,
-        Session {
-            id: session_id,
-            child,
-            writer,
-            master: pair.master,
-            bootstrap_script,
-        },
-    );
 
     info!("Terminal PTY session started (session_id={})", session_id);
     Ok(session_id)

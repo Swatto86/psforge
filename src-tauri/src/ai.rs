@@ -1,5 +1,6 @@
 use crate::errors::AppError;
 use crate::settings::AppSettings;
+use crate::utils::char_preview;
 #[cfg(not(windows))]
 use crate::win_compat::CommandExt;
 use serde::{Deserialize, Serialize};
@@ -770,10 +771,6 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
         out.push_str("\n[truncated]");
     }
     out
-}
-
-fn char_preview(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect()
 }
 
 fn fence_for(content: &str) -> String {
