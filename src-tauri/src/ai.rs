@@ -651,9 +651,16 @@ fn blank_as_none(value: &str) -> Option<&str> {
     }
 }
 
+fn normalize_configured_path(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_string()
+}
+
 fn resolve_user_profile(configured: Option<&str>) -> Option<String> {
     if let Some(value) = configured {
-        return Some(value.to_string());
+        return Some(normalize_configured_path(value));
     }
     let users = std::fs::read_dir("C:\\Users").ok()?;
     for entry in users.flatten() {
@@ -667,7 +674,7 @@ fn resolve_user_profile(configured: Option<&str>) -> Option<String> {
 
 fn resolve_claude_binary(configured: Option<&str>, user_profile: Option<&str>) -> String {
     if let Some(value) = configured {
-        return value.to_string();
+        return normalize_configured_path(value);
     }
     if let Some(profile) = user_profile {
         let candidate = format!("{profile}\\.local\\bin\\claude.exe");
@@ -680,7 +687,7 @@ fn resolve_claude_binary(configured: Option<&str>, user_profile: Option<&str>) -
 
 fn resolve_kilo_cli_profile(configured: Option<&str>) -> Option<String> {
     if let Some(value) = configured {
-        return Some(value.to_string());
+        return Some(normalize_configured_path(value));
     }
     let users = std::fs::read_dir("C:\\Users").ok()?;
     for entry in users.flatten() {
@@ -700,7 +707,7 @@ fn resolve_kilo_cli_profile(configured: Option<&str>) -> Option<String> {
 
 fn resolve_kilo_cli_binary(configured: Option<&str>, user_profile: Option<&str>) -> String {
     if let Some(value) = configured {
-        return value.to_string();
+        return normalize_configured_path(value);
     }
     if let Some(profile) = user_profile {
         for variant in ["cli-windows-x64", "cli-windows-x64-baseline"] {
@@ -852,5 +859,29 @@ mod tests {
             "openrouter/free"
         );
         assert!(resolved_model(AiProvider::KiloCli, &s).is_err());
+    }
+
+    #[test]
+    fn configured_cli_paths_accept_copied_quotes() {
+        assert_eq!(
+            resolve_claude_binary(Some(r#""C:\Tools\claude.exe""#), None),
+            r"C:\Tools\claude.exe"
+        );
+        assert_eq!(
+            resolve_claude_binary(Some(r#"'C:\Tools\claude.exe'"#), None),
+            r"C:\Tools\claude.exe"
+        );
+        assert_eq!(
+            resolve_kilo_cli_binary(Some(r#""C:\Tools\kilo.exe""#), None),
+            r"C:\Tools\kilo.exe"
+        );
+        assert_eq!(
+            resolve_user_profile(Some(r#""D:\Users\Ada""#)).as_deref(),
+            Some(r"D:\Users\Ada")
+        );
+        assert_eq!(
+            resolve_kilo_cli_profile(Some(r#""D:\Users\Ada""#)).as_deref(),
+            Some(r"D:\Users\Ada")
+        );
     }
 }

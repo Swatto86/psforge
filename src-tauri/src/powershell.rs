@@ -1308,7 +1308,10 @@ pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
 }
 
 pub fn normalize_ps_path(ps_path: &str) -> String {
-    ps_path.trim().trim_matches('"').to_string()
+    ps_path
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_string()
 }
 
 /// Returns the first PATH entry containing `name` as an executable file.
@@ -1509,6 +1512,18 @@ mod tests {
         let err = resolve_working_dir(&missing.to_string_lossy())
             .expect_err("invalid working dir must return error");
         assert_eq!(err.code, "INVALID_WORKING_DIR");
+    }
+
+    #[test]
+    fn normalize_ps_path_accepts_copied_quotes() {
+        assert_eq!(
+            normalize_ps_path(r#""C:\Program Files\PowerShell\7\pwsh.exe""#),
+            r"C:\Program Files\PowerShell\7\pwsh.exe"
+        );
+        assert_eq!(
+            normalize_ps_path(r#"'C:\Program Files\PowerShell\7\pwsh.exe'"#),
+            r"C:\Program Files\PowerShell\7\pwsh.exe"
+        );
     }
 
     #[test]

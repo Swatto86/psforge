@@ -502,7 +502,8 @@ pub struct ModuleInfo {
 /// match so user-named binaries like `mypowershell.exe` are not mis-detected
 /// as Windows PowerShell.
 fn is_windows_powershell(ps_path: &str) -> bool {
-    let trimmed = ps_path.trim().trim_matches('"');
+    let normalized = powershell::normalize_ps_path(ps_path);
+    let trimmed = normalized.as_str();
     let file_name = std::path::Path::new(trimmed)
         .file_name()
         .and_then(|name| name.to_str())
@@ -3357,6 +3358,16 @@ mod tests {
             .expect("quote-wrapped executable path should spawn");
 
         assert!(output.status.success());
+    }
+
+    #[test]
+    fn is_windows_powershell_accepts_copied_quotes() {
+        assert!(is_windows_powershell(
+            r#"'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'"#
+        ));
+        assert!(!is_windows_powershell(
+            r#"'C:/Program Files/PowerShell/7/pwsh.exe'"#
+        ));
     }
 
     // ----- find_last_json tests -----

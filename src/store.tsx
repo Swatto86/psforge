@@ -27,6 +27,7 @@ import type {
 } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import * as cmd from "./commands";
+import { removeRecentFilePath } from "./script-utils";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -626,8 +627,9 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         settings: {
           ...state.settings,
-          recentFiles: state.settings.recentFiles.filter(
-            (f) => f !== action.path,
+          recentFiles: removeRecentFilePath(
+            state.settings.recentFiles,
+            action.path,
           ),
         },
       };

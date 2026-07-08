@@ -393,6 +393,15 @@ fn normalize_ai_provider(value: &str) -> String {
     }
 }
 
+fn recent_file_key(path: &str) -> String {
+    let trimmed = path.trim();
+    if cfg!(windows) {
+        trimmed.replace('\\', "/").to_lowercase()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -567,11 +576,7 @@ impl AppSettings {
                 if trimmed.is_empty() {
                     return None;
                 }
-                let key = if cfg!(windows) {
-                    trimmed.to_lowercase()
-                } else {
-                    trimmed.to_string()
-                };
+                let key = recent_file_key(trimmed);
                 if seen.insert(key) {
                     Some(trimmed.to_string())
                 } else {
@@ -585,10 +590,14 @@ impl AppSettings {
     /// Adds a file path to the recent files list, deduplicating and enforcing the user's max-size setting.
     #[allow(dead_code)]
     pub fn add_recent_file(&mut self, path: &str) {
-        // Remove if already present
-        self.recent_files.retain(|p| p != path);
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let key = recent_file_key(trimmed);
+        self.recent_files.retain(|p| recent_file_key(p) != key);
         // Insert at front
-        self.recent_files.insert(0, path.to_string());
+        self.recent_files.insert(0, trimmed.to_string());
         // Enforce the user's configured cap rather than a hard-coded constant
         // so changes to `max_recent_files` actually take effect immediately.
         let cap = self
@@ -714,6 +723,37 @@ mod tests {
         assert_eq!(settings.recent_files.len(), 2, "Expected 2 unique entries");
         assert_eq!(settings.recent_files[0], "a.ps1");
         assert_eq!(settings.recent_files[1], "b.ps1");
+    }
+
+    #[test]
+    fn recent_files_deduplicate_windows_separator_variants() {
+        let mut settings = AppSettings {
+            max_recent_files: 10,
+            recent_files: vec![
+                r" C:\Scripts\Foo.ps1 ".to_string(),
+                "c:/scripts/foo.ps1".to_string(),
+                r"D:\Bar.ps1".to_string(),
+            ],
+            ..AppSettings::default()
+        };
+        settings.sanitize();
+
+        if cfg!(windows) {
+            assert_eq!(
+                settings.recent_files,
+                vec![r"C:\Scripts\Foo.ps1".to_string(), r"D:\Bar.ps1".to_string()]
+            );
+        } else {
+            assert_eq!(settings.recent_files.len(), 3);
+        }
+
+        settings.add_recent_file(" c:/scripts/foo.ps1 ");
+        if cfg!(windows) {
+            assert_eq!(
+                settings.recent_files,
+                vec!["c:/scripts/foo.ps1".to_string(), r"D:\Bar.ps1".to_string()]
+            );
+        }
     }
 
     #[test]

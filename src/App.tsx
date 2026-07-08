@@ -47,6 +47,7 @@ import {
   isScratchBackedTab,
   isUntitledScratchCandidate,
 } from "./scratch-utils";
+import { mergeRecentFilePaths } from "./script-utils";
 import { findProjectConfig, applyProjectConfig } from "./project-config";
 import { PssaRunGateDialog } from "./components/PssaRunGateDialog";
 import {
@@ -1156,10 +1157,11 @@ function AppInner() {
 
         // Update recent files list, respecting maxRecentFiles setting.
         const maxRecent = nextSettings.maxRecentFiles ?? 20;
-        const recent = [
-          selected,
-          ...nextSettings.recentFiles.filter((f) => f !== selected),
-        ].slice(0, maxRecent);
+        const recent = mergeRecentFilePaths(
+          nextSettings.recentFiles,
+          [selected],
+          maxRecent,
+        );
         dispatch({
           type: "SET_SETTINGS",
           settings: { ...nextSettings, recentFiles: recent },
@@ -1295,18 +1297,6 @@ function AppInner() {
     };
   }, [openFile, openWelcomePage, dispatch]);
 
-  const mergeRecentFiles = useCallback(
-    (existing: string[], savedPaths: string[]) => {
-      const maxRecent = state.settings.maxRecentFiles ?? 20;
-      let next = [...existing];
-      for (const path of savedPaths) {
-        next = [path, ...next.filter((f) => f !== path)];
-      }
-      return next.slice(0, maxRecent);
-    },
-    [state.settings.maxRecentFiles],
-  );
-
   const saveTab = useCallback(
     async (
       tab: EditorTab,
@@ -1377,12 +1367,16 @@ function AppInner() {
     const result = await saveTab(activeTab);
     if (!result.saved || !result.path) return;
 
-    const recent = mergeRecentFiles(state.settings.recentFiles, [result.path]);
+    const recent = mergeRecentFilePaths(
+      state.settings.recentFiles,
+      [result.path],
+      state.settings.maxRecentFiles ?? 20,
+    );
     dispatch({
       type: "SET_SETTINGS",
       settings: { ...state.settings, recentFiles: recent },
     });
-  }, [activeTab, saveTab, mergeRecentFiles, state.settings, dispatch]);
+  }, [activeTab, saveTab, state.settings, dispatch]);
 
   const saveAllFiles = useCallback(async () => {
     // Save all code tabs that are dirty OR unsaved (untitled).
@@ -1411,13 +1405,17 @@ function AppInner() {
     }
 
     if (savedPaths.length > 0) {
-      const recent = mergeRecentFiles(state.settings.recentFiles, savedPaths);
+      const recent = mergeRecentFilePaths(
+        state.settings.recentFiles,
+        [...savedPaths].reverse(),
+        state.settings.maxRecentFiles ?? 20,
+      );
       dispatch({
         type: "SET_SETTINGS",
         settings: { ...state.settings, recentFiles: recent },
       });
     }
-  }, [state.tabs, state.settings, saveTab, mergeRecentFiles, dispatch]);
+  }, [state.tabs, state.settings, saveTab, dispatch]);
 
   const finalizeCloseTab = useCallback(
     async (tab: EditorTab, choice: CloseScratchChoice): Promise<boolean> => {
