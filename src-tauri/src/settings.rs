@@ -129,6 +129,11 @@ pub struct AppSettings {
     #[serde(default)]
     pub assistant_mode: bool,
 
+    /// Master switch: when true, every AI feature is hidden in the UI and
+    /// `ask_ai` refuses requests (Zed-style "disable AI").
+    #[serde(default)]
+    pub disable_ai: bool,
+
     /// AI provider used by the in-app Assistant tab.
     #[serde(default = "default_ai_provider")]
     pub ai_provider: String,
@@ -424,6 +429,7 @@ impl Default for AppSettings {
             run_after_paste_clean_format: true,
             run_after_sanitized_paste: false,
             assistant_mode: false,
+            disable_ai: false,
             ai_provider: default_ai_provider(),
             ai_model: String::new(),
             ai_effort: String::new(),
@@ -796,6 +802,23 @@ mod tests {
 
         let json = serde_json::to_string(&enabled).expect("must serialize");
         assert!(json.contains("\"showDebuggerTools\":true"));
+    }
+
+    #[test]
+    fn disable_ai_round_trips() {
+        // Same shape as show_debugger_tools_round_trips: a frontend toggle
+        // must exist on the backend struct (camelCase serde) or it can never
+        // persist across restarts.
+        let defaulted: AppSettings =
+            serde_json::from_str("{}").expect("empty document must parse to defaults");
+        assert!(!defaulted.disable_ai);
+
+        let disabled: AppSettings =
+            serde_json::from_str(r#"{"disableAi":true}"#).expect("explicit value must parse");
+        assert!(disabled.disable_ai);
+
+        let json = serde_json::to_string(&disabled).expect("must serialize");
+        assert!(json.contains("\"disableAi\":true"));
     }
 
     #[test]

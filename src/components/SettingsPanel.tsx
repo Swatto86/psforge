@@ -28,7 +28,6 @@ import type { RunDirPreset } from "../types";
 /** Section identifiers. */
 type Section =
   | "editor"
-  | "intellisense"
   | "execution"
   | "ai"
   | "output"
@@ -38,7 +37,6 @@ type Section =
 /** All panel sections with display labels. */
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "editor", label: "Editor" },
-  { id: "intellisense", label: "IntelliSense" },
   { id: "execution", label: "Execution" },
   { id: "ai", label: "AI" },
   { id: "output", label: "Output" },
@@ -696,24 +694,12 @@ export function SettingsPanel() {
                   Open Welcome Page
                 </button>
               </SettingRow>
-            </div>
-          )}
 
-          {/* INTELLISENSE */}
-          {activeSection === "intellisense" && (
-            <div className="flex flex-col gap-4">
-              <SectionHeading>IntelliSense</SectionHeading>
-
-              <InfoBox>
-                IntelliSense uses PowerShell&apos;s built-in TabExpansion2 to
-                provide context-aware completions for commands, parameters,
-                variables, and paths. PSScriptAnalyzer provides inline
-                diagnostics (squiggles) as you type.
-              </InfoBox>
+              <SectionHeading>IntelliSense &amp; Analysis</SectionHeading>
 
               <SettingRow
                 label="Enable IntelliSense"
-                tooltip="Enables PowerShell completion suggestions while typing."
+                tooltip="Enables PowerShell completion suggestions while typing (TabExpansion2)."
               >
                 <Toggle
                   checked={state.settings.enableIntelliSense !== false}
@@ -1450,6 +1436,37 @@ export function SettingsPanel() {
           {/* AI */}
           {activeSection === "ai" && (
             <div className="flex flex-col gap-4">
+              <SectionHeading>AI</SectionHeading>
+
+              <SettingRow
+                label="AI Features"
+                tooltip="Master switch for every AI feature in PSForge. When off, the AI assistant tab and toolbar button are hidden and no AI requests can be sent."
+              >
+                <div className="flex flex-col gap-1">
+                  <Toggle
+                    checked={state.settings.disableAi !== true}
+                    onChange={(enabled) =>
+                      updateSetting("disableAi", !enabled)
+                    }
+                    label="Enable AI features"
+                  />
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Turn off to completely disable AI: the assistant pane,
+                    the toolbar AI button, and all provider requests. API keys
+                    below are kept but unused.
+                  </p>
+                </div>
+              </SettingRow>
+
+              {state.settings.disableAi === true && (
+                <InfoBox>
+                  AI features are disabled. Re-enable the toggle above to use
+                  the in-app assistant again.
+                </InfoBox>
+              )}
+
+              {state.settings.disableAi !== true && (
+              <>
               <SectionHeading>AI Assistant</SectionHeading>
 
               <InfoBox warn>
@@ -1587,6 +1604,8 @@ export function SettingsPanel() {
                   width="w-96"
                 />
               </SettingRow>
+              </>
+              )}
             </div>
           )}
 

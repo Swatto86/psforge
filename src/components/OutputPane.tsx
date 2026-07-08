@@ -159,6 +159,15 @@ export function OutputPane({
   );
   const pssaEnabled = state.settings.enablePssa !== false;
   const showDebuggerTools = state.settings.showDebuggerTools === true;
+  const aiEnabled = state.settings.disableAi !== true;
+
+  useEffect(() => {
+    // AI disabled while the assistant tab is showing: fall back to Terminal
+    // so the bottom panel never renders a hidden tab's content.
+    if (!aiEnabled && state.bottomPanelTab === "assistant") {
+      dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
+    }
+  }, [aiEnabled, state.bottomPanelTab, dispatch]);
 
   useEffect(() => {
     // Only leave the Debugger tab when the tools are hidden AND no debug
@@ -262,7 +271,7 @@ export function OutputPane({
 
   const primaryBottomTabs: BottomTabDescriptor[] = [
     { id: "terminal", label: "Terminal" },
-    { id: "assistant", label: "AI" },
+    ...(aiEnabled ? [{ id: "assistant" as const, label: "AI" }] : []),
     { id: "variables", label: "Variables" },
   ];
 
@@ -704,7 +713,10 @@ export function OutputPane({
           </div>
         )}
 
-        {state.bottomPanelTab === "assistant" && (
+        {/* aiEnabled gate: session restore can set the assistant tab before
+            settings (and disableAi) have loaded; the effect above corrects the
+            tab, this prevents the one-frame mount in the meantime. */}
+        {state.bottomPanelTab === "assistant" && aiEnabled && (
           <div className="flex-1 min-h-0 overflow-hidden">
             <AssistantPane />
           </div>

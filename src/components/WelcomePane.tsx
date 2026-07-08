@@ -146,11 +146,16 @@ export function WelcomePane() {
             <div className="welcome-step">
               <span className="welcome-step-label">
                 <span className="welcome-step-num">3</span>
-                Copy for AI
+                {state.settings.disableAi === true
+                  ? "Copy Debug Bundle"
+                  : "Copy for AI"}
               </span>
               <span className="welcome-step-hint">
                 One click on the toolbar copies output, exit code, and
-                diagnostics — paste it back to your assistant.
+                diagnostics
+                {state.settings.disableAi === true
+                  ? " as shareable markdown."
+                  : " — paste it back to your assistant."}
               </span>
             </div>
           </div>

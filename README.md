@@ -14,7 +14,7 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.3.5](https://github.com/Swatto86/psforge/releases/tag/v1.3.5)
+**Current version:** [1.4.0](https://github.com/Swatto86/psforge/releases/tag/v1.4.0)
 
 ## AI-assisted workflow (paste → run → debug)
 
@@ -70,7 +70,7 @@ Optional repo file **`.psforge.json`** next to your scripts (walks up from opene
 
 After paste, a **toast** summarizes cleanup (fences removed, smart quotes fixed, etc.).
 
-More shortcuts: **Help** style panel via `Ctrl+F1` or the toolbar **?** button.
+More shortcuts: **Help → Keyboard Shortcuts** (`Ctrl+F1`).
 
 ## Script runner features (v1.2.15)
 
@@ -87,6 +87,8 @@ More shortcuts: **Help** style panel via `Ctrl+F1` or the toolbar **?** button.
 
 ## Other capabilities
 
+- Classic **File / Edit / View / Help** menu bar — every action is discoverable with its shortcut listed
+- In-app **AI assistant** (Ask / Write / Fix) using Anthropic API, Claude CLI, OpenRouter, or Kilo CLI — or turn every AI feature off with one switch in **Settings → AI**
 - Multi-tab editor with session restore
 - PowerShell 5.1 / 7 detection and selection
 - Mandatory `param()` prompt before run

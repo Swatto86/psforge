@@ -1,7 +1,8 @@
-/** PSForge Toolbar component.
- *  The primary AI paste-and-run workflow gets labeled buttons front and center:
- *  Paste + Run, Run, Stop, Copy for AI. File ops, debugger tools, and the rest
- *  live as icon buttons and an overflow menu.
+/** PSForge Toolbar.
+ *  A classic menu bar (File / Edit / View / Help) plus the primary AI
+ *  paste-and-run workflow buttons. Every secondary action lives in a labeled
+ *  menu with its shortcut shown, instead of hiding behind unlabeled icons or
+ *  an overflow menu.
  */
 
 import React, { useState, useRef, useEffect } from "react";
@@ -12,8 +13,10 @@ import type { ThemeName } from "../types";
 interface ToolbarProps {
   onNew: () => void;
   onOpen: () => void;
-  /** Called when the user selects a path from the Recent Files dropdown. */
+  /** Called when the user selects a path from File → recent scripts. */
   onOpenRecent: (path: string) => void;
+  /** Open every PowerShell script in a picked folder. */
+  onOpenFolder: () => void;
   onSave: () => void;
   onSaveAll: () => void;
   onRun: () => void;
@@ -21,19 +24,13 @@ interface ToolbarProps {
   onDebugStart: () => void;
   /** Continue execution from the current debugger stop point. */
   onDebugContinue: () => void;
-  /** Debugger: step over. */
-  onDebugStepOver: () => void;
-  /** Debugger: step into. */
-  onDebugStepInto: () => void;
-  /** Debugger: step out. */
-  onDebugStepOut: () => void;
   onStop: () => void;
   /** Format current script with Invoke-Formatter (Shift+Alt+F). */
   onFormat: () => void;
   /** Paste from clipboard, clean, format, and (per settings) run.
    *  Works from the Welcome tab too (opens a new script tab). */
   onPasteScript: () => void;
-  /** Copy the debug bundle (last run output + exit code + PSSA) for the AI. */
+  /** Copy the debug bundle (last run output + exit code + PSSA). */
   onCopyDebugBundle: () => void;
   /** Trigger Monaco's built-in Find & Replace widget. */
   onFindReplace: () => void;
@@ -43,20 +40,24 @@ interface ToolbarProps {
   onPrint: () => void;
   /** Open the script signing dialog. */
   onSign: () => void;
+  /** Manual application update check (same as the status bar link). */
+  onCheckForUpdates: () => void;
 }
+
+type MenuId = "file" | "edit" | "view" | "help";
+
+const MENU_RECENT_LIMIT = 15;
 
 export function Toolbar({
   onNew,
   onOpen,
   onOpenRecent,
+  onOpenFolder,
   onSave,
   onSaveAll,
   onRun,
   onDebugStart,
   onDebugContinue,
-  onDebugStepOver,
-  onDebugStepInto,
-  onDebugStepOut,
   onStop,
   onFormat,
   onPasteScript,
@@ -65,42 +66,51 @@ export function Toolbar({
   onOpenProfile,
   onPrint,
   onSign,
+  onCheckForUpdates,
 }: ToolbarProps) {
   const { state, dispatch, activeTab } = useAppState();
   const showDebuggerTools = state.settings.showDebuggerTools === true;
+  const aiEnabled = state.settings.disableAi !== true;
   const hasSavableTabs = state.tabs.some(
     (t) => t.tabType !== "welcome" && (t.isDirty || !t.filePath),
   );
-  const [showRecent, setShowRecent] = useState(false);
-  const [showOverflow, setShowOverflow] = useState(false);
-  const recentRef = useRef<HTMLDivElement>(null);
-  const overflowRef = useRef<HTMLDivElement>(null);
+  const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
+  const menuBarRef = useRef<HTMLDivElement>(null);
 
-  // Close recent dropdown on outside click.
+  // Close any open menu on outside click or Escape.
   useEffect(() => {
-    if (!showRecent) return;
-    const handler = (e: MouseEvent) => {
-      if (recentRef.current && !recentRef.current.contains(e.target as Node)) {
-        setShowRecent(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showRecent]);
-
-  useEffect(() => {
-    if (!showOverflow) return;
-    const handler = (e: MouseEvent) => {
+    if (!openMenu) return;
+    const onMouseDown = (e: MouseEvent) => {
       if (
-        overflowRef.current &&
-        !overflowRef.current.contains(e.target as Node)
+        menuBarRef.current &&
+        !menuBarRef.current.contains(e.target as Node)
       ) {
-        setShowOverflow(false);
+        setOpenMenu(null);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showOverflow]);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenMenu(null);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openMenu]);
+
+  // Modals opened via global shortcuts (Ctrl+, / Ctrl+F1 / Ctrl+Shift+P …)
+  // paint over an open dropdown without any mousedown/Escape reaching it;
+  // close the menu so it doesn't reappear stale when the modal closes.
+  const modalOpen =
+    state.settingsOpen ||
+    state.commandPaletteOpen ||
+    state.shortcutPanelOpen ||
+    state.showAbout ||
+    state.showSigningDialog;
+  useEffect(() => {
+    if (modalOpen) setOpenMenu(null);
+  }, [modalOpen]);
 
   const handleThemeChange = (theme: ThemeName) => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -112,6 +122,36 @@ export function Toolbar({
 
   const hasCodeTab = !!activeTab && activeTab.tabType !== "welcome";
   const pasteRuns = state.settings.runAfterPasteCleanFormat !== false;
+  const canSave =
+    hasCodeTab && !!activeTab && (activeTab.isDirty || !activeTab.filePath);
+  const recentFiles = state.settings.recentFiles.slice(0, MENU_RECENT_LIMIT);
+
+  /** Runs a menu action and closes the menu. */
+  const menuAction = (action: () => void) => () => {
+    setOpenMenu(null);
+    action();
+  };
+
+  const openWelcomePage = () => {
+    const fn = (window as unknown as Record<string, unknown>)
+      .__psforge_openWelcome as (() => void) | undefined;
+    fn?.();
+  };
+
+  const menuButton = (id: MenuId, label: string) => (
+    <button
+      type="button"
+      data-testid={`menubar-${id}`}
+      className={`menubar-btn ${openMenu === id ? "menubar-btn-open" : ""}`}
+      onClick={() => setOpenMenu((current) => (current === id ? null : id))}
+      onMouseEnter={() => {
+        // Hover-to-switch once a menu is open, like native menu bars.
+        setOpenMenu((current) => (current && current !== id ? id : current));
+      }}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div
@@ -121,79 +161,216 @@ export function Toolbar({
         backgroundColor: "var(--bg-toolbar)",
         borderBottom: "1px solid var(--border-primary)",
         minHeight: "42px",
-        paddingLeft: "12px",
+        paddingLeft: "8px",
         paddingRight: "12px",
       }}
     >
-      {/* File ops */}
-      <div ref={recentRef} className="relative">
-        <button
-          title="Recent scripts"
-          onClick={() => setShowRecent((v) => !v)}
-          disabled={state.settings.recentFiles.length === 0}
-          className="tb-action"
-          style={{ borderColor: "transparent", fontWeight: 500 }}
-        >
-          Recent
-          <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor">
-            <path d="M0 2l4 4 4-4H0z" />
-          </svg>
-        </button>
-        {showRecent && state.settings.recentFiles.length > 0 && (
-          <div
-            className="menu-pop"
-            style={{ top: "100%", left: 0, minWidth: "280px", maxWidth: "420px" }}
-          >
-            {state.settings.recentFiles.slice(0, 15).map((path) => {
-              const name = basename(path);
-              return (
-                <button
-                  key={path}
-                  onClick={() => {
-                    onOpenRecent(path);
-                    setShowRecent(false);
-                  }}
-                  className="menu-item"
-                  style={{ minWidth: 0 }}
-                  title={path}
-                >
-                  <span className="block font-medium truncate">{name}</span>
-                  <span
-                    className="block truncate"
-                    style={{
-                      color: "var(--text-muted)",
-                      fontSize: "var(--ui-font-size-2xs)",
-                    }}
-                  >
-                    {path}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <IconBtn title="Open script (Ctrl+O)" onClick={onOpen} testId="toolbar-open">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M6 1H2a1 1 0 0 0-1 1v3h1V2h4v3h3V2.5L6 1zM9 5H6V2l3 3zm-8 2v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7H1zm13 7H2V8h12v6z" />
-        </svg>
-      </IconBtn>
-
-      <IconBtn
-        title="Save (Ctrl+S)"
-        onClick={onSave}
-        testId="toolbar-save"
-        disabled={
-          !activeTab ||
-          activeTab.tabType === "welcome" ||
-          (!activeTab.isDirty && !!activeTab.filePath)
-        }
+      {/* Menu bar */}
+      <div
+        ref={menuBarRef}
+        className="flex items-center"
+        onBlur={(e) => {
+          // Keyboard Tab-away: close when focus leaves the menu bar. A null
+          // relatedTarget (click on non-focusable page area) is left to the
+          // document mousedown handler instead.
+          if (
+            e.relatedTarget &&
+            !e.currentTarget.contains(e.relatedTarget as Node)
+          ) {
+            setOpenMenu(null);
+          }
+        }}
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M13.354 1.146l1.5 1.5A.5.5 0 0 1 15 3v11a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h10.5a.5.5 0 0 1 .354.146zM2 2v12h12V3.207L12.793 2H11v4H4V2H2zm3 0v3h5V2H5z" />
-        </svg>
-      </IconBtn>
+        <div className="relative">
+          {menuButton("file", "File")}
+          {openMenu === "file" && (
+            <div
+              className="menu-pop"
+              style={{ top: "100%", left: 0, minWidth: "260px" }}
+            >
+              <MenuItem
+                label="New Script"
+                shortcut="Ctrl+N"
+                onClick={menuAction(onNew)}
+              />
+              <MenuItem
+                label="Open Script…"
+                shortcut="Ctrl+O"
+                onClick={menuAction(onOpen)}
+              />
+              <MenuItem
+                label="Open Folder…"
+                onClick={menuAction(onOpenFolder)}
+              />
+              {recentFiles.length > 0 && (
+                <>
+                  <div className="menu-header">Recent</div>
+                  {recentFiles.map((path) => (
+                    <button
+                      key={path}
+                      type="button"
+                      className="menu-item"
+                      // 10px padding + 16px check gutter keeps recent entries
+                      // aligned with the MenuItem labels above them.
+                      style={{ minWidth: 0, maxWidth: "340px", paddingLeft: "26px" }}
+                      title={path}
+                      onClick={menuAction(() => onOpenRecent(path))}
+                    >
+                      <span className="block truncate">{basename(path)}</span>
+                    </button>
+                  ))}
+                </>
+              )}
+              <div className="menu-separator" />
+              <MenuItem
+                label="Save"
+                shortcut="Ctrl+S"
+                disabled={!canSave}
+                onClick={menuAction(onSave)}
+              />
+              <MenuItem
+                label="Save All"
+                disabled={!hasSavableTabs}
+                onClick={menuAction(onSaveAll)}
+              />
+              <div className="menu-separator" />
+              <MenuItem
+                label="Sign Script…"
+                disabled={!hasCodeTab || !activeTab?.filePath}
+                onClick={menuAction(onSign)}
+              />
+              <MenuItem
+                label="Print…"
+                disabled={!hasCodeTab || !activeTab?.content}
+                onClick={menuAction(onPrint)}
+              />
+              <MenuItem
+                label="Open $PROFILE"
+                disabled={!state.selectedPsPath}
+                onClick={menuAction(onOpenProfile)}
+              />
+              <div className="menu-separator" />
+              <MenuItem
+                label="Settings…"
+                shortcut="Ctrl+,"
+                onClick={menuAction(() => dispatch({ type: "TOGGLE_SETTINGS" }))}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="relative">
+          {menuButton("edit", "Edit")}
+          {openMenu === "edit" && (
+            <div
+              className="menu-pop"
+              style={{ top: "100%", left: 0, minWidth: "280px" }}
+            >
+              <MenuItem
+                label="Paste Clean + Format"
+                shortcut="Ctrl+Shift+Alt+V"
+                disabled={!state.selectedPsPath}
+                onClick={menuAction(onPasteScript)}
+              />
+              <MenuItem
+                label="Format Document"
+                shortcut="Shift+Alt+F"
+                disabled={!hasCodeTab || !state.selectedPsPath}
+                onClick={menuAction(onFormat)}
+              />
+              <MenuItem
+                label="Find & Replace"
+                shortcut="Ctrl+H"
+                disabled={!hasCodeTab}
+                onClick={menuAction(onFindReplace)}
+              />
+              <div className="menu-separator" />
+              <MenuItem
+                label="Insert Snippet…"
+                shortcut="Ctrl+J"
+                disabled={!hasCodeTab}
+                onClick={menuAction(() =>
+                  dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "snippets" }),
+                )}
+              />
+              <MenuItem
+                label="Command Palette…"
+                shortcut="Ctrl+Shift+P"
+                onClick={menuAction(() =>
+                  dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "all" }),
+                )}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="relative">
+          {menuButton("view", "View")}
+          {openMenu === "view" && (
+            <div
+              className="menu-pop"
+              style={{ top: "100%", left: 0, minWidth: "230px" }}
+            >
+              <MenuItem
+                label="Modules Panel"
+                checked={state.sidebarVisible}
+                onClick={menuAction(() => dispatch({ type: "TOGGLE_SIDEBAR" }))}
+              />
+              <MenuItem
+                label="Welcome Page"
+                onClick={menuAction(openWelcomePage)}
+              />
+              <div className="menu-separator" />
+              <div className="menu-header">Theme</div>
+              {(
+                [
+                  ["dark", "Dark"],
+                  ["light", "Light"],
+                  ["ise-classic", "ISE Classic"],
+                ] as [ThemeName, string][]
+              ).map(([id, label]) => (
+                <MenuItem
+                  key={id}
+                  label={label}
+                  checked={state.settings.theme === id}
+                  onClick={menuAction(() => handleThemeChange(id))}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="relative">
+          {menuButton("help", "Help")}
+          {openMenu === "help" && (
+            <div
+              className="menu-pop"
+              style={{ top: "100%", left: 0, minWidth: "240px" }}
+            >
+              <MenuItem
+                label="Keyboard Shortcuts"
+                shortcut="Ctrl+F1"
+                onClick={menuAction(() =>
+                  dispatch({ type: "TOGGLE_SHORTCUT_PANEL" }),
+                )}
+              />
+              <MenuItem
+                label="Welcome Page"
+                onClick={menuAction(openWelcomePage)}
+              />
+              <div className="menu-separator" />
+              <MenuItem
+                label="Check for Updates…"
+                onClick={menuAction(onCheckForUpdates)}
+              />
+              <MenuItem
+                label="About PSForge"
+                onClick={menuAction(() => dispatch({ type: "TOGGLE_ABOUT" }))}
+              />
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="tb-divider" />
 
@@ -221,9 +398,7 @@ export function Toolbar({
         data-testid="toolbar-run"
         title={showDebuggerTools ? "Run or Debug (F5)" : "Run script (F5)"}
         onClick={onRun}
-        disabled={
-          state.isRunning || !state.selectedPsPath || !hasCodeTab
-        }
+        disabled={state.isRunning || !state.selectedPsPath || !hasCodeTab}
         className="tb-action tb-action-run"
       >
         <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
@@ -276,7 +451,7 @@ export function Toolbar({
       <button
         type="button"
         data-testid="toolbar-copy-bundle"
-        title="Copy debug bundle for the AI: last run output, exit code, and PSScriptAnalyzer findings"
+        title="Copy debug bundle: last run output, exit code, and PSScriptAnalyzer findings as markdown"
         onClick={onCopyDebugBundle}
         disabled={!state.lastRunResult || state.isRunning}
         className="tb-action tb-action-accent"
@@ -284,41 +459,20 @@ export function Toolbar({
         <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
           <path d="M4 2a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1v1a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h1V2zm1 1h6a1 1 0 0 1 1 1v8h1V2H5v1zM3 4v10h8V4H3z" />
         </svg>
-        Copy for AI
+        {aiEnabled ? "Copy for AI" : "Copy Debug Bundle"}
       </button>
 
-      <button
-        type="button"
-        data-testid="toolbar-ai"
-        title="Open in-app AI assistant"
-        onClick={() => dispatch({ type: "SET_BOTTOM_TAB", tab: "assistant" })}
-        className="tb-action tb-action-accent"
-      >
-        AI
-      </button>
-
-      <div className="tb-divider" />
-
-      <div ref={overflowRef} className="relative">
-        <IconBtn
-          title="More tools"
-          testId="toolbar-overflow"
-          onClick={() => setShowOverflow((v) => !v)}
+      {aiEnabled && (
+        <button
+          type="button"
+          data-testid="toolbar-ai"
+          title="Open in-app AI assistant"
+          onClick={() => dispatch({ type: "SET_BOTTOM_TAB", tab: "assistant" })}
+          className="tb-action tb-action-accent"
         >
-          ⋯
-        </IconBtn>
-        {showOverflow && (
-          <div className="menu-pop" style={{ top: "100%", left: 0, minWidth: "220px" }}>
-            <OverflowItem label="New file (Ctrl+N)" onClick={() => { onNew(); setShowOverflow(false); }} />
-            <OverflowItem label="Save all" onClick={() => { onSaveAll(); setShowOverflow(false); }} disabled={!hasSavableTabs} />
-            <OverflowItem label="Format document (Shift+Alt+F)" onClick={() => { onFormat(); setShowOverflow(false); }} disabled={!hasCodeTab || !state.selectedPsPath} />
-            <OverflowItem label="Find & replace (Ctrl+H)" onClick={() => { onFindReplace(); setShowOverflow(false); }} disabled={!hasCodeTab} />
-            <OverflowItem label="Open $PROFILE" onClick={() => { onOpenProfile(); setShowOverflow(false); }} disabled={!state.selectedPsPath} />
-            <OverflowItem label="Print script" onClick={() => { onPrint(); setShowOverflow(false); }} disabled={!hasCodeTab || !activeTab?.content} />
-            <OverflowItem label="Sign script" onClick={() => { onSign(); setShowOverflow(false); }} disabled={!hasCodeTab || !activeTab?.filePath} />
-          </div>
-        )}
-      </div>
+          AI
+        </button>
+      )}
 
       <div className="tb-divider" />
 
@@ -351,19 +505,6 @@ export function Toolbar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Theme selector */}
-      <select
-        title="Theme"
-        data-testid="toolbar-theme-selector"
-        value={state.settings.theme}
-        onChange={(e) => handleThemeChange(e.target.value as ThemeName)}
-        className="text-xs py-0.5 rounded"
-      >
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-        <option value="ise-classic">ISE Classic</option>
-      </select>
-
       {/* Modules panel toggle */}
       <IconBtn
         title={state.sidebarVisible ? "Hide Modules Panel" : "Show Modules Panel"}
@@ -376,8 +517,6 @@ export function Toolbar({
         </svg>
       </IconBtn>
 
-      <div className="tb-divider" style={{ margin: "0 4px" }} />
-
       {/* Settings button */}
       <IconBtn
         title="Settings (Ctrl+,)"
@@ -387,34 +526,6 @@ export function Toolbar({
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
           <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z" />
           <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.421 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.421-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.116l.094-.318z" />
-        </svg>
-      </IconBtn>
-
-      {/* About button */}
-      <IconBtn
-        title="About PS Forge"
-        testId="toolbar-about"
-        onClick={() => dispatch({ type: "TOGGLE_ABOUT" })}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2" fill="none" />
-          <text x="8" y="12" textAnchor="middle" fontSize="9" fontWeight="bold" fill="currentColor">
-            i
-          </text>
-        </svg>
-      </IconBtn>
-
-      {/* Keyboard shortcut help button */}
-      <IconBtn
-        title="Keyboard Shortcuts (Ctrl+F1)"
-        testId="toolbar-shortcuts"
-        onClick={() => dispatch({ type: "TOGGLE_SHORTCUT_PANEL" })}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2" fill="none" />
-          <text x="8" y="12" textAnchor="middle" fontSize="9" fontWeight="bold" fill="currentColor">
-            ?
-          </text>
         </svg>
       </IconBtn>
     </div>
@@ -450,18 +561,34 @@ function IconBtn({
   );
 }
 
-function OverflowItem({
+/** Menu entry with optional right-aligned shortcut hint and checkmark. */
+function MenuItem({
   label,
-  onClick,
+  shortcut,
+  checked,
   disabled,
+  onClick,
 }: {
   label: string;
-  onClick: () => void;
+  shortcut?: string;
+  checked?: boolean;
   disabled?: boolean;
+  onClick: () => void;
 }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className="menu-item">
-      {label}
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="menu-item"
+    >
+      <span className="menu-item-row">
+        <span className="flex items-center">
+          <span className="menu-check">{checked ? "✓" : ""}</span>
+          {label}
+        </span>
+        {shortcut && <span className="menu-shortcut">{shortcut}</span>}
+      </span>
     </button>
   );
 }

@@ -219,6 +219,8 @@ export interface AppSettings {
   runAfterSanitizedPaste: boolean;
   /** When true, paste/run/scratch settings match the Assistant mode profile. */
   assistantMode: boolean;
+  /** Master switch: when true, every AI feature is hidden and AI requests are refused. */
+  disableAi: boolean;
   /** AI provider used by the Assistant pane. */
   aiProvider: "anthropic" | "claude_cli" | "openrouter" | "kilo_cli";
   /** AI model name; blank uses the provider default where supported. */
@@ -322,6 +324,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   runAfterPasteCleanFormat: true,
   runAfterSanitizedPaste: false,
   assistantMode: false,
+  disableAi: false,
   aiProvider: "anthropic",
   aiModel: "",
   aiEffort: "",

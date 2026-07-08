@@ -3206,14 +3206,12 @@ function AppInner() {
         }}
         onOpen={() => void openFile()}
         onOpenRecent={(path) => void openFile(path)}
+        onOpenFolder={() => void openScriptFolder()}
         onSave={() => void saveCurrentFile()}
         onSaveAll={() => void saveAllFiles()}
         onRun={runOrDebugScript}
         onDebugStart={startDebugSession}
         onDebugContinue={debugContinue}
-        onDebugStepOver={debugStepOver}
-        onDebugStepInto={debugStepInto}
-        onDebugStepOut={debugStepOut}
         onStop={stopExecution}
         onFormat={formatCurrentScript}
         onPasteScript={() => {
@@ -3234,6 +3232,7 @@ function AppInner() {
         onOpenProfile={() => void openProfile()}
         onPrint={printScript}
         onSign={() => dispatch({ type: "TOGGLE_SIGNING_DIALOG" })}
+        onCheckForUpdates={() => void checkForUpdates(true)}
       />
 
       {showPs7Banner && (

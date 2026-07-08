@@ -1,8 +1,8 @@
 /** PSForge Keyboard Shortcut Reference Panel.
  *
  *  Displays a searchable, categorised list of all keyboard shortcuts available
- *  in PSForge.  Opened with Ctrl+F1 or the "?" toolbar button; closed with Escape
- *  or the close button.
+ *  in PSForge.  Opened with Ctrl+F1 or Help → Keyboard Shortcuts; closed with
+ *  Escape or the close button.
  *
  *  The panel is a modal overlay so it is always readable regardless of the
  *  current editor content.  Shortcuts are grouped by category to mirror the
@@ -115,12 +115,12 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
         description: "Format document with Invoke-Formatter",
       },
       {
-        keys: "Toolbar: Profile button",
+        keys: "File → Open $PROFILE",
         description: "Open $PROFILE for editing",
       },
-      { keys: "Toolbar: Print button", description: "Print current script" },
+      { keys: "File → Print…", description: "Print current script" },
       {
-        keys: "Toolbar: Sign button",
+        keys: "File → Sign Script…",
         description: "Sign script with Authenticode certificate",
       },
       {

@@ -142,6 +142,12 @@ pub async fn ask_ai(
     settings: AppSettings,
     request: AiAssistantRequest,
 ) -> Result<AiAssistantResponse, AppError> {
+    if settings.disable_ai {
+        return Err(ai_error(
+            "AI_DISABLED",
+            "AI features are disabled in Settings.",
+        ));
+    }
     let question = request.question.trim();
     if question.is_empty() {
         return Err(ai_error("AI_EMPTY_QUESTION", "Type a question first."));
@@ -813,6 +819,25 @@ fn extract_json_object(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ask_ai_refuses_when_disabled() {
+        let settings = AppSettings {
+            disable_ai: true,
+            ..AppSettings::default()
+        };
+        let request = AiAssistantRequest {
+            mode: "ask".into(),
+            question: "hello".into(),
+            script_path: String::new(),
+            script: String::new(),
+            terminal_output: String::new(),
+            diagnostics: String::new(),
+        };
+        let err = tauri::async_runtime::block_on(ask_ai(settings, request))
+            .expect_err("disabled AI must refuse");
+        assert_eq!(err.code, "AI_DISABLED");
+    }
 
     #[test]
     fn parse_json_response_with_code() {

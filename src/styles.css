@@ -487,6 +487,52 @@ textarea:focus {
   background: var(--border-primary);
 }
 
+/* Menu bar (File / Edit / View / Help) */
+.menubar-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--ui-font-size-sm);
+  transition: background-color 0.15s ease;
+}
+
+.menubar-btn:hover:not(:disabled),
+.menubar-btn-open {
+  background: var(--bg-hover);
+}
+
+.menu-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.menu-shortcut {
+  color: var(--text-muted);
+  font-size: var(--ui-font-size-xs);
+  flex-shrink: 0;
+}
+
+.menu-header {
+  padding: 6px 10px 2px;
+  color: var(--text-muted);
+  font-size: var(--ui-font-size-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.menu-check {
+  display: inline-block;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--text-accent);
+}
+
 /* Editor tabs */
 .tab-item {
   position: relative;
