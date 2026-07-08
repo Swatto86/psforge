@@ -8,6 +8,31 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 5 (v1.4.0) — multi-agent sweep of the menu-bar rework + AI kill-switch, 10 findings (8 fixed, 2 rejected)
+
+Five lenses (correctness, lost-access, contract, edge-cases, docs-consistency) over the UI-rework diff, each finding adversarially verified.
+
+### HIGH
+
+- [x] **S5-1** — Menu-bar dropdown desynced from shortcut-opened modals: File menu open → `Ctrl+,` opens Settings over it → `Ctrl+,` closes → stale dropdown reappears. Toolbar now closes any open menu whenever a modal (`settingsOpen`, `commandPaletteOpen`, `shortcutPanelOpen`, `showAbout`, `showSigningDialog`) opens.
+- [-] **S5-2** — "Click-to-switch needs two clicks": with a menu open, hover already switches the dropdown to the hovered header, so a subsequent click closes it. Rejected — this exactly matches native Windows/VS Code menu-bar behavior (click on an already-open header closes the bar).
+
+### MEDIUM
+
+- [-] **S5-3** — Disabling AI while an assistant request is in flight silently discards the response (setState on unmounted pane is a React no-op). Rejected as by-design: the user explicitly killed AI; dropping the pending answer is the intent and nothing leaks.
+
+### LOW
+
+- [x] **S5-4** — Keyboard Tab-away left a dropdown open (no focusout handling). Menu bar now closes when focus moves outside it.
+- [x] **S5-5** — Session restore could mount the Assistant pane for one frame before settings (and `disableAi`) loaded. Render is now gated on `aiEnabled` in addition to the corrective effect.
+- [x] **S5-6** — File → Recent silently dropped from 15 to 10 entries vs the old Recent dropdown. Restored to 15.
+- [x] **S5-7** — No serde round-trip test for the new `disable_ai` field (same failure shape as the historical `showDebuggerTools` persistence bug). Added `disable_ai_round_trips` plus an `ask_ai_refuses_when_disabled` guard test.
+- [x] **S5-8** — `KeyboardShortcutPanel` header comment still referenced the removed toolbar "?" button. Updated to Help → Keyboard Shortcuts.
+- [x] **S5-9** — Shortcut panel rows pointed at removed toolbar icon buttons ("Toolbar: Profile/Print/Sign button"). Now reference the File menu entries.
+- [x] **S5-10** — Welcome pane step 3 hardcoded "Copy for AI" even with AI disabled. Label and hint now follow `disableAi`.
+
+---
+
 ## Sweep 4 (v1.3.5) — user-facing bug sweep + regression sweep
 
 Focused pass over release/version surfaces, About, Settings file associations, and existing gates.
