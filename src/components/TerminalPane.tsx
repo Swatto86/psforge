@@ -1095,15 +1095,22 @@ export function TerminalPane() {
       },
     ) => runCommandInLocalTerminal(command, options);
     w.__psforge_terminal_restart = () => getActiveHandle()?.restart();
-    // A lineCount argument only ever comes from run-output consumers (Copy
-    // Last Run, debug bundle, AI context) pairing it with the run-output line
-    // count below — both must read the tab that ran the script, not whichever
-    // console sub-tab is active (S6-20). The no-arg form stays active-tab:
-    // that's "Copy Output" of the console the user is looking at.
+    // "Copy Output" semantics: the console the user is looking at.
     w.__psforge_terminal_get_content = (lineCount?: number) =>
-      lineCount !== undefined
-        ? ((getRunHandle() ?? getActiveHandle())?.getContent(lineCount) ?? "")
-        : (getActiveHandle()?.getContent() ?? "");
+      getActiveHandle()?.getContent(lineCount) ?? "";
+    // Run-output semantics (Copy Last Run, debug bundle, AI context): the tab
+    // that ran the script — including the marker-evicted no-count fallback,
+    // which previously leaked back to the active tab (S6-20 round 4). If the
+    // run's tab was closed its output is gone: return "" rather than silently
+    // reading a different terminal. Before any run, fall back to the active
+    // tab (legacy "no baseline → whole scrollback" behavior).
+    w.__psforge_terminal_get_run_content = (lineCount?: number) => {
+      const runTabId = lastRunTabIdRef.current;
+      if (runTabId) {
+        return sessionRefs.current[runTabId]?.getContent(lineCount) ?? "";
+      }
+      return getActiveHandle()?.getContent(lineCount) ?? "";
+    };
     w.__psforge_terminal_get_run_output_line_count = () =>
       getRunHandle()?.getRunOutputLineCount() ?? null;
     w.__psforge_terminal_is_ready = () => getActiveHandle()?.isReady() ?? false;
@@ -1122,6 +1129,7 @@ export function TerminalPane() {
       delete w.__psforge_terminal_run_command;
       delete w.__psforge_terminal_restart;
       delete w.__psforge_terminal_get_content;
+      delete w.__psforge_terminal_get_run_content;
       delete w.__psforge_terminal_get_run_output_line_count;
       delete w.__psforge_terminal_is_ready;
       delete w.__psforge_terminal_submit_current_input;

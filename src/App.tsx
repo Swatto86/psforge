@@ -984,13 +984,14 @@ function AppInner() {
       }
 
       // [DBG]: prompt indicates the PowerShell debugger is paused and ready
-      // for continue/step commands. Require the prompt's trailing ">>" too:
-      // a bare substring match let ordinary script output like
-      // `Write-Host "[DBG]: cache miss"` flip the UI into a fake paused state
-      // and queue inspector commands into the still-running script's stdin
-      // (S6-18). The real prompt is `[DBG]: PS C:\...>>` (or the nested
-      // `[DBG]: [Process:..]: ... >>` variants), all ending in ">>".
-      if (/\[DBG\]:.*>>/.test(trimmed)) {
+      // for continue/step commands. Require the prompt's trailing ">>" at the
+      // END of the line: a bare substring match let ordinary script output
+      // like `Write-Host "[DBG]: cache miss"` flip the UI into a fake paused
+      // state and queue inspector commands into the still-running script's
+      // stdin (S6-18); an unanchored ">>" still matched mid-line text like
+      // "[DBG]: queue >> flushed". The real prompt is `[DBG]: PS C:\...>>`
+      // (or nested `[DBG]: [Process:..]: ... >>` variants), always line-final.
+      if (/\[DBG\]:.*>>$/.test(trimmed)) {
         // Sync refs first: the dispatch won't be visible until the next
         // render, but refreshDebugInspector's guard runs right now (S6-14).
         isDebuggingRef.current = true;

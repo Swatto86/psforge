@@ -23,6 +23,18 @@ export async function copyTerminalOutputToClipboard(
   return true;
 }
 
+/** Read plain-text content from the console tab that ran the last script.
+ *  Falls back to the active tab only when no run has happened yet; returns ""
+ *  when the run's tab has been closed (its output is gone — silently reading
+ *  a different terminal would be wrong, S6-20). */
+export function getRunTerminalPlainContent(lineCount?: number): string {
+  const w = window as unknown as Record<string, unknown>;
+  const getContent = w.__psforge_terminal_get_run_content as
+    | ((count?: number) => string)
+    | undefined;
+  return stripAnsi(getContent?.(lineCount) ?? "");
+}
+
 /**
  * Number of output lines since the last run started, tracked by a
  * reflow/eviction-safe xterm marker in TerminalPane (S3-13). Returns null when
@@ -40,10 +52,13 @@ export async function copyLastRunOutputToClipboard(): Promise<boolean> {
   const count = getRunOutputLineCount();
   // count === 0 means the last run produced no output — copy nothing rather
   // than dumping the whole prior scrollback. Only a null baseline (no run yet,
-  // or the run-start row was evicted) falls back to the full scrollback.
+  // or the run-start row was evicted) falls back to the full scrollback —
+  // still read from the tab that ran the script, not the active one (S6-20).
   if (count === 0) return false;
   const text =
-    count !== null ? getTerminalPlainContent(count) : getTerminalPlainContent();
+    count !== null
+      ? getRunTerminalPlainContent(count)
+      : getRunTerminalPlainContent();
   if (!text.trim()) return false;
   await navigator.clipboard.writeText(text);
   return true;

@@ -1,6 +1,6 @@
 import {
   getRunOutputLineCount,
-  getTerminalPlainContent,
+  getRunTerminalPlainContent,
 } from "./terminal-utils";
 import type { EditorTab, LastRunResult, PssaDiagnostic } from "./types";
 import { isPssaErrorSeverity } from "./run-utils";
@@ -109,11 +109,12 @@ export async function copyDebugBundleWithRunOutput(
 ): Promise<boolean> {
   // Reflow/eviction-safe count of the last run's output lines (S3-13).
   // count === 0 means the run produced no output (leave it empty); only a null
-  // baseline (no run / evicted) falls back to the full scrollback.
+  // baseline (no run / evicted) falls back to the full scrollback. Both reads
+  // target the console tab that ran the script, not the active one (S6-20).
   const count = getRunOutputLineCount();
-  let runOutput = count !== null ? getTerminalPlainContent(count) : "";
+  let runOutput = count !== null ? getRunTerminalPlainContent(count) : "";
   if (count === null && !runOutput.trim()) {
-    runOutput = getTerminalPlainContent();
+    runOutput = getRunTerminalPlainContent();
   }
   return copyDebugBundleToClipboard({
     ...input,

@@ -3,7 +3,7 @@ import { askAi } from "../commands";
 import { buildDebugBundleMarkdown } from "../debug-bundle";
 import {
   getRunOutputLineCount,
-  getTerminalPlainContent,
+  getRunTerminalPlainContent,
 } from "../terminal-utils";
 import type { AiMode } from "../types";
 import { useAppState, newTabId, untitledCounter } from "../store";
@@ -11,9 +11,10 @@ import { useAppState, newTabId, untitledCounter } from "../store";
 function getLastRunOutput(): string {
   const count = getRunOutputLineCount();
   if (count === 0) return "";
+  // Read from the tab that ran the script, not the active one (S6-20).
   return count !== null
-    ? getTerminalPlainContent(count)
-    : getTerminalPlainContent();
+    ? getRunTerminalPlainContent(count)
+    : getRunTerminalPlainContent();
 }
 
 function modeQuestion(mode: AiMode, current: string): string {

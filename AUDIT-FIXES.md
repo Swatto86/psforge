@@ -8,7 +8,7 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
-## Sweep 6 (v1.4.2) — full-repo multi-agent sweep, three rounds, 20 findings (20 fixed)
+## Sweep 6 (v1.4.2) — full-repo multi-agent sweep, four rounds, 23 findings (23 fixed)
 
 Four parallel lenses over the whole codebase (Rust backend, frontend logic, React components, TS↔Rust contracts), each finding adversarially verified against the source before fixing. The contracts lens returned no findings (all 50 commands, 6 events, 58 settings fields, capabilities, and CI/release workflows verified clean).
 
@@ -49,6 +49,12 @@ Four parallel lenses over the whole codebase (Rust backend, frontend logic, Reac
 - [x] **S6-18** (HIGH) — Debugger pause detection matched the bare substring `[DBG]:` in script output, so a script logging `Write-Host "[DBG]: …"` flipped the UI into a fake paused state and queued inspector commands into the still-running script's stdin (later swallowed by any `Read-Host`). The match now also requires the prompt's trailing `>>`.
 - [x] **S6-19** (MEDIUM, narrowed from the reported HIGH) — Closing the window mid-run left the hidden persistent PowerShell host executing the script indefinitely (forever, for an infinite loop). One refuter empirically showed an *idle* host self-terminates when the app's stdin pipe closes, so the fix targets the real gap: a `RunEvent::Exit` handler hard-kills the host only when a command is still active (`kill_active_run_on_exit`), keeping normal exits instant.
 - [x] **S6-20** (HIGH) — "Copy Last Run", the debug bundle, and the AI run-context read whichever console **sub-tab was currently active**, not the tab that ran the script: after opening a second console (+ Local / + Remote), they silently returned the wrong terminal's scrollback. TerminalPane now tracks the last-run tab and routes the run-output bridges (`get_run_output_line_count`, and `get_content` when called with a line count) to it.
+
+### Round 4 — verification of the round-3 commit (3 reviewers, paired refuters; 3 findings, 3 fixed)
+
+- [x] **S6-21** (HIGH) — The S6-20 routing only applied when a line count was passed, but all three run-output consumers fall back to a **no-count** read when the run-start marker was evicted (verbose runs) — and that path still read the active tab. Run-output reads now go through a dedicated `get_run_content` bridge / `getRunTerminalPlainContent` helper covering both branches; `get_content` reverts to pure active-tab "Copy Output" semantics.
+- [x] **S6-22** (MEDIUM) — `lastRunTabIdRef` outlived its console tab: with the run's tab closed, run-output reads silently fell back to whichever tab was active. The `get_run_content` bridge now returns "" when the run's tab is gone (the output no longer exists) and only uses the active tab when no run has happened yet.
+- [x] **S6-23** (MEDIUM) — The S6-18 prompt regex was unanchored, so `[DBG]: queue >> flushed` in script output still faked a pause. The `>>` must now be line-final (`/\[DBG\]:.*>>$/`), matching every real `[DBG]: … >>` prompt shape.
 
 ---
 
