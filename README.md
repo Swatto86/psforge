@@ -14,7 +14,7 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.4.8](https://github.com/Swatto86/psforge/releases/tag/v1.4.8)
+**Current version:** [1.4.9](https://github.com/Swatto86/psforge/releases/tag/v1.4.9)
 
 ## AI-assisted workflow (paste → run → debug)
 
@@ -66,6 +66,7 @@ Optional repo file **`.psforge.json`** next to your scripts (walks up from opene
 | `F8` | Run selection or current line |
 | `Shift+F5` | Stop |
 | `Ctrl+Shift+P` | Command palette (copy debug bundle, output, …) |
+| `Ctrl+Shift+E` | Explain selection with AI (popover; also in right-click menu) |
 | `Ctrl+F1` | Full shortcut list |
 
 After paste, a **toast** summarizes cleanup (fences removed, smart quotes fixed, etc.).

@@ -27,7 +27,13 @@ import { getMonacoThemeData, monacoThemeName } from "../themes";
 import { getPsMonarchGrammar } from "../ps-grammar";
 import type { DebugBreakpoint, PsCompletion, ThemeName } from "../types";
 import { WelcomePane } from "./WelcomePane";
-import { analyzeScript, getCompletions } from "../commands";
+import { analyzeScript, askAi, getCompletions } from "../commands";
+import {
+  buildExplainQuestion,
+  setExplainHandoff,
+  EXPLAIN_HANDOFF_EVENT,
+} from "../explain-selection";
+import { ExplainPopover, type ExplainStatus } from "./ExplainPopover";
 import {
   pasteSanitizeOptionsFromSettings,
   sanitizePastedTextWithSummary,
@@ -278,6 +284,39 @@ export function EditorPane() {
   const breakpointDecorationsRef = useRef<string[]>([]);
   const bookmarkDecorationsRef = useRef<string[]>([]);
   const contextMenuLineRef = useRef<number | null>(null);
+
+  // --- Explain Selection (AI) popover state ---
+  const [explain, setExplain] = useState<{
+    top: number;
+    left: number;
+    status: ExplainStatus;
+    text: string;
+    meta: string;
+    question: string;
+  } | null>(null);
+  // Monotonic id so a stale ask_ai response (tab switched, popover closed,
+  // action re-triggered) can never overwrite a newer popover's content.
+  const explainReqRef = useRef(0);
+  // Monaco context key gating the context-menu entry on the AI master switch.
+  const explainAiKeyRef = useRef<{ set(value: boolean): void } | null>(null);
+
+  const closeExplain = useCallback(() => {
+    explainReqRef.current++;
+    setExplain(null);
+  }, []);
+
+  // Close the popover when the active tab changes — its anchor position and
+  // question belong to the previous tab's editor.
+  useEffect(() => {
+    closeExplain();
+  }, [activeTab?.id, closeExplain]);
+
+  // Keep the context key in sync with the AI master switch, and drop any open
+  // popover the moment AI is disabled.
+  useEffect(() => {
+    explainAiKeyRef.current?.set(!state.settings.disableAi);
+    if (state.settings.disableAi) closeExplain();
+  }, [state.settings.disableAi, monacoReady, closeExplain]);
 
   // Dispose the completion provider when the component unmounts.
   useEffect(() => {
@@ -691,6 +730,93 @@ export function EditorPane() {
         },
       });
 
+      // --- Explain Selection (AI) ---
+      // Context key so the menu entry disappears (and the keybinding refuses)
+      // while the disableAi master switch is on.
+      explainAiKeyRef.current = editor.createContextKey<boolean>(
+        "psforgeAiEnabled",
+        !settingsRef.current.disableAi,
+      );
+
+      const runExplainSelection = async () => {
+        if (settingsRef.current.disableAi) return;
+        if (!activeTab || activeTab.tabType === "welcome") return;
+        const model = editor.getModel();
+        const selection = editor.getSelection();
+        if (!model || !selection || selection.isEmpty()) return;
+        const selectedText = model.getValueInRange(selection);
+        if (!selectedText.trim()) return;
+
+        const { question } = buildExplainQuestion(
+          selectedText,
+          selection.startLineNumber,
+          selection.endLineNumber,
+        );
+
+        // Anchor just below the end of the selection, clamped into the editor.
+        const domNode = editor.getDomNode();
+        const paneWidth = domNode?.clientWidth ?? 600;
+        const paneHeight = domNode?.clientHeight ?? 400;
+        const anchor = editor.getScrolledVisiblePosition(
+          selection.getEndPosition(),
+        );
+        const POPOVER_WIDTH = 420;
+        const left = Math.max(
+          8,
+          Math.min(anchor?.left ?? 40, paneWidth - POPOVER_WIDTH - 8),
+        );
+        const top = Math.max(
+          8,
+          Math.min(
+            (anchor ? anchor.top + anchor.height : 36) + 4,
+            paneHeight - 160,
+          ),
+        );
+
+        const reqId = ++explainReqRef.current;
+        setExplain({ top, left, status: "loading", text: "", meta: "", question });
+        try {
+          const response = await askAi(settingsRef.current, {
+            mode: "ask",
+            question,
+            scriptPath: activeTab.filePath || activeTab.title,
+            script: model.getValue(),
+            terminalOutput: "",
+            diagnostics: "",
+          });
+          if (explainReqRef.current !== reqId) return;
+          setExplain((prev) =>
+            prev && {
+              ...prev,
+              status: "done",
+              text: response.answer,
+              meta: `${response.provider} · ${response.model}`,
+            },
+          );
+        } catch (err) {
+          if (explainReqRef.current !== reqId) return;
+          const message =
+            err && typeof err === "object" && "message" in err
+              ? String((err as { message: unknown }).message)
+              : String(err);
+          setExplain((prev) => prev && { ...prev, status: "error", text: message });
+        }
+      };
+
+      editor.addAction({
+        id: "psforge-explain-selection",
+        label: "Explain Selection (AI)",
+        contextMenuGroupId: "navigation",
+        contextMenuOrder: 1.8,
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE,
+        ],
+        precondition: "editorHasSelection && psforgeAiEnabled",
+        run: () => {
+          void runExplainSelection();
+        },
+      });
+
       // PowerShell IntelliSense provider lifecycle is owned by the
       // `state.settings.enableIntelliSense` effect below. We deliberately do
       // NOT register it here on mount — the previous code registered, the
@@ -914,8 +1040,34 @@ export function EditorPane() {
     return <WelcomePane />;
   }
 
+  const openExplainInAssistant = () => {
+    if (!explain) return;
+    setExplainHandoff({
+      question: explain.question,
+      answer: explain.status === "done" ? explain.text : "",
+      meta: explain.meta,
+    });
+    dispatch({ type: "SET_BOTTOM_TAB", tab: "assistant" });
+    // Already-mounted pane consumes via this event; a lazily-mounting pane
+    // takes the pending handoff on mount instead.
+    window.dispatchEvent(new CustomEvent(EXPLAIN_HANDOFF_EVENT));
+    closeExplain();
+  };
+
   return (
-    <Editor
+    <div className="relative h-full min-h-0">
+      {explain && (
+        <ExplainPopover
+          top={explain.top}
+          left={explain.left}
+          status={explain.status}
+          text={explain.text}
+          meta={explain.meta}
+          onClose={closeExplain}
+          onOpenInAssistant={openExplainInAssistant}
+        />
+      )}
+      <Editor
       key={activeTab.id}
       height="100%"
       language={activeTab.language}
@@ -982,6 +1134,7 @@ export function EditorPane() {
           Loading editor...
         </div>
       }
-    />
+      />
+    </div>
   );
 }

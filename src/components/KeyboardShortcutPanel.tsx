@@ -91,6 +91,10 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "Ctrl+,", description: "Open Settings" },
       { keys: "Ctrl+B", description: "Toggle sidebar" },
       { keys: "F1", description: "Context help for token/command under cursor" },
+      {
+        keys: "Ctrl+Shift+E",
+        description: "Explain selection with AI (popover; needs AI enabled)",
+      },
       { keys: "Ctrl+F1", description: "Open this keyboard shortcut reference" },
       { keys: "Escape", description: "Close palette / settings / this panel" },
     ],

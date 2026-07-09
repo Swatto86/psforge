@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { askAi } from "../commands";
+import { takeExplainHandoff, EXPLAIN_HANDOFF_EVENT } from "../explain-selection";
 import { buildDebugBundleMarkdown } from "../debug-bundle";
 import {
   getRunOutputLineCount,
@@ -46,6 +47,27 @@ export function AssistantPane() {
   }, [codeTab, state.problems]);
 
   const hasCodeTab = !!codeTab;
+
+  // Consume an "Explain Selection" popover handoff: on mount (pane was not
+  // visible when the popover fired the event) and via the event (pane already
+  // mounted). The question is prefilled so the user can follow up.
+  const applyExplainHandoff = useCallback(() => {
+    const handoff = takeExplainHandoff();
+    if (!handoff) return;
+    setMode("ask");
+    setQuestion(handoff.question);
+    setAnswer(handoff.answer);
+    setCode("");
+    setCodeTabId(null);
+    setMeta(handoff.meta);
+    setError("");
+  }, []);
+  useEffect(() => {
+    applyExplainHandoff();
+    window.addEventListener(EXPLAIN_HANDOFF_EVENT, applyExplainHandoff);
+    return () =>
+      window.removeEventListener(EXPLAIN_HANDOFF_EVENT, applyExplainHandoff);
+  }, [applyExplainHandoff]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
