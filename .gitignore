@@ -28,3 +28,4 @@ PROGRESS.md
 
 # Local agent/tooling config
 .claude/
+tsconfig.tsbuildinfo
