@@ -134,6 +134,22 @@ function global:Connect-ExchangeOnline {
     & $cmdlet @RemainingArgs
 }
 
+# Runs the script staged by PSForge (F5 / Run). The optional argument is
+# purely cosmetic: PSForge submits `psrun 'ScriptName.ps1'` so the echoed
+# command line shows the script's name instead of the wrapper plumbing.
+function global:psrun {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [object[]]$DisplayName
+    )
+    $runFile = $env:PSFORGE_RUN_FILE
+    if (-not $runFile -or -not (Test-Path -LiteralPath $runFile)) {
+        Write-Warning 'No PSForge run is staged. Use Run (F5) in PSForge.'
+        return
+    }
+    & $runFile
+}
+
 # VS Code-style shell integration markers for rich terminal UX.
 # A = prompt start, B = prompt end, D = command finished with exit code,
 # E = command line submitted, P;Cwd=... = current working directory.
@@ -310,6 +326,11 @@ pub async fn start_terminal(
     cmd.arg(bootstrap_command);
     cmd.env("TERM", "xterm-256color");
     cmd.env("PSFORGE_PTY_HOST", "1");
+    // Where prepare_terminal_script_command stages the run wrapper; the
+    // bootstrap's `psrun` executes it so runs echo as `psrun 'Name.ps1'`.
+    if let Ok(run_file) = crate::utils::pending_terminal_run_path() {
+        cmd.env("PSFORGE_RUN_FILE", run_file.as_os_str());
+    }
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| AppError {
         code: "TERMINAL_SPAWN_FAILED".to_string(),

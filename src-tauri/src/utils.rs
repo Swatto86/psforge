@@ -78,6 +78,21 @@ fn psforge_temp_dir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// Fixed per-app-process path where the next terminal run's wrapper script is
+/// staged. PTY sessions receive it via the PSFORGE_RUN_FILE env var so the
+/// bootstrap's `psrun` function can execute it, keeping the echoed command
+/// line down to `psrun 'ScriptName.ps1'` instead of the full wrapper text.
+/// The `psforge_terminal_run_` prefix keeps it covered by stale-file cleanup.
+// ponytail: one staged run per app process; per-terminal-session files if
+// concurrent runs across terminal tabs ever become a thing (runs are
+// currently serialized by SET_RUNNING).
+pub(crate) fn pending_terminal_run_path() -> std::io::Result<PathBuf> {
+    Ok(psforge_temp_dir()?.join(format!(
+        "psforge_terminal_run_pending_{}.ps1",
+        std::process::id()
+    )))
+}
+
 /// Writes `content` to a unique file in the system temp directory using
 /// create_new(true), preventing accidental overwrite of pre-existing files.
 pub(crate) fn write_secure_temp_file(

@@ -121,16 +121,18 @@ fn resolve_terminal_working_dir(working_dir: &str) -> Result<String, AppError> {
 // Script Execution
 // ---------------------------------------------------------------------------
 
-/// Prepares a one-shot PowerShell command line for execution inside the
-/// integrated terminal.
+/// Prepares a terminal run: stages a wrapper script at the fixed
+/// PSFORGE_RUN_FILE path and returns the short command to type into the
+/// terminal (`psrun 'DisplayName'`), so the echoed line shows only the
+/// script's name instead of the full temp-file plumbing.
 ///
-/// The returned command:
+/// The staged wrapper:
 /// - launches the selected PowerShell executable as a child process,
 /// - runs the provided script from a secure temp file,
 /// - executes within the requested working directory,
 /// - optionally applies an execution policy override, and
-/// - removes the temp file afterwards so terminal-driven runs do not leave
-///   stale wrapper scripts behind.
+/// - removes both temp files afterwards so terminal-driven runs do not
+///   leave stale wrapper scripts behind.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn prepare_terminal_script_command(
     ps_path: String,
@@ -138,6 +140,7 @@ pub async fn prepare_terminal_script_command(
     working_dir: String,
     exec_policy: String,
     script_args: Option<Vec<String>>,
+    display_name: Option<String>,
 ) -> Result<String, AppError> {
     info!(
         "prepare_terminal_script_command called with ps_path={}",
@@ -160,38 +163,66 @@ pub async fn prepare_terminal_script_command(
     let user_script_path_lossy = user_script_path.to_string_lossy();
     let user_script_path_ps = ps_single_quoted(user_script_path_lossy.as_ref());
 
-    let mut command = String::new();
-    command.push_str("& { ");
-    command.push_str("Push-Location -LiteralPath '");
-    command.push_str(&work_dir_ps);
-    command.push_str("'; ");
-    command.push_str("try { $__psforge_script_args = @(");
+    let pending_path = crate::utils::pending_terminal_run_path().map_err(|e| AppError {
+        code: "SCRIPT_WRITE_FAILED".to_string(),
+        message: format!("Failed to resolve staged run path: {}", e),
+    })?;
+    let pending_path_lossy = pending_path.to_string_lossy();
+    let pending_path_ps = ps_single_quoted(pending_path_lossy.as_ref());
+
+    let mut wrapper = String::new();
+    wrapper.push_str("Push-Location -LiteralPath '");
+    wrapper.push_str(&work_dir_ps);
+    wrapper.push_str("'\n");
+    wrapper.push_str("try { $__psforge_script_args = @(");
     if let Some(args) = script_args.as_deref() {
         for (index, arg) in args.iter().enumerate() {
             if index > 0 {
-                command.push_str(", ");
+                wrapper.push_str(", ");
             }
-            command.push('\'');
-            command.push_str(&ps_single_quoted(arg));
-            command.push('\'');
+            wrapper.push('\'');
+            wrapper.push_str(&ps_single_quoted(arg));
+            wrapper.push('\'');
         }
     }
-    command.push_str("); & '");
-    command.push_str(&ps_path_ps);
-    command.push_str("' -NoLogo -NoProfile ");
+    wrapper.push_str("); & '");
+    wrapper.push_str(&ps_path_ps);
+    wrapper.push_str("' -NoLogo -NoProfile ");
     if exec_policy != "Default" {
-        command.push_str("-ExecutionPolicy '");
-        command.push_str(&ps_single_quoted(&exec_policy));
-        command.push_str("' ");
+        wrapper.push_str("-ExecutionPolicy '");
+        wrapper.push_str(&ps_single_quoted(&exec_policy));
+        wrapper.push_str("' ");
     }
-    command.push_str("-File '");
-    command.push_str(&user_script_path_ps);
-    command
+    wrapper.push_str("-File '");
+    wrapper.push_str(&user_script_path_ps);
+    wrapper
         .push_str("' @__psforge_script_args } finally { Pop-Location; Remove-Item -LiteralPath '");
-    command.push_str(&user_script_path_ps);
-    command.push_str("' -Force -ErrorAction SilentlyContinue } }");
+    wrapper.push_str(&user_script_path_ps);
+    wrapper.push_str("' -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '");
+    wrapper.push_str(&pending_path_ps);
+    wrapper.push_str("' -Force -ErrorAction SilentlyContinue }\n");
 
-    Ok(command)
+    if let Err(e) = std::fs::write(&pending_path, wrapper.as_bytes()) {
+        let _ = std::fs::remove_file(&user_script_path);
+        return Err(AppError {
+            code: "SCRIPT_WRITE_FAILED".to_string(),
+            message: format!("Failed to stage terminal run script: {}", e),
+        });
+    }
+
+    // The display name on the psrun line is cosmetic; strip control chars so a
+    // hostile tab title cannot inject a second command into the terminal.
+    let display = display_name.unwrap_or_default();
+    let display = display
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>();
+    let display = display.trim();
+    if display.is_empty() {
+        Ok("psrun".to_string())
+    } else {
+        Ok(format!("psrun '{}'", ps_single_quoted(display)))
+    }
 }
 
 /// Executes a script in debugger mode with line breakpoints.

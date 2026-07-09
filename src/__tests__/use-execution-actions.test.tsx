@@ -217,6 +217,7 @@ describe("useExecutionActions", () => {
       "C:\\Scripts",
       "Default",
       [],
+      tab.title,
     );
     expect(runCommandInTerminal).toHaveBeenCalledWith("prepared-command", {
       clearBeforeRun: false,

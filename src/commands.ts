@@ -52,8 +52,9 @@ export async function executeScriptDebug(
   });
 }
 
-/** Build a terminal-safe command string that runs the given script via the
- * selected PowerShell executable inside the integrated terminal.
+/** Stage a script run and get back the short command to type into the
+ * integrated terminal (`psrun 'displayName'`). The displayName is cosmetic:
+ * it is what the echoed command line shows in place of the wrapper plumbing.
  */
 export async function prepareTerminalScriptCommand(
   psPath: string,
@@ -61,6 +62,7 @@ export async function prepareTerminalScriptCommand(
   workingDir: string,
   execPolicy: string,
   scriptArgs: string[] = [],
+  displayName = "",
 ): Promise<string> {
   return invoke<string>("prepare_terminal_script_command", {
     psPath,
@@ -68,6 +70,7 @@ export async function prepareTerminalScriptCommand(
     workingDir,
     execPolicy,
     scriptArgs,
+    displayName,
   });
 }
 

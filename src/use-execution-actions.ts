@@ -857,6 +857,7 @@ export function useExecutionActions({
         workingDir,
         current.settings.executionPolicy,
         scriptArgs,
+        tab.title,
       );
       return runCommandInTerminal(command, {
         clearBeforeRun: current.settings.clearOutputOnRun !== false,
@@ -1283,6 +1284,8 @@ export function useExecutionActions({
         runText,
         workDir,
         current.settings.executionPolicy,
+        [],
+        `${tab.title} (selection)`,
       );
       const exitCode = await runCommandInTerminal(command, {
         clearBeforeRun: current.settings.clearOutputOnRun !== false,
@@ -1308,6 +1311,8 @@ export function useExecutionActions({
               runText,
               fallbackWorkDir,
               current.settings.executionPolicy,
+              [],
+              `${tab.title} (selection)`,
             );
             const exitCode = await runCommandInTerminal(retryCommand, {
               clearBeforeRun: current.settings.clearOutputOnRun !== false,

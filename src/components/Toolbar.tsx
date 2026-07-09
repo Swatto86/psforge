@@ -138,6 +138,17 @@ export function Toolbar({
     action();
   };
 
+  const exitApp = async () => {
+    try {
+      // close() (not destroy) so the close-requested handler can flush any
+      // pending settings first.
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().close();
+    } catch {
+      // Window API unavailable (tests / browser preview): nothing to close.
+    }
+  };
+
   const openWelcomePage = () => {
     const fn = (window as unknown as Record<string, unknown>)
       .__psforge_openWelcome as (() => void) | undefined;
@@ -261,6 +272,8 @@ export function Toolbar({
                 shortcut="Ctrl+,"
                 onClick={menuAction(() => dispatch({ type: "TOGGLE_SETTINGS" }))}
               />
+              <div className="menu-separator" />
+              <MenuItem label="Exit" onClick={menuAction(() => void exitApp())} />
             </div>
           )}
         </div>
