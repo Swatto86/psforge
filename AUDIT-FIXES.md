@@ -8,6 +8,26 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 7 (v1.4.5) — post-extract bug sweep + regression pass
+
+Focused pass over the `use-execution-actions` extract and run/debug outcome surfaces.
+
+### HIGH
+
+- [x] **S7-1** — `isDebuggingRef` / `debugPausedRef` were re-mirrored from React state on every render. A break handler sets them synchronously alongside `dispatch`, but any unrelated re-render before the reducer commits wiped the live pause latch back to the previous state — Continue / step / inspector refresh silently no-op'd (same failure class as S6-14). Refs are now owned only by the session handlers; render no longer overwrites them.
+- [x] **S7-2** — Debug session completion only cleared `isRunning` / `runGuard` via the `ps-complete` event. A missed or late emit left Run permanently disabled. `startDebugSession` now records the exit code and always clears running/debug state in `finally` when `executeScriptDebug` resolves.
+
+### MEDIUM
+
+- [x] **S7-3** — Debug and F8 (selection) runs never wrote `lastRunResult`, so the status bar and debug bundle reported "none yet" after a successful debug/selection run. Both paths now set `SET_LAST_RUN_RESULT` on success and failure.
+- [x] **S7-4** — Working-dir fallback for invalid directories skipped only `custom` mode on debug/selection, so a bad **pinned** directory was silently replaced with the file/home fallback (F5 already guarded pinned). Debug and selection now match F5 and refuse to fallback when mode is `pinned`.
+
+### Regression
+
+- [x] Vitest coverage for S7-1 (pause refs survive re-render → `debugContinue` still sends), S7-2/S7-3 (debug records last-run), S7-4 (pinned invalid dir does not retry).
+
+---
+
 ## Sweep 6 (v1.4.2) — full-repo multi-agent sweep, four rounds, 23 findings (23 fixed)
 
 Four parallel lenses over the whole codebase (Rust backend, frontend logic, React components, TS↔Rust contracts), each finding adversarially verified against the source before fixing. The contracts lens returned no findings (all 50 commands, 6 events, 58 settings fields, capabilities, and CI/release workflows verified clean).

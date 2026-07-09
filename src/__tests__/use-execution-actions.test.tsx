@@ -12,8 +12,16 @@ import { DEFAULT_SETTINGS, type EditorTab } from "../types";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
+type ListenHandler = (event: { payload: unknown }) => void;
+const listenHandlers = new Map<string, ListenHandler>();
+
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (event: string, handler: ListenHandler) => {
+    listenHandlers.set(event, handler);
+    return () => {
+      listenHandlers.delete(event);
+    };
+  }),
 }));
 
 vi.mock("../commands", () => ({
@@ -172,6 +180,7 @@ function getActions(): ExecutionActions {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listenHandlers.clear();
   actions = undefined;
   vi.mocked(commands.getScriptParameters).mockResolvedValue([]);
   vi.mocked(commands.prepareTerminalScriptCommand).mockResolvedValue(
@@ -241,5 +250,94 @@ describe("useExecutionActions", () => {
       await firstRun;
       await secondRun;
     });
+  });
+
+  it("records last-run result after a debug session completes", async () => {
+    const tab = codeTab();
+    vi.mocked(commands.executeScriptDebug).mockResolvedValue(7);
+
+    await renderHarness(appState([tab], tab.id), tab);
+    await act(async () => {
+      await getActions().startDebugSession();
+      await flushPromises();
+    });
+
+    expect(commands.executeScriptDebug).toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_LAST_RUN_RESULT",
+      result: expect.objectContaining({ exitCode: 7 }),
+    });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_RUNNING",
+      running: false,
+    });
+  });
+
+  it("keeps pause refs across re-render so continue still sends (S6-14 class)", async () => {
+    const tab = codeTab();
+    let resolveDebug: ((code: number) => void) | undefined;
+    vi.mocked(commands.executeScriptDebug).mockImplementation(
+      () =>
+        new Promise<number>((resolve) => {
+          resolveDebug = resolve;
+        }),
+    );
+
+    await renderHarness(appState([tab], tab.id), tab);
+    await act(async () => {
+      void getActions().startDebugSession();
+      await flushPromises();
+    });
+
+    const breakHandler = listenHandlers.get("ps-debug-break");
+    expect(breakHandler).toBeTypeOf("function");
+    await act(async () => {
+      breakHandler!({ payload: 12 });
+    });
+
+    // Unrelated re-render with pre-break state (isDebugging/debugPaused still
+    // false in React state). Old code mirrored state onto the live refs and
+    // wiped the pause latch, making continue a silent no-op.
+    await renderHarness(appState([tab], tab.id), tab);
+
+    await act(async () => {
+      await getActions().debugContinue();
+      await flushPromises();
+    });
+
+    expect(commands.debugContinue).toHaveBeenCalledTimes(1);
+    resolveDebug?.(0);
+    await act(async () => {
+      await flushPromises();
+    });
+  });
+
+  it("does not fall back from a pinned invalid working dir on selection run", async () => {
+    const tab = codeTab();
+    const err = Object.assign(new Error("missing dir"), {
+      code: "INVALID_WORKING_DIR",
+    });
+    vi.mocked(commands.prepareTerminalScriptCommand).mockRejectedValue(err);
+    (window as unknown as Record<string, unknown>).__psforge_getRunText = () =>
+      "Write-Host sel";
+
+    const state = appState([tab], tab.id);
+    state.settings = {
+      ...state.settings,
+      workingDirMode: "pinned",
+      pinnedRunDir: "C:\\MissingPin",
+    };
+
+    await renderHarness(state, tab);
+    await act(async () => {
+      await getActions().runSelection();
+      await flushPromises();
+    });
+
+    expect(commands.prepareTerminalScriptCommand).toHaveBeenCalledTimes(1);
+    expect(writeTerminalNotice).toHaveBeenCalledWith(
+      expect.stringContaining("Selection run failed"),
+      expect.anything(),
+    );
   });
 });

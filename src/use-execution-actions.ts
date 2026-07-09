@@ -311,8 +311,10 @@ export function useExecutionActions({
       : null;
   debugWatchesRef.current = state.debugWatches;
   debugSelectedFrameRef.current = normalizeFrameIndex(state.debugSelectedFrame);
-  isDebuggingRef.current = state.isDebugging;
-  debugPausedRef.current = state.debugPaused;
+  // isDebuggingRef / debugPausedRef are NOT mirrored from state here: break
+  // handlers set them synchronously in the same tick as dispatch, and an
+  // unrelated re-render before the reducer commits would wipe them back to
+  // the previous state (refresh/Continue no-op — same failure class as S6-14).
   breakpointsRef.current = state.breakpoints;
 
   const fileChangedOnDisk = useCallback(
@@ -698,6 +700,8 @@ export function useExecutionActions({
     runGuardRef.current = true;
     debugSessionRef.current = false;
     debugLocationRef.current = null;
+    isDebuggingRef.current = false;
+    debugPausedRef.current = false;
     dispatch({
       type: "SET_DEBUG_STATE",
       isDebugging: false,
@@ -1011,6 +1015,8 @@ export function useExecutionActions({
         if (paramValues === null) {
           runGuardRef.current = false;
           debugSessionRef.current = false;
+          isDebuggingRef.current = false;
+          debugPausedRef.current = false;
           dispatch({
             type: "SET_DEBUG_STATE",
             isDebugging: false,
@@ -1028,6 +1034,8 @@ export function useExecutionActions({
     }
 
     dispatch({ type: "SET_BOTTOM_TAB", tab: "debugger" });
+    isDebuggingRef.current = true;
+    debugPausedRef.current = false;
     dispatch({
       type: "SET_DEBUG_STATE",
       isDebugging: true,
@@ -1041,8 +1049,20 @@ export function useExecutionActions({
     dispatch({ type: "SET_LAST_RUN_RESULT", result: null });
     dispatch({ type: "SET_RUNNING", running: true });
 
+    const runStartedAt = performance.now();
+    const recordDebugOutcome = (exitCode: number | null) => {
+      const durationMs = Math.max(
+        0,
+        Math.round(performance.now() - runStartedAt),
+      );
+      dispatch({
+        type: "SET_LAST_RUN_RESULT",
+        result: { exitCode, durationMs },
+      });
+    };
+
     try {
-      await cmd.executeScriptDebug(
+      const exitCode = await cmd.executeScriptDebug(
         psPath,
         scriptContent,
         workDir,
@@ -1051,9 +1071,11 @@ export function useExecutionActions({
         scriptArgs,
         current.settings.persistRunspaceBetweenRuns !== false,
       );
+      recordDebugOutcome(exitCode);
     } catch (err) {
       if (
         current.settings.workingDirMode !== "custom" &&
+        current.settings.workingDirMode !== "pinned" &&
         isInvalidWorkingDirError(err)
       ) {
         const fallbackWorkDir = resolveFallbackWorkDir(tab);
@@ -1064,7 +1086,7 @@ export function useExecutionActions({
           );
           dispatch({ type: "SET_WORKING_DIR", dir: fallbackWorkDir });
           try {
-            await cmd.executeScriptDebug(
+            const exitCode = await cmd.executeScriptDebug(
               psPath,
               scriptContent,
               fallbackWorkDir,
@@ -1073,6 +1095,7 @@ export function useExecutionActions({
               scriptArgs,
               current.settings.persistRunspaceBetweenRuns !== false,
             );
+            recordDebugOutcome(exitCode);
             return;
           } catch (retryErr) {
             err = retryErr;
@@ -1086,8 +1109,14 @@ export function useExecutionActions({
         reveal: true,
       });
       dispatch({ type: "SET_VARIABLES", variables: [] });
+      recordDebugOutcome(null);
+    } finally {
+      // Don't rely solely on ps-complete delivery to unstick the UI: invoke
+      // resolution is the ground truth that the debug host finished.
       runGuardRef.current = false;
       debugSessionRef.current = false;
+      isDebuggingRef.current = false;
+      debugPausedRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
       dispatch({
         type: "SET_DEBUG_STATE",
@@ -1231,6 +1260,18 @@ export function useExecutionActions({
       platformHomeFallback,
     );
 
+    const runStartedAt = performance.now();
+    const recordSelectionOutcome = (exitCode: number | null) => {
+      const durationMs = Math.max(
+        0,
+        Math.round(performance.now() - runStartedAt),
+      );
+      dispatch({
+        type: "SET_LAST_RUN_RESULT",
+        result: { exitCode, durationMs },
+      });
+    };
+
     try {
       const command = await cmd.prepareTerminalScriptCommand(
         psPath,
@@ -1238,13 +1279,15 @@ export function useExecutionActions({
         workDir,
         current.settings.executionPolicy,
       );
-      await runCommandInTerminal(command, {
+      const exitCode = await runCommandInTerminal(command, {
         clearBeforeRun: current.settings.clearOutputOnRun !== false,
         reveal: true,
       });
+      recordSelectionOutcome(exitCode);
     } catch (err) {
       if (
         current.settings.workingDirMode !== "custom" &&
+        current.settings.workingDirMode !== "pinned" &&
         isInvalidWorkingDirError(err)
       ) {
         const fallbackWorkDir = resolveFallbackWorkDir(tab);
@@ -1261,10 +1304,11 @@ export function useExecutionActions({
               fallbackWorkDir,
               current.settings.executionPolicy,
             );
-            await runCommandInTerminal(retryCommand, {
+            const exitCode = await runCommandInTerminal(retryCommand, {
               clearBeforeRun: current.settings.clearOutputOnRun !== false,
               reveal: true,
             });
+            recordSelectionOutcome(exitCode);
             return;
           } catch (retryErr) {
             err = retryErr;
@@ -1277,6 +1321,7 @@ export function useExecutionActions({
       await writeTerminalNotice(`[PSForge] Selection run failed: ${message}`, {
         reveal: true,
       });
+      recordSelectionOutcome(null);
     } finally {
       runGuardRef.current = false;
       dispatch({ type: "SET_RUNNING", running: false });
