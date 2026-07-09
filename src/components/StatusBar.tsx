@@ -10,11 +10,21 @@ import * as cmd from "../commands";
 import type { UpdateStatus } from "../types";
 import { FontQuickControls } from "./FontQuickControls";
 import { resolveExecutionWorkDir } from "../run-utils";
+import { applyRunDirPreset } from "../run-dir-presets";
 
 interface StatusBarProps {
   updateStatus: UpdateStatus;
   onCheckForUpdates: () => void;
   onInstallUpdate: () => void;
+}
+
+/** Fixed-width check slot so menu labels align whether checked or not. */
+function MenuCheck({ on }: { on: boolean }) {
+  return on ? (
+    <span style={{ color: "var(--text-accent)" }}>&#10003;</span>
+  ) : (
+    <span style={{ width: "12px", display: "inline-block" }} />
+  );
 }
 
 function formatUpdateProgress(
@@ -39,7 +49,9 @@ export function StatusBar({
 }: StatusBarProps) {
   const { state, activeTab, dispatch } = useAppState();
   const [showEncodingPicker, setShowEncodingPicker] = useState(false);
+  const [showRunDirMenu, setShowRunDirMenu] = useState(false);
   const encodingRef = useRef<HTMLDivElement>(null);
+  const runDirRef = useRef<HTMLDivElement>(null);
 
   // Close encoding picker on outside click.
   useEffect(() => {
@@ -55,6 +67,18 @@ export function StatusBar({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showEncodingPicker]);
+
+  // Close run-dir menu on outside click.
+  useEffect(() => {
+    if (!showRunDirMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (runDirRef.current && !runDirRef.current.contains(e.target as Node)) {
+        setShowRunDirMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showRunDirMenu]);
 
   const encodingLabel = (enc: string): string => {
     switch (enc) {
@@ -332,37 +356,155 @@ export function StatusBar({
         )}
         {renderUpdateControl()}
         {runCwd && (
-          <button
-            data-testid="status-run-cwd"
-            onClick={() => {
-              const isPinned = state.settings.workingDirMode === "pinned";
-              dispatch({
-                type: "SET_SETTINGS",
-                settings: {
-                  ...state.settings,
-                  // Toggle: clicking a pinned directory unpins it (runs use each
-                  // file's own folder again); clicking an unpinned one pins it.
-                  workingDirMode: isPinned ? "file" : "pinned",
-                  ...(isPinned ? {} : { pinnedRunDir: runCwd }),
-                },
-              });
-            }}
-            title={
-              state.settings.workingDirMode === "pinned"
-                ? `Run directory pinned to ${runCwd}. Click to unpin (runs use each file's folder).`
-                : `Run directory: ${runCwd}. Click to pin it for all runs.`
-            }
-            className="status-link"
-            style={{
-              maxWidth: "220px",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {state.settings.workingDirMode === "pinned" ? "📌 Pinned: " : "Run: "}
-            {runCwd}
-          </button>
+          <div ref={runDirRef} className="relative">
+            <button
+              data-testid="status-run-cwd"
+              onClick={() => setShowRunDirMenu((v) => !v)}
+              title={`Run directory: ${runCwd}. Click to change it.`}
+              className="status-link"
+              style={{
+                maxWidth: "220px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {state.settings.workingDirMode === "pinned"
+                ? "📌 Pinned: "
+                : "Run: "}
+              {runCwd}
+            </button>
+
+            {showRunDirMenu && (
+              <div
+                data-testid="run-dir-menu"
+                className="menu-pop"
+                style={{
+                  bottom: "100%",
+                  right: 0,
+                  marginBottom: "4px",
+                  minWidth: "260px",
+                  maxWidth: "420px",
+                }}
+              >
+                <div className="menu-header">Run directory</div>
+                <button
+                  data-testid="run-dir-use-file"
+                  onClick={() => {
+                    dispatch({
+                      type: "SET_SETTINGS",
+                      settings: {
+                        ...state.settings,
+                        workingDirMode: "file",
+                      },
+                    });
+                    setShowRunDirMenu(false);
+                  }}
+                  className="menu-item flex items-center gap-2"
+                  style={{ fontSize: "var(--ui-font-size-xs)" }}
+                >
+                  <MenuCheck on={state.settings.workingDirMode === "file"} />
+                  Use each file&apos;s own folder
+                </button>
+                <button
+                  data-testid="run-dir-pin-current"
+                  onClick={() => {
+                    dispatch({
+                      type: "SET_SETTINGS",
+                      settings: {
+                        ...state.settings,
+                        workingDirMode: "pinned",
+                        pinnedRunDir: runCwd,
+                      },
+                    });
+                    setShowRunDirMenu(false);
+                  }}
+                  className="menu-item flex items-center gap-2"
+                  style={{ fontSize: "var(--ui-font-size-xs)" }}
+                  title={runCwd}
+                >
+                  <MenuCheck
+                    on={
+                      state.settings.workingDirMode === "pinned" &&
+                      state.settings.pinnedRunDir.trim() === runCwd
+                    }
+                  />
+                  Pin current: {runCwd}
+                </button>
+                <button
+                  data-testid="run-dir-browse"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        const { open } = await import(
+                          "@tauri-apps/plugin-dialog"
+                        );
+                        const selected = await open({
+                          directory: true,
+                          multiple: false,
+                        });
+                        if (typeof selected === "string" && selected.trim()) {
+                          dispatch({
+                            type: "SET_SETTINGS",
+                            settings: {
+                              ...state.settings,
+                              workingDirMode: "pinned",
+                              pinnedRunDir: selected,
+                            },
+                          });
+                        }
+                      } catch {
+                        // dialog unavailable/cancelled
+                      }
+                      setShowRunDirMenu(false);
+                    })();
+                  }}
+                  className="menu-item flex items-center gap-2"
+                  style={{ fontSize: "var(--ui-font-size-xs)" }}
+                >
+                  <MenuCheck on={false} />
+                  Choose folder…
+                </button>
+                {(state.settings.runDirPresets ?? []).filter(
+                  (p) => p.path.trim() !== "",
+                ).length > 0 && (
+                  <>
+                    <div className="menu-header">Presets</div>
+                    {(state.settings.runDirPresets ?? [])
+                      .filter((p) => p.path.trim() !== "")
+                      .map((preset) => (
+                        <button
+                          key={preset.name}
+                          data-testid={`run-dir-preset-${preset.name}`}
+                          onClick={() => {
+                            dispatch({
+                              type: "SET_SETTINGS",
+                              settings: applyRunDirPreset(
+                                state.settings,
+                                preset.name,
+                              ),
+                            });
+                            setShowRunDirMenu(false);
+                          }}
+                          className="menu-item flex items-center gap-2"
+                          style={{ fontSize: "var(--ui-font-size-xs)" }}
+                          title={preset.path}
+                        >
+                          <MenuCheck
+                            on={
+                              state.settings.workingDirMode === "pinned" &&
+                              state.settings.pinnedRunDir.trim() ===
+                                preset.path.trim()
+                            }
+                          />
+                          {preset.name}
+                        </button>
+                      ))}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         )}
         <FontQuickControls />
         {psVersion && <span>{psVersion.name}</span>}

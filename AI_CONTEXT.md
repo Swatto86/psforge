@@ -25,7 +25,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Scratch / project runner | `src/scratch-utils.ts`, `src/project-config.ts`, `src/run-dir-presets.ts` |
 | Phase 3 dialogs | `src/components/ScratchRecoveryDialog.tsx`, `CloseScratchDialog.tsx`, `PssaRunGateDialog.tsx` |
 | Assistant / debug | `src/assistant-mode.ts`, `src/debug-bundle.ts`, `src/paste-summary.ts`, `src/components/ToastStack.tsx` |
-| Status bar | `src/components/StatusBar.tsx` (run CWD pin, font, last run) |
+| Status bar | `src/components/StatusBar.tsx` (run-dir quick-pick menu, font, last run) |
 | Settings | `src/components/SettingsPanel.tsx`, `src-tauri/src/settings.rs` |
 | Types / defaults | `src/types.ts` |
 
@@ -43,6 +43,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-07-09:** Run-directory quick picker + Settings UI rework. The status-bar run-CWD entry is now a popup menu (was a pin/unpin toggle): use file's folder, pin current, choose folder (native dialog), and apply any run-dir preset (`StatusBar.tsx`, reuses `.menu-pop`/`.menu-item`/`.menu-header`). Settings panel reworked: rows are two-column (label + always-visible description on the left, control on the right — the hover-only "i" tooltip bubble is gone; `SettingRow` renders `tooltip` as text), panel enlarged to 960×660 (viewport-clamped), and a new **Run Directory** section holds Working Directory + Run Directory Presets (split out of the overloaded Execution section; Execution keeps Execution Policy). Version **1.4.8**.
 - **2026-07-09:** Bug sweep **8** — user-facing pass. Stop routes Ctrl+C to the run console tab (not the visible one); save/open/format failures write terminal notices; scratch recovery uses `Untitled-N` + dirty; `selectDebugFrame` uses live pause refs. Version **1.4.6**.
 - **2026-07-09:** Bug sweep **7** after the execution-actions extract. Fixed debug pause refs being wiped by render-time state mirroring (Continue/step no-op after break), debug completion always clearing run state + recording last-run exit code, F8 selection recording last-run, and pinned working-dir fallback parity with F5. Version **1.4.5**.
 - **2026-07-08:** Native context menu removed. The WebView's browser right-click menu (Back/Reload/Inspect…) is suppressed app-wide (`main.tsx` document-level `contextmenu` preventDefault — Monaco's and the tab bar's custom menus are unaffected since they don't use the native default). Terminal right-click now **pastes** (classic PowerShell console behavior, `xterm-setup.ts` — `term.paste()` of `navigator.clipboard.readText()`), replacing the native menu that was previously the terminal's only mouse paste path. Version **1.4.3**.

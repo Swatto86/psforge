@@ -29,6 +29,7 @@ import type { RunDirPreset } from "../types";
 type Section =
   | "editor"
   | "execution"
+  | "rundir"
   | "ai"
   | "output"
   | "appearance"
@@ -38,6 +39,7 @@ type Section =
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "editor", label: "Editor" },
   { id: "execution", label: "Execution" },
+  { id: "rundir", label: "Run Directory" },
   { id: "ai", label: "AI" },
   { id: "output", label: "Output" },
   { id: "appearance", label: "Appearance" },
@@ -410,8 +412,8 @@ export function SettingsPanel() {
           border: "1px solid var(--border-primary)",
           fontFamily: "var(--ui-font-family)",
           fontSize: "var(--ui-font-size)",
-          width: "780px",
-          height: "580px",
+          width: "min(960px, calc(100vw - 48px))",
+          height: "min(660px, calc(100vh - 48px))",
         }}
       >
         {/* Left nav */}
@@ -471,7 +473,7 @@ export function SettingsPanel() {
         <div className="flex-1 p-6 overflow-auto">
           {/* EDITOR */}
           {activeSection === "editor" && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
               <SectionHeading>Editor</SectionHeading>
 
               <SettingRow
@@ -730,7 +732,7 @@ export function SettingsPanel() {
 
           {/* EXECUTION */}
           {activeSection === "execution" && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
               <SectionHeading>Execution</SectionHeading>
 
               <SettingRow
@@ -930,6 +932,107 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
+                label="Execution Policy"
+                tooltip="Selects the CurrentUser PowerShell execution policy override."
+              >
+                <div className="flex flex-col gap-2">
+                  <InfoBox warn>
+                    This calls{" "}
+                    <span className="font-mono">
+                      Set-ExecutionPolicy -Scope CurrentUser
+                    </span>
+                    . It affects how PowerShell treats unsigned scripts.
+                    &quot;Default&quot; leaves your existing policy unchanged.
+                  </InfoBox>
+
+                  <select
+                    data-testid="settings-execution-policy"
+                    value={state.settings.executionPolicy ?? "Default"}
+                    onChange={(e) =>
+                      updateSetting("executionPolicy", e.target.value)
+                    }
+                    className="w-48 text-sm"
+                  >
+                    {EXECUTION_POLICIES.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+
+                  <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                    {
+                      POLICY_DESCRIPTIONS[
+                        state.settings.executionPolicy ?? "Default"
+                      ]
+                    }
+                  </p>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => void applyExecutionPolicy()}
+                      disabled={
+                        applyingPolicy ||
+                        !state.selectedPsPath ||
+                        isDefaultPolicy
+                      }
+                      className="px-3 py-1 text-sm rounded"
+                      style={{
+                        backgroundColor: "var(--btn-primary-bg)",
+                        color: "var(--btn-primary-fg)",
+                        opacity:
+                          applyingPolicy ||
+                          !state.selectedPsPath ||
+                          isDefaultPolicy
+                            ? 0.5
+                            : 1,
+                        cursor:
+                          applyingPolicy ||
+                          !state.selectedPsPath ||
+                          isDefaultPolicy
+                            ? "not-allowed"
+                            : "pointer",
+                      }}
+                      title={
+                        isDefaultPolicy
+                          ? "Select a policy other than Default to apply"
+                          : "Apply this policy to CurrentUser scope (no admin required)"
+                      }
+                    >
+                      {applyingPolicy ? "Applying..." : "Apply Policy"}
+                    </button>
+
+                    {execPolicyFeedback && (
+                      <span
+                        className="text-sm"
+                        style={{
+                          color:
+                            execPolicyFeedback.type === "success"
+                              ? "var(--type-string)"
+                              : "var(--stream-stderr)",
+                        }}
+                      >
+                        {execPolicyFeedback.message}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </SettingRow>
+            </div>
+          )}
+
+          {/* RUN DIRECTORY */}
+          {activeSection === "rundir" && (
+            <div className="flex flex-col gap-2">
+              <SectionHeading>Run Directory</SectionHeading>
+
+              <InfoBox>
+                The run directory is the current directory your script runs in
+                (F5). You can also change it quickly from the status bar — click
+                the &quot;Run:&quot; entry at the bottom right.
+              </InfoBox>
+
+              <SettingRow
                 label="Working Directory"
                 tooltip="Sets the current directory used for script execution and relative paths."
               >
@@ -1101,100 +1204,12 @@ export function SettingsPanel() {
                   </button>
                 </div>
               </SettingRow>
-
-              <SettingRow
-                label="Execution Policy"
-                tooltip="Selects the CurrentUser PowerShell execution policy override."
-              >
-                <div className="flex flex-col gap-2">
-                  <InfoBox warn>
-                    This calls{" "}
-                    <span className="font-mono">
-                      Set-ExecutionPolicy -Scope CurrentUser
-                    </span>
-                    . It affects how PowerShell treats unsigned scripts.
-                    &quot;Default&quot; leaves your existing policy unchanged.
-                  </InfoBox>
-
-                  <select
-                    data-testid="settings-execution-policy"
-                    value={state.settings.executionPolicy ?? "Default"}
-                    onChange={(e) =>
-                      updateSetting("executionPolicy", e.target.value)
-                    }
-                    className="w-48 text-sm"
-                  >
-                    {EXECUTION_POLICIES.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-
-                  <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                    {
-                      POLICY_DESCRIPTIONS[
-                        state.settings.executionPolicy ?? "Default"
-                      ]
-                    }
-                  </p>
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => void applyExecutionPolicy()}
-                      disabled={
-                        applyingPolicy ||
-                        !state.selectedPsPath ||
-                        isDefaultPolicy
-                      }
-                      className="px-3 py-1 text-sm rounded"
-                      style={{
-                        backgroundColor: "var(--btn-primary-bg)",
-                        color: "var(--btn-primary-fg)",
-                        opacity:
-                          applyingPolicy ||
-                          !state.selectedPsPath ||
-                          isDefaultPolicy
-                            ? 0.5
-                            : 1,
-                        cursor:
-                          applyingPolicy ||
-                          !state.selectedPsPath ||
-                          isDefaultPolicy
-                            ? "not-allowed"
-                            : "pointer",
-                      }}
-                      title={
-                        isDefaultPolicy
-                          ? "Select a policy other than Default to apply"
-                          : "Apply this policy to CurrentUser scope (no admin required)"
-                      }
-                    >
-                      {applyingPolicy ? "Applying..." : "Apply Policy"}
-                    </button>
-
-                    {execPolicyFeedback && (
-                      <span
-                        className="text-sm"
-                        style={{
-                          color:
-                            execPolicyFeedback.type === "success"
-                              ? "var(--type-string)"
-                              : "var(--stream-stderr)",
-                        }}
-                      >
-                        {execPolicyFeedback.message}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </SettingRow>
             </div>
           )}
 
           {/* OUTPUT */}
           {activeSection === "output" && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
               <SectionHeading>Output &amp; Terminal</SectionHeading>
 
               <SettingRow
@@ -1326,7 +1341,7 @@ export function SettingsPanel() {
 
           {/* APPEARANCE */}
           {activeSection === "appearance" && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
               <SectionHeading>Appearance</SectionHeading>
 
               <SettingRow
@@ -1435,7 +1450,7 @@ export function SettingsPanel() {
 
           {/* AI */}
           {activeSection === "ai" && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
               <SectionHeading>AI</SectionHeading>
 
               <SettingRow
@@ -1613,7 +1628,7 @@ export function SettingsPanel() {
 
           {/* FILE ASSOCIATIONS */}
           {activeSection === "associations" && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
               <SectionHeading>File Associations</SectionHeading>
 
               <InfoBox warn>
@@ -1793,30 +1808,27 @@ function SettingRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label
-        className="text-sm font-medium flex items-center gap-1"
-        style={{ color: "var(--text-primary)" }}
-      >
-        {label}
+    <div
+      className="grid gap-x-4 gap-y-1 items-start py-2"
+      style={{
+        gridTemplateColumns: "240px 1fr",
+        borderBottom: "1px solid var(--border-primary)",
+      }}
+    >
+      <div className="flex flex-col gap-0.5">
+        <label
+          className="text-sm font-medium"
+          style={{ color: "var(--text-primary)" }}
+        >
+          {label}
+        </label>
         {tooltip && (
-          <span
-            title={tooltip}
-            aria-label={tooltip}
-            className="inline-flex items-center justify-center text-[10px] font-bold rounded-full cursor-help select-none"
-            style={{
-              width: "14px",
-              height: "14px",
-              border: "1px solid var(--border-primary)",
-              color: "var(--text-muted)",
-              backgroundColor: "var(--bg-tertiary)",
-            }}
-          >
-            i
-          </span>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            {tooltip}
+          </p>
         )}
-      </label>
-      <div>{children}</div>
+      </div>
+      <div className="min-w-0">{children}</div>
     </div>
   );
 }
