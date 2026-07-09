@@ -466,7 +466,7 @@ const initialState: AppState = {
 // Actions
 // ---------------------------------------------------------------------------
 
-type Action =
+export type Action =
   | { type: "SET_TABS"; tabs: EditorTab[] }
   | { type: "SET_ACTIVE_TAB"; id: string }
   | { type: "ADD_TAB"; tab: EditorTab }

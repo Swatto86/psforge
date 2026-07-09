@@ -831,7 +831,11 @@ mod tests {
             terminal_output: String::new(),
             diagnostics: String::new(),
         };
-        let err = tauri::async_runtime::block_on(ask_ai(settings, request))
+        let err = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(ask_ai(settings, request))
             .expect_err("disabled AI must refuse");
         assert_eq!(err.code, "AI_DISABLED");
     }
