@@ -659,14 +659,12 @@ export function EditorPane() {
       });
 
       // Track the line where context menu is opened so custom actions can
-      // target that line even if cursor position differs.
+      // target that line even if cursor position differs. Do NOT setPosition
+      // here: it would collapse an active selection on right-click, breaking
+      // Explain Selection (AI). Monaco already moves the cursor natively when
+      // right-clicking outside the selection.
       editor.onContextMenu((e) => {
-        if (e.target.position) {
-          contextMenuLineRef.current = e.target.position.lineNumber;
-          editor.setPosition(e.target.position);
-        } else {
-          contextMenuLineRef.current = null;
-        }
+        contextMenuLineRef.current = e.target.position?.lineNumber ?? null;
       });
 
       const getTargetLine = (): number | null => {
