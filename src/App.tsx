@@ -46,6 +46,7 @@ import {
   scratchPathForTab,
   isScratchBackedTab,
   isUntitledScratchCandidate,
+  recoveredScratchTitle,
 } from "./scratch-utils";
 import { mergeRecentFilePaths } from "./script-utils";
 import { findProjectConfig, applyProjectConfig } from "./project-config";
@@ -632,11 +633,14 @@ function AppInner() {
           settings: { ...nextSettings, recentFiles: recent },
         });
       } catch (err) {
-        // File open failed -- log for diagnostics but don't crash.
         console.error("openFile failed:", err);
+        void writeTerminalNotice(
+          `[PSForge] Open failed: ${extractInvokeErrorMessage(err)}`,
+          { reveal: true },
+        );
       }
     },
-    [state.tabs, state.settings, dispatch],
+    [state.tabs, state.settings, dispatch, writeTerminalNotice],
   );
 
   // Open the file passed as a CLI argument when the app was launched via a
@@ -978,15 +982,17 @@ function AppInner() {
         }
         try {
           const file = await cmd.readFileContent(candidate.path);
+          // Keep a friendly Untitled-N title; scratch path is internal backing
+          // only (same rule as auto-save / TabBar display, S3-17).
           const tab: EditorTab = {
             id: candidate.tabId,
-            title: basename(candidate.path),
+            title: recoveredScratchTitle(untitledCounter()),
             filePath: candidate.path,
             content: file.content,
             savedContent: file.content,
             encoding: file.encoding,
             language: "powershell",
-            isDirty: false,
+            isDirty: true,
             tabType: "code",
           };
           dispatch({ type: "ADD_TAB", tab });
@@ -1025,8 +1031,12 @@ function AppInner() {
       }
     } catch (err) {
       console.error("formatCurrentScript failed:", err);
+      void writeTerminalNotice(
+        `[PSForge] Format failed: ${extractInvokeErrorMessage(err)}`,
+        { reveal: true },
+      );
     }
-  }, [activeTab, state.selectedPsPath, dispatch]);
+  }, [activeTab, state.selectedPsPath, dispatch, writeTerminalNotice]);
 
   /**
    * Read clipboard, clean web/terminal junk, insert at the selection, then

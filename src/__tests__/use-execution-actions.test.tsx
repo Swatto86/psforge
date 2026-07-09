@@ -340,4 +340,67 @@ describe("useExecutionActions", () => {
       expect.anything(),
     );
   });
+
+  it("surfaces save failures in the terminal instead of only console.error", async () => {
+    const tab = codeTab();
+    vi.mocked(commands.readFileContent).mockResolvedValue({
+      content: tab.savedContent,
+      encoding: "utf8",
+      path: tab.filePath,
+    });
+    vi.mocked(commands.saveFileContent).mockRejectedValue(
+      new Error("disk full"),
+    );
+
+    await renderHarness(appState([tab], tab.id), tab);
+    let result!: { saved: boolean; cancelled: boolean };
+    await act(async () => {
+      result = await getActions().saveTab(tab);
+      await flushPromises();
+    });
+
+    expect(result).toEqual({ saved: false, cancelled: false });
+    expect(writeTerminalNotice).toHaveBeenCalledWith(
+      expect.stringContaining("Save failed"),
+      expect.objectContaining({ reveal: true }),
+    );
+  });
+
+  it("selects debug frames using live pause refs after re-render", async () => {
+    const tab = codeTab();
+    let resolveDebug: ((code: number) => void) | undefined;
+    vi.mocked(commands.executeScriptDebug).mockImplementation(
+      () =>
+        new Promise<number>((resolve) => {
+          resolveDebug = resolve;
+        }),
+    );
+
+    await renderHarness(appState([tab], tab.id), tab);
+    await act(async () => {
+      void getActions().startDebugSession();
+      await flushPromises();
+    });
+
+    const breakHandler = listenHandlers.get("ps-debug-break");
+    expect(breakHandler).toBeTypeOf("function");
+    await act(async () => {
+      breakHandler!({ payload: 5 });
+    });
+
+    // Re-render with stale React state (isDebugging/debugPaused still false).
+    await renderHarness(appState([tab], tab.id), tab);
+
+    await act(async () => {
+      await getActions().selectDebugFrame(1);
+      await flushPromises();
+    });
+
+    expect(commands.debugSetFrame).toHaveBeenCalledWith(1);
+    expect(commands.sendStdin).toHaveBeenCalled();
+    resolveDebug?.(0);
+    await act(async () => {
+      await flushPromises();
+    });
+  });
 });

@@ -23,3 +23,8 @@ export function isScratchBackedTab(tab: EditorTab, scratchDir: string): boolean 
 export function isUntitledScratchCandidate(tab: EditorTab): boolean {
   return tab.tabType !== "welcome" && !tab.filePath;
 }
+
+/** Display title for a recovered scratch file (never the UUID backing name). */
+export function recoveredScratchTitle(nextUntitled: number): string {
+  return `Untitled-${nextUntitled}`;
+}

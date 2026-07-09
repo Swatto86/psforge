@@ -4,6 +4,7 @@ import {
   normalizeAppVersion,
 } from "../components/AboutDialog";
 import { contextMenuStateAfterRefresh } from "../components/SettingsPanel";
+import { recoveredScratchTitle } from "../scratch-utils";
 
 describe("About dialog version display", () => {
   it("does not fall back to a stale hard-coded version", () => {
@@ -24,5 +25,14 @@ describe("Settings file-association state", () => {
   it("uses the refreshed context-menu state when available", () => {
     expect(contextMenuStateAfterRefresh(false, true)).toBe(true);
     expect(contextMenuStateAfterRefresh(true, false)).toBe(false);
+  });
+});
+
+describe("Scratch recovery display", () => {
+  it("never labels recovered scratch tabs with the UUID filename", () => {
+    const title = recoveredScratchTitle(7);
+    expect(title).toBe("Untitled-7");
+    expect(title).not.toContain("tab-");
+    expect(title).not.toMatch(/\.ps1$/i);
   });
 });

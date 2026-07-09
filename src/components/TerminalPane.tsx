@@ -1120,7 +1120,16 @@ export function TerminalPane() {
       text: string,
       options?: { reveal?: boolean },
     ) => writeNoticeToLocalTerminal(text, options);
-    w.__psforge_terminal_interrupt = () => getActiveHandle()?.resetInput();
+    // Stop (Shift+F5) must hit the console that is executing the F5 run, not
+    // whichever console sub-tab is currently visible (same class as S6-20).
+    w.__psforge_terminal_interrupt = () => {
+      const runHandle = getRunHandle();
+      if (runHandle) {
+        runHandle.resetInput();
+        return;
+      }
+      getActiveHandle()?.resetInput();
+    };
     w.__psforge_terminal_reset_input = () => getActiveHandle()?.resetInput();
     w.__psforge_highlight_ps = highlightPs;
     return () => {

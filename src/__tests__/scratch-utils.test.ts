@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isScratchBackedTab, scratchPathForTab } from "../scratch-utils";
+import {
+  isScratchBackedTab,
+  recoveredScratchTitle,
+  scratchPathForTab,
+} from "../scratch-utils";
 import type { EditorTab } from "../types";
 
 describe("scratchPathForTab", () => {
@@ -19,5 +23,10 @@ describe("scratchPathForTab", () => {
     } as EditorTab;
 
     expect(isScratchBackedTab(tab, "C:\\Temp\\")).toBe(true);
+  });
+
+  it("uses Untitled-N for recovered scratch tabs, not the UUID filename", () => {
+    expect(recoveredScratchTitle(3)).toBe("Untitled-3");
+    expect(recoveredScratchTitle(3)).not.toMatch(/\.ps1$/);
   });
 });

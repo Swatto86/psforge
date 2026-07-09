@@ -421,6 +421,10 @@ export function useExecutionActions({
         return { saved: true, cancelled: false, path: filePath };
       } catch (err) {
         console.error(`saveTab failed for "${tab.title}":`, err);
+        void writeTerminalNotice(
+          `[PSForge] Save failed for "${tab.title}": ${extractInvokeErrorMessage(err)}`,
+          { reveal: true },
+        );
         return { saved: false, cancelled: false };
       }
     },
@@ -1183,14 +1187,15 @@ export function useExecutionActions({
     async (frameIndex: number) => {
       const next = normalizeFrameIndex(frameIndex);
       dispatch({ type: "SET_DEBUG_SELECTED_FRAME", frameIndex: next });
-      const current = stateRef.current;
-      if (!current.isDebugging) return;
+      // Use live pause/session refs: React state can lag the break handlers
+      // (same failure class as S6-14 / S7-1).
+      if (!isDebuggingRef.current) return;
       try {
         await cmd.debugSetFrame(next);
       } catch {
         // Non-fatal: inspector refresh still works via explicit scope.
       }
-      if (current.debugPaused) void refreshDebugInspector(next);
+      if (debugPausedRef.current) void refreshDebugInspector(next);
     },
     [dispatch, refreshDebugInspector],
   );

@@ -8,6 +8,28 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 8 (v1.4.6) — user-facing bug sweep + regression pass
+
+Focused pass over stop/run console routing, silent I/O failures, scratch recovery labels, and debug frame selection after the execution-actions extract.
+
+### HIGH
+
+- [x] **S8-1** — Stop (Shift+F5) sent Ctrl+C to the *active* console sub-tab, not the tab that was running the F5 script. After opening/switching to another console, Stop no-op'd while the real run kept going (same class as S6-20 run-output reads). Interrupt now prefers `lastRunTabIdRef`, then falls back to the active tab.
+
+### MEDIUM
+
+- [x] **S8-2** — `saveTab` failures only hit `console.error`, so Ctrl+S / Save All looked like a silent no-op on disk errors. Failures now write a terminal notice.
+- [x] **S8-3** — `openFile` failures were silent (console only). Open errors now surface in the terminal.
+- [x] **S8-4** — Scratch recovery titled tabs with the UUID backing filename (`tab-….ps1`). Recovered tabs now use `Untitled-N`, mark dirty, and keep the scratch path as internal backing only (S3-17 parity).
+- [x] **S8-5** — `selectDebugFrame` gated on React `isDebugging`/`debugPaused` state, so frame clicks right after a break (before the reducer committed, or after a re-render wipe of the same class as S7-1) skipped `debugSetFrame` / inspector refresh. Now uses the live pause refs.
+- [x] **S8-6** — Format (Shift+Alt+F) failures were silent. Failures now write a terminal notice.
+
+### Regression
+
+- [x] Vitest: save failure notice, frame selection via live refs after re-render, recovered-scratch title helper.
+
+---
+
 ## Sweep 7 (v1.4.5) — post-extract bug sweep + regression pass
 
 Focused pass over the `use-execution-actions` extract and run/debug outcome surfaces.
