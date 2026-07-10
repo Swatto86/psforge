@@ -436,6 +436,25 @@ export function EditorPane() {
       }
       return cleaned;
     };
+    // Paste Clean + Format bridge (App.pasteCleanAndFormat): replaces the
+    // current selection (or inserts at the cursor) and reports whether a code
+    // editor was mounted to receive it.
+    w.__psforge_insertTextAtSelection = (text: string) => {
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !model) return false;
+      const range = editor.getSelection() ?? model.getFullModelRange();
+      editor.executeEdits("psforge-paste-clean", [
+        { range, text, forceMoveMarkers: true },
+      ]);
+      editor.pushUndoStop();
+      editor.focus();
+      return true;
+    };
+    // Post-insert buffer read so the follow-up format call sees the freshly
+    // pasted content rather than the pre-insert React state.
+    w.__psforge_getEditorText = () =>
+      editorRef.current?.getModel()?.getValue() ?? "";
     // E2E-only: replaces the editor buffer in one shot. Gated to dev so it
     // never appears on production users' window object.
     if (import.meta.env.DEV) {

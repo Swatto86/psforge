@@ -17,7 +17,6 @@ import {
   resolveExecutionWorkDirWithOverride,
 } from "./run-utils";
 import { isScratchBackedTab, scratchPathForTab } from "./scratch-utils";
-import { mergeRecentFilePaths } from "./script-utils";
 import type { Action, AppState } from "./store";
 import type {
   DebugBreakpoint,
@@ -436,17 +435,7 @@ export function useExecutionActions({
     if (!tab || tab.tabType === "welcome") return;
     const result = await saveTab(tab);
     if (!result.saved || !result.path) return;
-
-    const current = stateRef.current;
-    const recent = mergeRecentFilePaths(
-      current.settings.recentFiles,
-      [result.path],
-      current.settings.maxRecentFiles ?? 20,
-    );
-    dispatch({
-      type: "SET_SETTINGS",
-      settings: { ...current.settings, recentFiles: recent },
-    });
+    dispatch({ type: "MERGE_RECENT_FILES", paths: [result.path] });
   }, [activeTabRef, dispatch, saveTab]);
 
   const saveAllFiles = useCallback(async () => {
@@ -471,15 +460,9 @@ export function useExecutionActions({
     }
 
     if (savedPaths.length > 0) {
-      const latest = stateRef.current;
-      const recent = mergeRecentFilePaths(
-        latest.settings.recentFiles,
-        [...savedPaths].reverse(),
-        latest.settings.maxRecentFiles ?? 20,
-      );
       dispatch({
-        type: "SET_SETTINGS",
-        settings: { ...latest.settings, recentFiles: recent },
+        type: "MERGE_RECENT_FILES",
+        paths: [...savedPaths].reverse(),
       });
     }
   }, [dispatch, saveTab, scratchDirRef]);
@@ -686,6 +669,12 @@ export function useExecutionActions({
   }, [dispatch, refreshDebugInspector, writeTerminalNotice]);
 
   const runScript = useCallback(async () => {
+    // One-shot re-run override: consume it before any guard can return early,
+    // so a blocked run (already running, no shell selected) can never leak a
+    // historic working directory into a later unrelated run.
+    const workDirOverride = runWorkingDirOverrideRef.current;
+    runWorkingDirOverrideRef.current = null;
+
     const current = stateRef.current;
     const tab = activeTabRef.current;
     if (!tab || tab.tabType === "welcome" || current.isRunning) return;
@@ -776,9 +765,8 @@ export function useExecutionActions({
       current.workingDir,
       current.settings,
       platformHomeFallback,
-      runWorkingDirOverrideRef.current ?? undefined,
+      workDirOverride ?? undefined,
     );
-    runWorkingDirOverrideRef.current = null;
 
     let scriptArgs: string[] = [];
     try {

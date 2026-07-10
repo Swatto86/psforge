@@ -7,6 +7,8 @@ import { contextMenuStateAfterRefresh } from "../components/SettingsPanel";
 import { recoveredScratchTitle } from "../scratch-utils";
 import { closeTabIdsSequentially } from "../components/TabBar";
 import app from "../App.tsx?raw";
+import editorPane from "../components/EditorPane.tsx?raw";
+import executionActions from "../use-execution-actions.ts?raw";
 import closeScratchDialog from "../components/CloseScratchDialog.tsx?raw";
 import keyboardShortcutPanel from "../components/KeyboardShortcutPanel.tsx?raw";
 import scratchRecoveryDialog from "../components/ScratchRecoveryDialog.tsx?raw";
@@ -108,6 +110,49 @@ describe("Batch tab closing", () => {
     expect(app).toMatch(
       /if \(choice === "save-as"\)[\s\S]*?if \(!result\.saved\) return false;[\s\S]*?const pendingTimer/,
     );
+  });
+});
+
+describe("Paste Clean + Format editor bridge (S10-1)", () => {
+  it("registers the insert and buffer-read globals the App flow consumes", () => {
+    // The feature commit shipped the consumer and the cleanup deletes but
+    // never the registrations, so paste-into-tab silently no-oped.
+    expect(editorPane).toContain("w.__psforge_insertTextAtSelection = ");
+    expect(editorPane).toContain("w.__psforge_getEditorText = ");
+    expect(app).toContain("w.__psforge_insertTextAtSelection as");
+  });
+});
+
+describe("Recent files and project config merge against current settings (S10-2)", () => {
+  it("uses reducer-side merges instead of stale settings snapshots", () => {
+    expect(store).toContain('case "MERGE_RECENT_FILES"');
+    expect(store).toContain('case "APPLY_PROJECT_CONFIG"');
+    expect(app).toContain('dispatch({ type: "MERGE_RECENT_FILES", paths: [selected] })');
+    // openFile must no longer dispatch a whole settings object for recents.
+    expect(app).not.toContain("recentFiles: recent");
+  });
+});
+
+describe("Re-run from recent runs (S10-3/S10-4)", () => {
+  it("consumes the one-shot working-dir override before any early return", () => {
+    const runScript = executionActions.indexOf("const runScript = useCallback");
+    expect(runScript).toBeGreaterThan(-1);
+    const consume = executionActions.indexOf(
+      "runWorkingDirOverrideRef.current = null",
+      runScript,
+    );
+    const firstGuard = executionActions.indexOf(
+      'tab.tabType === "welcome" || current.isRunning) return',
+      runScript,
+    );
+    expect(consume).toBeGreaterThan(runScript);
+    expect(firstGuard).toBeGreaterThan(-1);
+    expect(consume).toBeLessThan(firstGuard);
+  });
+
+  it("aborts the re-run when the recorded script cannot be opened or found", () => {
+    expect(app).toContain("if (!(await openFile(run.scriptPath))) return;");
+    expect(app).toMatch(/if \(!match\) \{[\s\S]*?return;[\s\S]*?\}\s*dispatch\(\{ type: "SET_ACTIVE_TAB", id: match\.id \}\);/);
   });
 });
 

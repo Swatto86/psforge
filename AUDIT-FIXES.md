@@ -8,6 +8,29 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 10 (v1.4.18) — user-facing bug sweep + regression pass
+
+Focused pass weighted toward the post-v1.4.2 surface (execution-actions
+extract, Explain Selection, run-directory picker, tray lifecycle) plus the
+paste workflow end to end.
+
+### HIGH
+
+- [x] **S10-1** — Paste Clean + Format (toolbar "Paste + Run", Ctrl+Shift+Alt+V, Edit menu) silently did nothing when a code tab was active: the feature commit shipped the consumer and the cleanup `delete`s for `__psforge_insertTextAtSelection` / `__psforge_getEditorText` but never registered them, so the flow showed the "cleaned" toast and then returned without inserting. Only the Welcome-tab path (new script from clipboard) worked. Both bridges are now registered in EditorPane's window-globals effect.
+
+### MEDIUM
+
+- [x] **S10-2** — Multi-file opens (Open Folder, multi-file drag-drop) computed the Recent Files merge from one stale settings closure, so only the last opened file survived in the Recent menu; project-config application had the same stale-snapshot clobber. Recent-files merges and project-config application now happen reducer-side against current settings (`MERGE_RECENT_FILES` / `APPLY_PROJECT_CONFIG`, same failure class as S6-2); Save / Save All recent-file updates route through the same action.
+- [x] **S10-3** — A re-run's one-shot working-directory override was only cleared on the successful path of `runScript`. When the run was blocked (script already running, no shell selected), the override leaked and the next unrelated F5 run silently executed in the historic run's directory. The override is now consumed before any early return.
+- [x] **S10-4** — Re-run from Recent Runs fell through to running whatever tab was active when the recorded script could not be opened (file deleted) or its unsaved tab was gone — in the historic working directory. The re-run now aborts with a terminal notice unless the recorded script is the active tab.
+
+### Regression
+
+- [x] Vitest source-contract tests cover the paste bridge registrations, reducer-side recent-files/project-config merges, override consumption ordering, and re-run abort paths.
+- [x] Full frontend suite (74 tests) and production build green; adversarial pass over the fix diff found no incomplete fixes.
+
+---
+
 ## Sweep 9 (v1.4.12) — user-facing bug sweep + regression pass
 
 Interactive UI, close/scratch lifecycle, cross-platform path, accessibility,

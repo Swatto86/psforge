@@ -28,7 +28,8 @@ import type {
 } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import * as cmd from "./commands";
-import { removeRecentFilePath } from "./script-utils";
+import { mergeRecentFilePaths, removeRecentFilePath } from "./script-utils";
+import { applyProjectConfig, type ProjectConfig } from "./project-config";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -478,6 +479,8 @@ export type Action =
   | { type: "SET_SELECTED_PS"; path: string }
   | { type: "SET_WORKING_DIR"; dir: string }
   | { type: "SET_SETTINGS"; settings: AppSettings }
+  | { type: "MERGE_RECENT_FILES"; paths: string[] }
+  | { type: "APPLY_PROJECT_CONFIG"; config: ProjectConfig }
   | { type: "APPEND_RUN_RECORD"; record: ScriptRunRecord }
   | { type: "SET_SETTINGS_LOADED"; loaded: boolean }
   | { type: "SET_SCRATCH_DIR"; dir: string }
@@ -611,6 +614,32 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "SET_SETTINGS":
       return { ...state, settings: action.settings };
+
+    // Merges against the CURRENT settings rather than a caller-supplied
+    // snapshot: multi-file opens (folder open, drag-drop) call back-to-back
+    // from one stale closure, and dispatching whole settings objects would
+    // keep only the last file's merge (same failure class as S6-2).
+    case "MERGE_RECENT_FILES":
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          recentFiles: mergeRecentFilePaths(
+            state.settings.recentFiles,
+            action.paths,
+            state.settings.maxRecentFiles ?? 20,
+          ),
+        },
+      };
+
+    // Same current-settings rule as MERGE_RECENT_FILES: applying a project
+    // config through a caller snapshot would clobber settings changed since
+    // the caller's closure was created.
+    case "APPLY_PROJECT_CONFIG":
+      return {
+        ...state,
+        settings: applyProjectConfig(state.settings, action.config),
+      };
 
     // Appends against the CURRENT settings rather than a caller-supplied
     // snapshot: a run can take arbitrarily long, and dispatching a whole

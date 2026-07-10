@@ -48,8 +48,7 @@ import {
   isUntitledScratchCandidate,
   recoveredScratchTitle,
 } from "./scratch-utils";
-import { mergeRecentFilePaths } from "./script-utils";
-import { findProjectConfig, applyProjectConfig } from "./project-config";
+import { findProjectConfig } from "./project-config";
 import { useExecutionActions } from "./use-execution-actions";
 import { PssaRunGateDialog } from "./components/PssaRunGateDialog";
 import {
@@ -63,7 +62,6 @@ import {
 import type {
   EditorTab,
   ScriptRunRecord,
-  AppSettings,
   PsVersion,
   UpdateStatus,
 } from "./types";
@@ -532,8 +530,11 @@ function AppInner() {
     });
   }, []);
 
+  /** Opens (or activates) a script tab. Returns true when a tab for the
+   *  requested file is active afterwards, false on cancel/failure — callers
+   *  like re-run must not fall through to running an unrelated tab. */
   const openFile = useCallback(
-    async (specificPath?: string) => {
+    async (specificPath?: string): Promise<boolean> => {
       try {
         let selected: string | null = specificPath ?? null;
 
@@ -555,13 +556,13 @@ function AppInner() {
           }
         }
 
-        if (!selected) return;
+        if (!selected) return false;
 
         // Activate the tab if the file is already open.
         const existing = state.tabs.find((t) => t.filePath === selected);
         if (existing) {
           dispatch({ type: "SET_ACTIVE_TAB", id: existing.id });
-          return;
+          return true;
         }
 
         const fileData = await cmd.readFileContent(selected);
@@ -616,32 +617,25 @@ function AppInner() {
         const dir = dirname(selected);
         if (dir) dispatch({ type: "SET_WORKING_DIR", dir });
 
-        let nextSettings = { ...state.settings };
+        // Both dispatched as reducer-side merges against CURRENT settings so
+        // back-to-back opens from one closure (folder open, drag-drop) cannot
+        // clobber each other's recent-files entries (same class as S6-2).
         const project = await findProjectConfig(selected);
         if (project) {
-          nextSettings = applyProjectConfig(nextSettings, project.config);
+          dispatch({ type: "APPLY_PROJECT_CONFIG", config: project.config });
         }
-
-        // Update recent files list, respecting maxRecentFiles setting.
-        const maxRecent = nextSettings.maxRecentFiles ?? 20;
-        const recent = mergeRecentFilePaths(
-          nextSettings.recentFiles,
-          [selected],
-          maxRecent,
-        );
-        dispatch({
-          type: "SET_SETTINGS",
-          settings: { ...nextSettings, recentFiles: recent },
-        });
+        dispatch({ type: "MERGE_RECENT_FILES", paths: [selected] });
+        return true;
       } catch (err) {
         console.error("openFile failed:", err);
         void writeTerminalNotice(
           `[PSForge] Open failed: ${extractInvokeErrorMessage(err)}`,
           { reveal: true },
         );
+        return false;
       }
     },
-    [state.tabs, state.settings, dispatch, writeTerminalNotice],
+    [state.tabs, dispatch, writeTerminalNotice],
   );
 
   // Open the file passed as a CLI argument when the app was launched via a
@@ -721,10 +715,7 @@ function AppInner() {
         scriptPaths[0] ?? `${base}/.psforge.json`,
       );
       if (project) {
-        dispatch({
-          type: "SET_SETTINGS",
-          settings: applyProjectConfig(state.settings, project.config),
-        });
+        dispatch({ type: "APPLY_PROJECT_CONFIG", config: project.config });
       }
     } catch (err) {
       console.error("openScriptFolder failed:", err);
@@ -733,7 +724,7 @@ function AppInner() {
         { reveal: true },
       );
     }
-  }, [openFile, dispatch, writeTerminalNotice, state.settings]);
+  }, [openFile, dispatch, writeTerminalNotice]);
 
   /** Open (or focus) the Welcome tab so users can restore onboarding content. */
   const openWelcomePage = useCallback(() => {
@@ -941,15 +932,23 @@ function AppInner() {
 
   const rerunFromRecord = useCallback(
     async (run: ScriptRunRecord) => {
+      // Abort unless the recorded script is the active tab afterwards —
+      // falling through would run whatever unrelated tab happens to be
+      // active, in the historic run's working directory.
       if (run.scriptPath) {
-        await openFile(run.scriptPath);
+        if (!(await openFile(run.scriptPath))) return;
       } else {
         const match = state.tabs.find(
           (t) => t.tabType !== "welcome" && t.title === run.tabTitle,
         );
-        if (match) {
-          dispatch({ type: "SET_ACTIVE_TAB", id: match.id });
+        if (!match) {
+          void writeTerminalNotice(
+            `[PSForge] Cannot re-run "${run.tabTitle}": its tab is no longer open.`,
+            { reveal: true },
+          );
+          return;
         }
+        dispatch({ type: "SET_ACTIVE_TAB", id: match.id });
       }
       await new Promise<void>((resolve) => {
         requestAnimationFrame(() => resolve());
@@ -959,7 +958,7 @@ function AppInner() {
       }
       await runScript();
     },
-    [openFile, runScript, state.tabs, dispatch],
+    [openFile, runScript, state.tabs, dispatch, writeTerminalNotice],
   );
 
   const clearRecentRuns = useCallback(() => {
