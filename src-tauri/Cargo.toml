@@ -1,6 +1,6 @@
 [package]
 name = "psforge"
-version = "1.4.12"
+version = "1.4.13"
 description = "PSForge - Modern PowerShell Editor"
 authors = ["PSForge Contributors"]
 edition = "2021"
@@ -13,7 +13,7 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

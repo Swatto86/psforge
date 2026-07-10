@@ -11,7 +11,15 @@ import closeScratchDialog from "../components/CloseScratchDialog.tsx?raw";
 import keyboardShortcutPanel from "../components/KeyboardShortcutPanel.tsx?raw";
 import scratchRecoveryDialog from "../components/ScratchRecoveryDialog.tsx?raw";
 import settingsPanel from "../components/SettingsPanel.tsx?raw";
+import store from "../store.tsx?raw";
 import tabBar from "../components/TabBar.tsx?raw";
+
+describe("System tray window lifecycle", () => {
+  it("does not destroy the window while flushing settings on close", () => {
+    expect(store).toContain("win.onCloseRequested");
+    expect(store).not.toContain("win.destroy()");
+  });
+});
 
 describe("About dialog version display", () => {
   it("does not fall back to a stale hard-coded version", () => {

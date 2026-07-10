@@ -14,7 +14,8 @@ and other trusted I/O.
 4. `src/commands.ts` is the typed frontend IPC boundary. It is the only normal
    route from frontend workflows to Tauri commands.
 5. `src-tauri/src/lib.rs` is the backend composition root. It registers plugins,
-   command handlers, startup cleanup, and window lifecycle behavior.
+   command handlers, startup cleanup, and window/tray lifecycle behavior. Closing
+   the main window hides it; the tray's Exit action terminates the process.
 6. Backend modules own their I/O concerns: `powershell.rs` and `terminal.rs`
    manage processes; `settings.rs` owns persisted settings; `commands.rs`
    handles file, analysis, signing, and association commands; `ai.rs` owns AI

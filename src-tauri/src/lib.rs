@@ -13,7 +13,34 @@ pub mod win_compat;
 #[cfg(not(test))]
 use log::{info, warn};
 #[cfg(not(test))]
-use tauri::{Listener, Manager};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Listener, Manager, WindowEvent,
+};
+
+#[derive(Debug, PartialEq, Eq)]
+enum WindowCloseAction {
+    HideToTray,
+    Ignore,
+}
+
+fn window_close_action(is_close_requested: bool) -> WindowCloseAction {
+    if is_close_requested {
+        WindowCloseAction::HideToTray
+    } else {
+        WindowCloseAction::Ignore
+    }
+}
+
+#[cfg(not(test))]
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
 
 /// Entry point for the Tauri application.
 /// Registers all plugins and command handlers.
@@ -32,6 +59,17 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && window_close_action(matches!(event, WindowEvent::CloseRequested { .. }))
+                    == WindowCloseAction::HideToTray
+            {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::execute_script_debug,
             commands::prepare_terminal_script_command,
@@ -85,6 +123,35 @@ pub fn run() {
             terminal::stop_terminal,
         ])
         .setup(|app| {
+            let show_item = MenuItem::with_id(app, "show", "Show PSForge", true, None::<&str>)?;
+            let exit_item = MenuItem::with_id(app, "exit", "Exit", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &exit_item])?;
+            let mut tray = TrayIconBuilder::with_id("main")
+                .tooltip("PSForge")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_main_window(app),
+                    "exit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
+                        show_main_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray = tray.icon(icon);
+            }
+            tray.build(app)?;
+
             // Stale temp file cleanup runs off the main thread so a slow tmpfs
             // (network share, encrypted volume) cannot delay window display.
             tauri::async_runtime::spawn_blocking(|| match utils::cleanup_psforge_temp_files() {
@@ -138,4 +205,19 @@ pub fn run() {
                 tauri::async_runtime::block_on(commands::kill_active_run_on_exit());
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn close_request_is_routed_to_the_system_tray() {
+        assert_eq!(window_close_action(true), WindowCloseAction::HideToTray);
+    }
+
+    #[test]
+    fn unrelated_window_events_are_ignored() {
+        assert_eq!(window_close_action(false), WindowCloseAction::Ignore);
+    }
 }

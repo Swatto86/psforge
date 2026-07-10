@@ -1228,8 +1228,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.settings, state.settingsLoaded, saveSettingsDebounced]);
 
   // Flush any pending (debounced, not-yet-written) settings when the window
-  // is asked to close, then complete the close ourselves (S6-12). When
-  // nothing is pending the close proceeds untouched.
+  // is asked to close. The backend owns the close lifecycle and hides the
+  // window to the system tray, so this handler must never destroy it.
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -1237,19 +1237,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const win = getCurrentWindow();
-        const stop = await win.onCloseRequested(async (event) => {
+        const stop = await win.onCloseRequested(async () => {
           const pending = pendingSettingsRef.current;
           if (!pending) return;
-          event.preventDefault();
           pendingSettingsRef.current = null;
           try {
             await cmd.saveSettings(pending);
           } catch {
             // Best effort — never hold the window hostage over a failed save.
           }
-          // destroy() skips re-firing close-requested; fall back to close()
-          // (pending is now null, so the handler lets it through).
-          void win.destroy().catch(() => void win.close());
         });
         if (disposed) stop();
         else unlisten = stop;
