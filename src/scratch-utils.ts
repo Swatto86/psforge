@@ -2,20 +2,32 @@
 
 import type { EditorTab } from "./types";
 
+function usesWindowsPathSemantics(path: string): boolean {
+  if (typeof navigator !== "undefined" && navigator.platform) {
+    return /win/i.test(navigator.platform);
+  }
+  return /^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path);
+}
+
 /** Build the on-disk path for an untitled tab's scratch file. */
 export function scratchPathForTab(scratchDir: string, tabId: string): string {
-  const sep = scratchDir.includes("\\") ? "\\" : "/";
+  const sep =
+    usesWindowsPathSemantics(scratchDir) && scratchDir.includes("\\")
+      ? "\\"
+      : "/";
   return `${scratchDir.replace(/[/\\]+$/, "")}${sep}${tabId}.ps1`;
 }
 
 /** True when the tab's backing path lives under the scratch directory. */
 export function isScratchBackedTab(tab: EditorTab, scratchDir: string): boolean {
   if (!tab.filePath || !scratchDir) return false;
-  const normalizedScratch = scratchDir
-    .replace(/\\/g, "/")
-    .replace(/\/+$/, "")
-    .toLowerCase();
-  const normalizedPath = tab.filePath.replace(/\\/g, "/").toLowerCase();
+  const windows = usesWindowsPathSemantics(scratchDir);
+  const normalize = (path: string) => {
+    const normalized = windows ? path.replace(/\\/g, "/") : path;
+    return windows ? normalized.toLowerCase() : normalized;
+  };
+  const normalizedScratch = normalize(scratchDir).replace(/\/+$/, "");
+  const normalizedPath = normalize(tab.filePath);
   return normalizedPath.startsWith(`${normalizedScratch}/`);
 }
 

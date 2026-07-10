@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   formatAppVersionLabel,
   normalizeAppVersion,
 } from "../components/AboutDialog";
 import { contextMenuStateAfterRefresh } from "../components/SettingsPanel";
 import { recoveredScratchTitle } from "../scratch-utils";
+import { closeTabIdsSequentially } from "../components/TabBar";
+import app from "../App.tsx?raw";
+import closeScratchDialog from "../components/CloseScratchDialog.tsx?raw";
+import keyboardShortcutPanel from "../components/KeyboardShortcutPanel.tsx?raw";
+import scratchRecoveryDialog from "../components/ScratchRecoveryDialog.tsx?raw";
+import settingsPanel from "../components/SettingsPanel.tsx?raw";
+import tabBar from "../components/TabBar.tsx?raw";
 
 describe("About dialog version display", () => {
   it("does not fall back to a stale hard-coded version", () => {
@@ -34,5 +41,59 @@ describe("Scratch recovery display", () => {
     expect(title).toBe("Untitled-7");
     expect(title).not.toContain("tab-");
     expect(title).not.toMatch(/\.ps1$/i);
+  });
+});
+
+describe("Batch tab closing", () => {
+  it("routes every tab through the close workflow, including the last tab", async () => {
+    const requestClose = vi.fn(async () => true);
+
+    await expect(
+      closeTabIdsSequentially(["one", "two"], requestClose, true),
+    ).resolves.toBe(true);
+    expect(requestClose.mock.calls).toEqual([
+      ["one", true],
+      ["two", true],
+    ]);
+  });
+
+  it("stops the batch when the user cancels a close", async () => {
+    const requestClose = vi
+      .fn<(tabId: string, allowCloseLast?: boolean) => Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    await expect(
+      closeTabIdsSequentially(["one", "two", "three"], requestClose),
+    ).resolves.toBe(false);
+    expect(requestClose.mock.calls).toEqual([
+      ["one", false],
+      ["two", false],
+    ]);
+  });
+
+  it("keeps scratch auto-save pending when Save As is cancelled", () => {
+    expect(app).toMatch(
+      /if \(choice === "save-as"\)[\s\S]*?if \(!result\.saved\) return false;[\s\S]*?const pendingTimer/,
+    );
+  });
+});
+
+describe("Dialog and icon-button accessibility", () => {
+  it("gives modal dialogs accessible names", () => {
+    expect(settingsPanel).toContain('aria-labelledby="settings-dialog-title"');
+    expect(scratchRecoveryDialog).toContain(
+      'aria-labelledby="scratch-recovery-title"',
+    );
+    expect(closeScratchDialog).toContain(
+      'aria-labelledby="close-scratch-title"',
+    );
+  });
+
+  it("gives close icon buttons descriptive labels", () => {
+    expect(tabBar).toContain("aria-label={`Close ${displayLabel}`}");
+    expect(keyboardShortcutPanel).toContain(
+      'aria-label="Close keyboard shortcut reference"',
+    );
   });
 });

@@ -32,6 +32,7 @@ export function CloseScratchDialog({ tabTitle, onChoice }: Props) {
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="close-scratch-title"
         className="rounded-lg shadow-xl"
         style={{
           backgroundColor: "var(--bg-secondary)",
@@ -43,6 +44,7 @@ export function CloseScratchDialog({ tabTitle, onChoice }: Props) {
         }}
       >
         <div
+          id="close-scratch-title"
           className="px-4 py-3 font-semibold"
           style={{ borderBottom: "1px solid var(--border-primary)" }}
         >

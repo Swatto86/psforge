@@ -78,6 +78,7 @@ export function ScratchRecoveryDialog({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="scratch-recovery-title"
         className="rounded-lg shadow-xl flex flex-col"
         style={{
           backgroundColor: "var(--bg-secondary)",
@@ -90,6 +91,7 @@ export function ScratchRecoveryDialog({
         }}
       >
         <div
+          id="scratch-recovery-title"
           className="px-4 py-3 font-semibold"
           style={{ borderBottom: "1px solid var(--border-primary)" }}
         >

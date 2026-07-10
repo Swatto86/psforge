@@ -8,6 +8,32 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 9 (v1.4.12) — user-facing bug sweep + regression pass
+
+Interactive UI, close/scratch lifecycle, cross-platform path, accessibility,
+frontend/backend contract, and release-surface pass.
+
+### HIGH
+
+- [x] **S9-1** — Cancelling Save As from the scratch-close dialog cancelled the pending scratch auto-save before the file picker result was known. The still-open tab could then lose its newest recovery copy if the app exited before another edit. Pending recovery writes now remain armed until Save As succeeds.
+
+### MEDIUM
+
+- [x] **S9-2** — Tab-bar **Close Others** / **Close All** dispatched reducer closes directly instead of using the app's scratch-aware close workflow. Scratch Save/Keep/Discard handling and scratch-file cleanup were bypassed, so a discarded tab could return in recovery after restart. Batch closes now route every tab through the shared close workflow and stop on cancellation.
+- [x] **S9-3** — **Close All** reused the first tab id while resetting its content, leaving that id's breakpoints, bookmarks, and diagnostics attached to the fresh Untitled script. It now closes every old tab through the reducer cleanup path and creates a new id.
+- [x] **S9-4** — Scratch path detection lowercased paths and converted backslashes on every OS. On Linux/macOS this could classify a distinct case-sensitive path (or a filename containing `\\`) as scratch-backed. Matching now follows Windows semantics only on Windows and preserves Unix path characters.
+
+### LOW
+
+- [x] **S9-5** — Tab and shortcut close icon buttons lacked descriptive accessible names; Settings, scratch recovery, and scratch-close dialogs lacked accessible dialog names. Added contextual `aria-label` / `aria-labelledby` wiring.
+
+### Regression
+
+- [x] Vitest covers batch close routing/cancellation, last-tab permission, Save As recovery ordering, cross-platform scratch paths, and the accessibility contracts.
+- [x] Interactive preview verified named close controls, named Settings dialog, and Close All producing one clean Untitled tab.
+
+---
+
 ## Sweep 8 (v1.4.6) — user-facing bug sweep + regression pass
 
 Focused pass over stop/run console routing, silent I/O failures, scratch recovery labels, and debug frame selection after the execution-actions extract.

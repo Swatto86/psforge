@@ -4,9 +4,30 @@
  */
 
 import React, { useState, useRef, useEffect } from "react";
-import { useAppState } from "../store";
+import { newTabId, useAppState } from "../store";
 import { EditorTab } from "../types";
 import * as cmd from "../commands";
+
+type RequestTabClose = (
+  tabId: string,
+  allowCloseLast?: boolean,
+) => Promise<boolean>;
+
+/**
+ * Runs batch closes through the same app-level close workflow as the tab close
+ * button. This preserves scratch Save/Keep/Discard handling and stops cleanly
+ * when the user cancels any close.
+ */
+export async function closeTabIdsSequentially(
+  tabIds: string[],
+  requestClose: RequestTabClose,
+  allowCloseLast = false,
+): Promise<boolean> {
+  for (const tabId of tabIds) {
+    if (!(await requestClose(tabId, allowCloseLast))) return false;
+  }
+  return true;
+}
 
 /**
  * Computes a minimal-but-unique display label for each tab.
@@ -119,21 +140,26 @@ export function TabBar() {
     }
   };
 
-  const closeTab = async (tabId: string) => {
+  const closeTab = async (
+    tabId: string,
+    allowCloseLast = false,
+  ): Promise<boolean> => {
     const bridge = (window as unknown as Record<string, unknown>)
-      .__psforge_requestCloseTab as ((id: string) => Promise<boolean>) | undefined;
+      .__psforge_requestCloseTab as RequestTabClose | undefined;
     if (bridge) {
-      await bridge(tabId);
-      return;
+      return bridge(tabId, allowCloseLast);
     }
     const tab = state.tabs.find((t) => t.id === tabId);
+    if (!tab) return false;
     if (tab?.isDirty) {
       const confirmed = await confirmDiscard(tab.title);
-      if (!confirmed) return;
+      if (!confirmed) return false;
     }
-    if (state.tabs.length > 1) {
+    if (state.tabs.length > 1 || allowCloseLast) {
       dispatch({ type: "CLOSE_TAB", id: tabId });
+      return true;
     }
+    return false;
   };
 
   const handleClose = (e: React.MouseEvent, tabId: string) => {
@@ -148,76 +174,37 @@ export function TabBar() {
 
   const closeOthers = async (tabId: string) => {
     const others = state.tabs.filter((t) => t.id !== tabId);
-    const dirtyTabs = others.filter((t) => t.isDirty);
-    // Confirm before closing any tab so cancelling does not leave a subset
-    // already closed (same batch semantics as Close All).
-    if (dirtyTabs.length === 1) {
-      const confirmed = await confirmDiscard(dirtyTabs[0].title);
-      if (!confirmed) {
-        setContextMenu(null);
-        return;
-      }
-    } else if (dirtyTabs.length > 1) {
-      const names = dirtyTabs.map((t) => `"${t.title}"`).join(", ");
-      const message = `${dirtyTabs.length} file(s) have unsaved changes: ${names}.\n\nClose without saving?`;
-      try {
-        const { confirm } = await import("@tauri-apps/plugin-dialog");
-        const confirmed = await confirm(message, {
-          title: "PSForge",
-          kind: "warning",
-          okLabel: "Close",
-          cancelLabel: "Cancel",
-        });
-        if (!confirmed) {
-          setContextMenu(null);
-          return;
-        }
-      } catch {
-        setContextMenu(null);
-        return;
-      }
-    }
-    for (const t of others) {
-      dispatch({ type: "CLOSE_TAB", id: t.id });
-    }
+    await closeTabIdsSequentially(
+      others.map((tab) => tab.id),
+      closeTab,
+    );
     setContextMenu(null);
   };
 
   const closeAll = async () => {
-    // BUG-NEW-5 fix: confirm once for all dirty tabs before closing any.
-    const dirtyTabs = state.tabs.filter((t) => t.isDirty);
-    if (dirtyTabs.length > 0) {
-      const names = dirtyTabs.map((t) => `"${t.title}"`).join(", ");
-      let confirmed = false;
-      const message = `${dirtyTabs.length} file(s) have unsaved changes: ${names}.\n\nClose all without saving?`;
-      try {
-        const { confirm } = await import("@tauri-apps/plugin-dialog");
-        confirmed = await confirm(message, {
-          title: "PSForge",
-          kind: "warning",
-          okLabel: "Close All",
-          cancelLabel: "Cancel",
-        });
-      } catch {
-        confirmed = false;
-      }
-      if (!confirmed) {
-        setContextMenu(null);
-        return;
-      }
+    const closedAll = await closeTabIdsSequentially(
+      state.tabs.map((tab) => tab.id),
+      closeTab,
+      true,
+    );
+    if (!closedAll) {
+      setContextMenu(null);
+      return;
     }
-    // Keep at least one tab, resetting it to a fresh code tab.
-    state.tabs.slice(1).forEach((t) => {
-      dispatch({ type: "CLOSE_TAB", id: t.id });
-    });
+
+    // Use a new id after closing every old tab so per-tab diagnostics,
+    // bookmarks, and breakpoints cannot leak into the fresh script.
+    const id = newTabId();
     dispatch({
-      type: "UPDATE_TAB",
-      id: state.tabs[0].id,
-      changes: {
+      type: "ADD_TAB",
+      tab: {
+        id,
         content: "",
         savedContent: "",
         filePath: "",
         title: "Untitled-1",
+        encoding: "utf8",
+        language: "powershell",
         isDirty: false,
         tabType: "code",
       },
@@ -282,6 +269,7 @@ export function TabBar() {
                 display: state.tabs.length <= 1 ? "none" : "inline-flex",
               }}
               title="Close"
+              aria-label={`Close ${displayLabel}`}
             >
               ×
             </button>

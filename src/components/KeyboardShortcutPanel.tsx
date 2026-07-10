@@ -245,6 +245,7 @@ export function KeyboardShortcutPanel() {
               backgroundColor: "transparent",
             }}
             title="Close (Escape)"
+            aria-label="Close keyboard shortcut reference"
           >
             ✕
           </button>

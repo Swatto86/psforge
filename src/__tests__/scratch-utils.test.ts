@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isScratchBackedTab,
   recoveredScratchTitle,
@@ -7,6 +7,8 @@ import {
 import type { EditorTab } from "../types";
 
 describe("scratchPathForTab", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("does not duplicate an existing trailing separator", () => {
     expect(scratchPathForTab("C:\\Temp\\", "tab-1")).toBe(
       "C:\\Temp\\tab-1.ps1",
@@ -17,12 +19,31 @@ describe("scratchPathForTab", () => {
   });
 
   it("recognizes scratch-backed tabs when scratch dir has trailing separator", () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
     const tab = {
-      filePath: "C:\\Temp\\tab-1.ps1",
+      filePath: "c:\\TEMP\\tab-1.ps1",
       tabType: "code",
     } as EditorTab;
 
     expect(isScratchBackedTab(tab, "C:\\Temp\\")).toBe(true);
+  });
+
+  it("uses case-sensitive path semantics on Linux and macOS", () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const tab = {
+      filePath: "/tmp/PSForge/tab-1.ps1",
+      tabType: "code",
+    } as EditorTab;
+
+    expect(isScratchBackedTab(tab, "/tmp/psforge")).toBe(false);
+  });
+
+  it("preserves backslashes as filename characters on Unix", () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+
+    expect(scratchPathForTab("/tmp/psforge\\archive", "tab-1")).toBe(
+      "/tmp/psforge\\archive/tab-1.ps1",
+    );
   });
 
   it("uses Untitled-N for recovered scratch tabs, not the UUID filename", () => {

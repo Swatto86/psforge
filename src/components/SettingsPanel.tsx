@@ -406,6 +406,7 @@ export function SettingsPanel() {
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="settings-dialog-title"
         className="rounded-lg shadow-2xl flex overflow-hidden"
         style={{
           backgroundColor: "var(--bg-secondary)",
@@ -427,6 +428,7 @@ export function SettingsPanel() {
           }}
         >
           <h2
+            id="settings-dialog-title"
             className="text-sm font-semibold px-4 mb-3"
             style={{ color: "var(--text-primary)" }}
           >

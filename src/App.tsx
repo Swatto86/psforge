@@ -159,6 +159,7 @@ function AppInner() {
   const runWorkingDirOverrideRef = useRef<string | null>(null);
   const [closeScratchPrompt, setCloseScratchPrompt] = React.useState<{
     tab: EditorTab;
+    allowCloseLast: boolean;
     resolve: (closed: boolean) => void;
   } | null>(null);
   const [scratchRecoveryCandidates, setScratchRecoveryCandidates] =
@@ -797,7 +798,11 @@ function AppInner() {
   });
 
   const finalizeCloseTab = useCallback(
-    async (tab: EditorTab, choice: CloseScratchChoice): Promise<boolean> => {
+    async (
+      tab: EditorTab,
+      choice: CloseScratchChoice,
+      allowCloseLast: boolean,
+    ): Promise<boolean> => {
       const scratchDir = scratchDirRef.current;
       const scratchPath =
         scratchDir && (isUntitledScratchCandidate(tab) || isScratchBackedTab(tab, scratchDir))
@@ -805,6 +810,16 @@ function AppInner() {
           : tab.filePath;
 
       if (choice === "cancel") return false;
+
+      // Keep the pending scratch auto-save alive while Save As is open. If the
+      // user cancels the picker (or the save fails), the tab remains open and
+      // still needs its recovery copy updated.
+      let savedPath: string | undefined;
+      if (choice === "save-as") {
+        const result = await saveTab(tab);
+        if (!result.saved) return false;
+        savedPath = result.path;
+      }
 
       // Cancel any pending scratch auto-save for this tab so a late debounced
       // write can't resurrect content the user is discarding/closing (S3-16).
@@ -815,9 +830,7 @@ function AppInner() {
       }
 
       if (choice === "save-as") {
-        const result = await saveTab(tab);
-        if (!result.saved) return false;
-        if (scratchPath && result.path && result.path !== scratchPath) {
+        if (scratchPath && savedPath && savedPath !== scratchPath) {
           try {
             await cmd.deleteScratchFile(scratchPath);
           } catch {
@@ -832,7 +845,7 @@ function AppInner() {
         }
       }
 
-      if (state.tabs.length > 1) {
+      if (state.tabs.length > 1 || allowCloseLast) {
         dispatch({ type: "CLOSE_TAB", id: tab.id });
       }
       return true;
@@ -841,9 +854,9 @@ function AppInner() {
   );
 
   const requestCloseTab = useCallback(
-    async (tabId: string): Promise<boolean> => {
+    async (tabId: string, allowCloseLast = false): Promise<boolean> => {
       const tab = state.tabs.find((t) => t.id === tabId);
-      if (!tab || state.tabs.length <= 1) return false;
+      if (!tab || (!allowCloseLast && state.tabs.length <= 1)) return false;
 
       const scratchDir = scratchDirRef.current;
       const isScratchTab =
@@ -855,6 +868,7 @@ function AppInner() {
         return new Promise((resolve) => {
           setCloseScratchPrompt({
             tab,
+            allowCloseLast,
             resolve: (closed) => resolve(closed),
           });
         });
@@ -1283,7 +1297,8 @@ function AppInner() {
         );
       }
     };
-    w.__psforge_requestCloseTab = (tabId: string) => requestCloseTab(tabId);
+    w.__psforge_requestCloseTab = (tabId: string, allowCloseLast?: boolean) =>
+      requestCloseTab(tabId, allowCloseLast);
     w.__psforge_rerunFromRecord = (run: ScriptRunRecord) => {
       void rerunFromRecord(run);
     };
@@ -2096,7 +2111,11 @@ function AppInner() {
               const closed =
                 choice === "cancel"
                   ? false
-                  : await finalizeCloseTab(closeScratchPrompt.tab, choice);
+                  : await finalizeCloseTab(
+                      closeScratchPrompt.tab,
+                      choice,
+                      closeScratchPrompt.allowCloseLast,
+                    );
               closeScratchPrompt.resolve(closed);
               setCloseScratchPrompt(null);
             })();
