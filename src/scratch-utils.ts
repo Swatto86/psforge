@@ -3,10 +3,11 @@
 import type { EditorTab } from "./types";
 
 function usesWindowsPathSemantics(path: string): boolean {
+  if (/^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path)) return true;
   if (typeof navigator !== "undefined" && navigator.platform) {
     return /win/i.test(navigator.platform);
   }
-  return /^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path);
+  return false;
 }
 
 /** Build the on-disk path for an untitled tab's scratch file. */
