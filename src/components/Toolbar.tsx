@@ -140,12 +140,13 @@ export function Toolbar({
 
   const exitApp = async () => {
     try {
-      // close() (not destroy) so the close-requested handler can flush any
-      // pending settings first.
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().close();
+      // Same flush-then-exit path as the tray's Exit action: the store
+      // listener saves pending settings, then terminates the process.
+      // window.close() would only hide the window to the tray.
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit("psforge-exit-requested");
     } catch {
-      // Window API unavailable (tests / browser preview): nothing to close.
+      // Event API unavailable (tests / browser preview): nothing to exit.
     }
   };
 

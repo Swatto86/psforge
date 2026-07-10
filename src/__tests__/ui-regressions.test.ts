@@ -13,6 +13,7 @@ import scratchRecoveryDialog from "../components/ScratchRecoveryDialog.tsx?raw";
 import settingsPanel from "../components/SettingsPanel.tsx?raw";
 import store from "../store.tsx?raw";
 import tabBar from "../components/TabBar.tsx?raw";
+import toolbar from "../components/Toolbar.tsx?raw";
 
 describe("System tray window lifecycle", () => {
   it("does not destroy the window while flushing settings on close", () => {
@@ -27,6 +28,12 @@ describe("System tray window lifecycle", () => {
     const exit = store.indexOf("await exit(0)", exitListener);
     expect(flush).toBeGreaterThan(-1);
     expect(exit).toBeGreaterThan(flush);
+  });
+
+  it("routes File > Exit through the exit flow, not window.close()", () => {
+    // Closing the main window only hides it to the tray; Exit must terminate.
+    expect(toolbar).toContain('emit("psforge-exit-requested")');
+    expect(toolbar).not.toContain("getCurrentWindow().close()");
   });
 });
 
