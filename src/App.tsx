@@ -1138,16 +1138,6 @@ function AppInner() {
     runOrDebugScript,
   ]);
 
-  useEffect(() => {
-    const w = window as unknown as Record<string, unknown>;
-    w.__psforge_pasteCleanAndFormat = () => {
-      void pasteCleanAndFormat();
-    };
-    return () => {
-      delete w.__psforge_pasteCleanAndFormat;
-    };
-  }, [pasteCleanAndFormat]);
-
   const pasteFromClipboardAsNewScript = useCallback(async () => {
     if (!state.selectedPsPath) return;
     let clip = "";
@@ -1203,6 +1193,28 @@ function AppInner() {
     writeTerminalNotice,
     runOrDebugScript,
   ]);
+
+  /** Shared Paste Clean + Format entry point (toolbar, Ctrl+Shift+Alt+V, and
+   *  command palette): from the Welcome tab (or with no tab) the paste lands
+   *  in a fresh script tab; with a code tab open it pastes into the current
+   *  selection. Keeping the branch here means every trigger behaves the same —
+   *  the palette used to call pasteCleanAndFormat directly and silently no-op
+   *  on the Welcome tab. */
+  const pasteScriptFromClipboard = useCallback(() => {
+    if (!activeTab || activeTab.tabType === "welcome") {
+      void pasteFromClipboardAsNewScript();
+    } else {
+      void pasteCleanAndFormat();
+    }
+  }, [activeTab, pasteCleanAndFormat, pasteFromClipboardAsNewScript]);
+
+  useEffect(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__psforge_pasteCleanAndFormat = pasteScriptFromClipboard;
+    return () => {
+      delete w.__psforge_pasteCleanAndFormat;
+    };
+  }, [pasteScriptFromClipboard]);
 
   useEffect(() => {
     void cmd.getScratchDir().then((dir) => {
@@ -1639,11 +1651,7 @@ function AppInner() {
       // On the Welcome tab (or with no tab) the paste lands in a new script tab.
       if (e.ctrlKey && e.shiftKey && e.altKey && keyLower === "v") {
         e.preventDefault();
-        if (!activeTab || activeTab.tabType === "welcome") {
-          void pasteFromClipboardAsNewScript();
-        } else {
-          void pasteCleanAndFormat();
-        }
+        pasteScriptFromClipboard();
       }
 
       // Ctrl+G: Go to line (focus Monaco and trigger built-in action)
@@ -1707,9 +1715,7 @@ function AppInner() {
     stopExecution,
     runSelection,
     formatCurrentScript,
-    pasteCleanAndFormat,
-    pasteFromClipboardAsNewScript,
-    activeTab,
+    pasteScriptFromClipboard,
     toggleBookmarkAtCursor,
     jumpToBookmark,
   ]);
@@ -1958,15 +1964,7 @@ function AppInner() {
         onDebugContinue={debugContinue}
         onStop={stopExecution}
         onFormat={formatCurrentScript}
-        onPasteScript={() => {
-          // From the Welcome tab (or no tab) the paste lands in a fresh script
-          // tab; with a code tab open it pastes into the current selection.
-          if (!activeTab || activeTab.tabType === "welcome") {
-            void pasteFromClipboardAsNewScript();
-          } else {
-            void pasteCleanAndFormat();
-          }
-        }}
+        onPasteScript={pasteScriptFromClipboard}
         onCopyDebugBundle={() => void copyDebugBundle()}
         onFindReplace={() => {
           const trigger = (window as unknown as Record<string, unknown>)

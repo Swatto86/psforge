@@ -864,15 +864,6 @@ export function OutputPane({
   );
 }
 
-/** Renders text with basic ANSI escape code support. */
-function AnsiText({ text, color }: { text: string; color: string }) {
-  // Simple ANSI stripping for now - render raw text with stream color
-  // A full ANSI parser could be added later
-  const cleaned = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-
-  return <span style={{ color }}>{cleaned}</span>;
-}
-
 function ProblemsPane({
   diagnostics,
   activeTabName,

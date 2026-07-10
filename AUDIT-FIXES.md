@@ -8,6 +8,29 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 11 (v1.4.19) — user-facing bug sweep + regression pass
+
+Full pass over the surfaces sweep 10 did not re-read: OutputPane/DebuggerPane,
+TerminalPane (multi-console, run routing, exit codes), SettingsPanel, run
+dialogs (params, PSSA gate, signing, remote console), Sidebar/ShowCommand/
+Welcome/palette, terminal-utils/debug-bundle, and the post-v1.4.2 backend
+diffs (psrun staging, PTY bootstrap, launch-path forwarding).
+
+### MEDIUM
+
+- [x] **S11-1** — The command palette's "Paste Clean + Format" called `pasteCleanAndFormat` directly, which guards against the Welcome tab — so from the Welcome page (or with no tab) the palette entry silently did nothing, while the toolbar button and Ctrl+Shift+Alt+V correctly fell back to pasting into a new script tab. All three triggers now route through one shared `pasteScriptFromClipboard` entry point that owns the Welcome-tab branch.
+
+### LOW
+
+- [x] **S11-2** — Removed the dead `AnsiText` helper from OutputPane (unreferenced since the terminal migration to xterm).
+
+### Regression
+
+- [x] Verified the psrun staged-run wrapper is exempt from machine execution policy (PTY host launches with `-ExecutionPolicy Bypass`), backend normalizes PowerShell's int.MinValue "named" parameter positions before the Show Command sort, and closed run-tab fallbacks in terminal-utils/debug-bundle degrade to "" rather than reading the wrong console.
+- [x] Vitest source-contract test pins all three paste triggers to the shared branch; 75 tests + production build + cargo gate green.
+
+---
+
 ## Sweep 10 (v1.4.18) — user-facing bug sweep + regression pass
 
 Focused pass weighted toward the post-v1.4.2 surface (execution-actions

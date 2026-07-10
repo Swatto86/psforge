@@ -133,6 +133,29 @@ describe("Recent files and project config merge against current settings (S10-2)
   });
 });
 
+describe("Paste Clean + Format entry point (S11-1)", () => {
+  it("routes toolbar, shortcut, and command palette through one Welcome-tab branch", () => {
+    // The palette used to call pasteCleanAndFormat directly, which no-ops on
+    // the Welcome tab; all three triggers must share the branching wrapper.
+    expect(app).toContain(
+      "w.__psforge_pasteCleanAndFormat = pasteScriptFromClipboard",
+    );
+    expect(app).toContain("onPasteScript={pasteScriptFromClipboard}");
+    const shared = app.indexOf("const pasteScriptFromClipboard = useCallback");
+    expect(shared).toBeGreaterThan(-1);
+    const welcomeBranch = app.indexOf(
+      'activeTab.tabType === "welcome"',
+      shared,
+    );
+    const newScriptCall = app.indexOf(
+      "void pasteFromClipboardAsNewScript()",
+      shared,
+    );
+    expect(welcomeBranch).toBeGreaterThan(shared);
+    expect(newScriptCall).toBeGreaterThan(welcomeBranch);
+  });
+});
+
 describe("Re-run from recent runs (S10-3/S10-4)", () => {
   it("consumes the one-shot working-dir override before any early return", () => {
     const runScript = executionActions.indexOf("const runScript = useCallback");
