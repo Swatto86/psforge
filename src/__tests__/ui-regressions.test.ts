@@ -17,7 +17,15 @@ import toolbar from "../components/Toolbar.tsx?raw";
 
 describe("System tray window lifecycle", () => {
   it("does not destroy the window while flushing settings on close", () => {
-    expect(store).toContain("win.onCloseRequested");
+    // Tauri's onCloseRequested wrapper destroys the window (exiting the app
+    // and dropping the tray icon) unless the handler calls preventDefault
+    // before it returns — and before anything that can throw.
+    const closeHandler = store.indexOf("win.onCloseRequested");
+    expect(closeHandler).toBeGreaterThan(-1);
+    const prevent = store.indexOf("event.preventDefault()", closeHandler);
+    const flush = store.indexOf("await flushPendingSettings()", closeHandler);
+    expect(prevent).toBeGreaterThan(-1);
+    expect(flush).toBeGreaterThan(prevent);
     expect(store).not.toContain("win.destroy()");
   });
 

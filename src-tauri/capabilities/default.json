@@ -13,8 +13,6 @@
       "allow": [{ "path": "**" }]
     },
     "core:event:default",
-    "core:window:allow-destroy",
-    "core:window:allow-close",
     "updater:default",
     "process:default"
   ]

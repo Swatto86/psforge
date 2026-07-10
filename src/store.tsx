@@ -1249,7 +1249,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const win = getCurrentWindow();
-        const stop = await win.onCloseRequested(flushPendingSettings);
+        const stop = await win.onCloseRequested(async (event) => {
+          // Tauri's JS wrapper destroys the window after this handler unless
+          // the event is prevented — that would exit the app and drop the
+          // tray icon. The backend hides the window; prevent before flushing
+          // so a flush failure can never fall through to destroy.
+          event.preventDefault();
+          await flushPendingSettings();
+        });
         if (disposed) stop();
         else stops.push(stop);
       } catch {
