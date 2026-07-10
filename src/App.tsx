@@ -1,7 +1,7 @@
 /** PSForge main application component with full layout. */
 
 import React, { useEffect, useCallback, useRef } from "react";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
@@ -660,6 +660,27 @@ function AppInner() {
         if (path) void openFile(path);
       })
       .catch((err) => console.error("getLaunchPath failed:", err));
+  }, [state.settingsLoaded, openFile]);
+
+  // A second PSForge launch (single-instance plugin) forwards its file
+  // argument here so the running instance opens it. Gated on settingsLoaded
+  // for the same SET_SETTINGS-clobber reason as the launch-path effect above.
+  useEffect(() => {
+    if (!state.settingsLoaded) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    listen<string>("psforge-open-path", (event) => {
+      void openFile(event.payload);
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stop = unlisten;
+      })
+      .catch((err) => console.error("psforge-open-path listen failed:", err));
+    return () => {
+      disposed = true;
+      stop?.();
+    };
   }, [state.settingsLoaded, openFile]);
 
   const openScriptFolder = useCallback(async () => {

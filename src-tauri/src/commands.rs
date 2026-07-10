@@ -2806,6 +2806,23 @@ pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(),
     Ok(())
 }
 
+/// Extracts a launch file path from argv-style arguments: skips argv[0]
+/// (the executable path), ignores `--flag` style Tauri/WebView2 internals,
+/// and returns the first argument that is an existing file. Shared by
+/// `get_launch_path` (first launch) and the single-instance callback
+/// (subsequent launches forwarded to the running instance).
+pub fn launch_path_from_args(args: impl IntoIterator<Item = String>) -> Option<String> {
+    let path = args.into_iter().skip(1).find(|a| !a.starts_with('-'))?;
+
+    // Validate it is an existing file before returning it to the frontend.
+    if std::path::Path::new(&path).is_file() {
+        info!("Launch path detected: {}", path);
+        Some(path)
+    } else {
+        None
+    }
+}
+
 /// Returns the file path passed as the first command-line argument when the
 /// application was launched by Windows Explorer via a file-type association
 /// (e.g. double-click on a .ps1 file).  Returns `None` when the app was
@@ -2815,19 +2832,7 @@ pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(),
 /// the file immediately so the user sees the file they clicked on.
 #[cfg_attr(not(test), tauri::command)]
 pub fn get_launch_path() -> Option<String> {
-    // Skip argv[0] (the executable path).  The first real argument is the
-    // file path passed by Windows when the app is the registered handler.
-    // Filter out common Tauri/WebView2 internal flags that start with '--'
-    // so they are never mistaken for file paths.
-    let path = std::env::args().skip(1).find(|a| !a.starts_with('-'))?;
-
-    // Validate it is an existing file before returning it to the frontend.
-    if std::path::Path::new(&path).is_file() {
-        info!("Launch path detected: {}", path);
-        Some(path)
-    } else {
-        None
-    }
+    launch_path_from_args(std::env::args())
 }
 
 // ---------------------------------------------------------------------------
@@ -3319,6 +3324,25 @@ mod tests {
 
     static CACHED_VARIABLES_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
         LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    // ----- launch_path_from_args tests -----
+
+    #[test]
+    fn launch_path_skips_argv0_and_flags_and_requires_existing_file() {
+        // current_exe is a file guaranteed to exist.
+        let exe = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let args = vec!["psforge.exe".into(), "--flag".into(), exe.clone()];
+        assert_eq!(launch_path_from_args(args), Some(exe));
+
+        let missing = vec!["psforge.exe".into(), "C:\\nope\\missing.ps1".into()];
+        assert_eq!(launch_path_from_args(missing), None);
+
+        let flags_only = vec!["psforge.exe".into(), "--flag".into()];
+        assert_eq!(launch_path_from_args(flags_only), None);
+    }
 
     // ----- detect_and_decode tests -----
 

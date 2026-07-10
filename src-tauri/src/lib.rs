@@ -73,6 +73,17 @@ pub fn run() {
     info!("PSForge starting up");
 
     tauri::Builder::default()
+        // Registered first so a second launch is intercepted before any other
+        // initialization: it focuses the running instance's window and, when
+        // the relaunch came from a file association, forwards the file path.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            info!("Second instance launch intercepted; focusing existing window");
+            show_main_window(app);
+            if let Some(path) = commands::launch_path_from_args(args) {
+                use tauri::Emitter;
+                let _ = app.emit("psforge-open-path", path);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
