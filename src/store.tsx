@@ -1228,34 +1228,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.settings, state.settingsLoaded, saveSettingsDebounced]);
 
   // Flush any pending (debounced, not-yet-written) settings when the window
-  // is asked to close. The backend owns the close lifecycle and hides the
-  // window to the system tray, so this handler must never destroy it.
+  // is asked to close (the backend owns the close lifecycle and hides the
+  // window to the system tray, so these handlers must never destroy it) and
+  // when the tray's Exit action asks us to shut down — the backend only
+  // force-exits on a timeout, so we flush first and terminate ourselves.
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    const stops: (() => void)[] = [];
+    const flushPendingSettings = async () => {
+      const pending = pendingSettingsRef.current;
+      if (!pending) return;
+      pendingSettingsRef.current = null;
+      try {
+        await cmd.saveSettings(pending);
+      } catch {
+        // Best effort — never hold the window hostage over a failed save.
+      }
+    };
     (async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const win = getCurrentWindow();
-        const stop = await win.onCloseRequested(async () => {
-          const pending = pendingSettingsRef.current;
-          if (!pending) return;
-          pendingSettingsRef.current = null;
-          try {
-            await cmd.saveSettings(pending);
-          } catch {
-            // Best effort — never hold the window hostage over a failed save.
-          }
-        });
+        const stop = await win.onCloseRequested(flushPendingSettings);
         if (disposed) stop();
-        else unlisten = stop;
+        else stops.push(stop);
       } catch {
         // Window API unavailable (tests / browser preview): debounce-only.
+      }
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const { exit } = await import("@tauri-apps/plugin-process");
+        const stop = await listen("psforge-exit-requested", async () => {
+          await flushPendingSettings();
+          await exit(0);
+        });
+        if (disposed) stop();
+        else stops.push(stop);
+      } catch {
+        // Event API unavailable (tests / browser preview).
       }
     })();
     return () => {
       disposed = true;
-      unlisten?.();
+      for (const stop of stops) stop();
     };
   }, []);
 

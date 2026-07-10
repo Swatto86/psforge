@@ -42,6 +42,25 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// Exit via the frontend so it can flush debounced state (settings) that
+/// would otherwise be lost — `app.exit()` skips the window-close path where
+/// that flush normally runs. A watchdog force-exits if the webview is dead
+/// or never responds.
+#[cfg(not(test))]
+fn request_exit(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    if app.get_webview_window("main").is_some() && app.emit("psforge-exit-requested", ()).is_ok() {
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            warn!("Frontend did not exit within 2s of tray Exit; forcing exit");
+            handle.exit(0);
+        });
+    } else {
+        app.exit(0);
+    }
+}
+
 /// Entry point for the Tauri application.
 /// Registers all plugins and command handlers.
 #[cfg(not(test))]
@@ -132,9 +151,12 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main_window(app),
-                    "exit" => app.exit(0),
+                    "exit" => request_exit(app),
                     _ => {}
                 })
+                // Left-click restores the window on Windows/macOS. Linux
+                // appindicators never emit click events, so there the menu's
+                // Show item is the only restore path.
                 .on_tray_icon_event(|tray, event| {
                     if matches!(
                         event,
@@ -149,6 +171,10 @@ pub fn run() {
                 });
             if let Some(icon) = app.default_window_icon().cloned() {
                 tray = tray.icon(icon);
+            } else {
+                // Only reachable if the bundle icon list is emptied; without
+                // an icon the tray entry is invisible on Linux.
+                warn!("No default window icon; tray icon will be blank");
             }
             tray.build(app)?;
 
@@ -198,12 +224,16 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
+        .run(|_app_handle, event| match event {
+            tauri::RunEvent::Exit => {
                 // Kill a persistent host that is still mid-script (S6-19);
                 // idle hosts self-terminate when their stdin pipe closes.
                 tauri::async_runtime::block_on(commands::kill_active_run_on_exit());
             }
+            // macOS: Dock icon clicked while the window is hidden in the tray.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => show_main_window(_app_handle),
+            _ => {}
         });
 }
 

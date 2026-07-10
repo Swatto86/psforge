@@ -19,6 +19,15 @@ describe("System tray window lifecycle", () => {
     expect(store).toContain("win.onCloseRequested");
     expect(store).not.toContain("win.destroy()");
   });
+
+  it("flushes pending settings before honoring the tray exit request", () => {
+    const exitListener = store.indexOf('listen("psforge-exit-requested"');
+    expect(exitListener).toBeGreaterThan(-1);
+    const flush = store.indexOf("await flushPendingSettings()", exitListener);
+    const exit = store.indexOf("await exit(0)", exitListener);
+    expect(flush).toBeGreaterThan(-1);
+    expect(exit).toBeGreaterThan(flush);
+  });
 });
 
 describe("About dialog version display", () => {
