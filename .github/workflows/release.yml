@@ -172,6 +172,39 @@ jobs:
           # concurrent-write race, matching the upstream multi-platform example.
           includeUpdaterJson: true
 
+      - name: Stage portable exe
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ver = (Get-Content 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
+          $exe = Get-ChildItem 'src-tauri/target/release/*.exe' -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -notlike '*setup*' } |
+                 Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $exe) { throw 'No portable exe in src-tauri/target/release' }
+          $dest = "PSForge_${ver}_x64-portable.exe"
+          Copy-Item $exe.FullName $dest -Force
+          Write-Host "Staged $dest ($([math]::Round($exe.Length/1MB,1)) MB)"
+          "portable_exe=$dest" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload portable exe to release
+        if: matrix.platform == 'windows-latest'
+        uses: actions/github-script@v8
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          PORTABLE_EXE: ${{ env.portable_exe }}
+        with:
+          script: |
+            const fs = require('fs');
+            const name = process.env.PORTABLE_EXE;
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: parseInt(process.env.RELEASE_ID),
+              name,
+              data: fs.readFileSync(name),
+            });
+            console.log(`Uploaded ${name}`);
+
   publish-release:
     permissions:
       contents: write
