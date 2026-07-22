@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "psforge"
-version = "1.4.19"
+version = "1.4.20"
 dependencies = [
  "dirs",
  "encoding_rs",
