@@ -204,16 +204,9 @@ export function OutputPane({
           return a.message.localeCompare(b.message);
         })
       : [];
-  const problemCountText = formatCount(activeProblems.length, "problem");
-  const hasProblemErrors = activeProblems.some(
-    (problem) => problemSeverity(problem.severity) === "error",
-  );
   const errorProblemCount = activeProblems.filter(
     (problem) => problemSeverity(problem.severity) === "error",
   ).length;
-  const hasProblemWarnings = activeProblems.some(
-    (problem) => problemSeverity(problem.severity) === "warning",
-  );
 
   const handleAddDebugWatch = useCallback(
     (expression: string) => {
@@ -269,13 +262,19 @@ export function OutputPane({
     [activeTab, dispatch],
   );
 
+  const assistantMode = state.settings.assistantMode === true;
   const primaryBottomTabs: BottomTabDescriptor[] = [
     { id: "terminal", label: "Terminal" },
     ...(aiEnabled ? [{ id: "assistant" as const, label: "AI" }] : []),
-    { id: "variables", label: "Variables" },
+    ...(!assistantMode
+      ? [{ id: "variables" as const, label: "Variables" }]
+      : []),
   ];
 
   const utilityBottomTabs: BottomTabDescriptor[] = [
+    ...(assistantMode
+      ? [{ id: "variables" as const, label: "Variables", secondary: true }]
+      : []),
     { id: "reference", label: "Reference", secondary: true },
     // Surface the Debugger tab when the tools are enabled, or whenever a debug
     // session is live so a breakpoint hit is always actionable (S3-2).
@@ -283,169 +282,6 @@ export function OutputPane({
       ? [{ id: "debugger" as const, label: "Debugger", secondary: true }]
       : []),
   ];
-
-  const variableCountText = formatCount(state.variables.length, "variable");
-
-  const activePaneMeta = (() => {
-    switch (state.bottomPanelTab) {
-      case "terminal":
-        return {
-          title: "Interactive Terminal",
-          subtitle:
-            "Run scripts with F5 and use the same session for quick commands and output.",
-          chipLabel: state.isRunning ? "Running" : "",
-          chipTone: "accent",
-        };
-      case "problems":
-        return {
-          title: "Problems",
-          subtitle:
-            !activeTab || activeTab.tabType === "welcome"
-              ? "Open a PowerShell script to review pre-run diagnostics."
-              : !pssaEnabled
-                ? "Enable PSScriptAnalyzer in Settings to populate pre-run diagnostics."
-                : activeProblems.length === 0
-                  ? `No pre-run problems detected for ${activeTab.title}.`
-                  : `${problemCountText} reported for ${activeTab.title} before execution.`,
-          chipLabel:
-            !activeTab || activeTab.tabType === "welcome"
-              ? "No script"
-              : !pssaEnabled
-                ? "Disabled"
-                : activeProblems.length === 0
-                  ? "Clear"
-                  : problemCountText,
-          chipTone:
-            !pssaEnabled || activeProblems.length === 0
-              ? "default"
-              : hasProblemErrors
-                ? "danger"
-                : hasProblemWarnings
-                  ? "warn"
-                  : "accent",
-        };
-      case "variables":
-        return {
-          title: "Variables",
-          subtitle:
-            state.variables.length === 0
-              ? "Variables captured after a script run will appear here."
-              : `${variableCountText} captured from the last completed execution.`,
-          chipLabel:
-            state.variables.length === 0 ? "No variables" : variableCountText,
-          chipTone: state.variables.length === 0 ? "default" : "accent",
-        };
-      case "assistant":
-        return {
-          title: "AI Assistant",
-          subtitle: "Ask questions, write scripts, and prepare fixes for the active editor.",
-          chipLabel: state.settings.aiProvider,
-          chipTone: "accent",
-        };
-      case "reference":
-        return {
-          title: "Reference",
-          subtitle:
-            state.referenceSubview === "show-command"
-              ? "Build command invocations and insert them into the editor."
-              : state.referenceSubview === "help"
-                ? "Look up PowerShell command help without leaving the workspace."
-                : !activeTab || activeTab.tabType === "welcome"
-                  ? "Open a script to review pre-run diagnostics."
-                  : !pssaEnabled
-                    ? "Enable PSScriptAnalyzer in Settings for pre-run diagnostics."
-                    : errorProblemCount === 0
-                      ? `No blocking issues for ${activeTab.title}.`
-                      : `${formatCount(errorProblemCount, "error")} for ${activeTab.title} before run.`,
-          chipLabel:
-            state.referenceSubview === "help"
-              ? "Help"
-              : state.referenceSubview === "show-command"
-                ? "Builder"
-                : errorProblemCount > 0
-                  ? formatCount(errorProblemCount, "error")
-                  : "Clear",
-          chipTone:
-            state.referenceSubview !== "problems" || errorProblemCount === 0
-              ? "default"
-              : "danger",
-        };
-      case "debugger":
-        return {
-          title: "Debugger",
-          subtitle:
-            "Breakpoints, locals, call stack, and watches for the active debug session.",
-          chipLabel: !state.isDebugging
-            ? "Idle"
-            : state.debugPaused
-              ? "Paused"
-              : "Active",
-          chipTone: !state.isDebugging
-            ? "default"
-            : state.debugPaused
-              ? "warn"
-              : "accent",
-        };
-      case "show-command":
-        return {
-          title: "Show Command",
-          subtitle:
-            "Build command invocations visually and send them back to the editor.",
-          chipLabel: "Utility",
-          chipTone: "default",
-        };
-      case "help":
-        return {
-          title: "Help",
-          subtitle:
-            "Look up command help without leaving the editor workspace.",
-          chipLabel: "Utility",
-          chipTone: "default",
-        };
-    }
-  })();
-
-  const toolbarMeta = (() => {
-    switch (state.bottomPanelTab) {
-      case "terminal":
-        return state.isRunning
-          ? "Script execution is streaming directly into the integrated terminal."
-          : "Use the terminal for both script execution and ad-hoc PowerShell commands.";
-      case "problems":
-        return !activeTab || activeTab.tabType === "welcome"
-          ? "Open or focus a PowerShell script to review pre-run diagnostics here."
-          : !pssaEnabled
-            ? "Enable PSScriptAnalyzer in Settings to populate the Problems pane."
-            : activeProblems.length === 0
-              ? "The active editor content is clear of pre-run diagnostics."
-              : "These diagnostics are pre-run only; runtime output and failures stay in Terminal.";
-      case "variables":
-        return state.variables.length === 0
-          ? "Run a script to capture variables here."
-          : `Showing ${formatCount(filteredVars.length, "match")} from ${variableCountText}.`;
-      case "assistant":
-        return "AI uses the active script, PSSA diagnostics, and last run output as context.";
-      case "debugger":
-        return !state.isDebugging
-          ? "Start a debug session to inspect locals and watches here."
-          : state.debugPaused
-            ? "Debugger paused: step, continue, or inspect the current frame."
-            : "Debugger active: controls will enable when execution pauses.";
-      case "show-command":
-        return "Build commands here and insert them back into the editor when ready.";
-      case "help":
-        return "Use inline help for command lookup without opening extra tools.";
-    }
-  })();
-
-  const chipClassName =
-    activePaneMeta.chipTone === "accent"
-      ? "bottom-pane-chip bottom-pane-chip-accent"
-      : activePaneMeta.chipTone === "warn"
-        ? "bottom-pane-chip bottom-pane-chip-warn"
-        : activePaneMeta.chipTone === "danger"
-          ? "bottom-pane-chip bottom-pane-chip-danger"
-          : "bottom-pane-chip";
 
   const actionButtonClassName = (
     options: { danger?: boolean; primary?: boolean } = {},
@@ -514,16 +350,6 @@ export function OutputPane({
       className="flex flex-col h-full bottom-pane-shell"
     >
       <div className="bottom-pane-header no-select text-sm">
-        <div className="bottom-pane-heading">
-          <div className="bottom-pane-title-row">
-            <span className="bottom-pane-title">{activePaneMeta.title}</span>
-            {activePaneMeta.chipLabel ? (
-              <span className={chipClassName}>{activePaneMeta.chipLabel}</span>
-            ) : null}
-          </div>
-          <div className="bottom-pane-subtitle">{activePaneMeta.subtitle}</div>
-        </div>
-
         <div className="bottom-pane-tab-rails">
           <div className="bottom-pane-tab-group">
             {primaryBottomTabs.map(renderTabButton)}
@@ -532,50 +358,10 @@ export function OutputPane({
             {utilityBottomTabs.map(renderTabButton)}
           </div>
         </div>
-      </div>
-
-      <div className="bottom-pane-toolbar">
-        <div className="bottom-pane-toolbar-meta">{toolbarMeta}</div>
 
         <div className="bottom-pane-action-group">
           {state.bottomPanelTab === "terminal" && (
             <>
-              <button
-                data-testid="terminal-copy-output-button"
-                onClick={() => {
-                  void (
-                    window as unknown as Record<string, () => Promise<void>>
-                  ).__psforge_copy_terminal_output?.();
-                }}
-                className={actionButtonClassName()}
-                title="Copy terminal output to clipboard"
-              >
-                Copy Output
-              </button>
-              <button
-                data-testid="terminal-copy-last-run-button"
-                onClick={() => {
-                  void (
-                    window as unknown as Record<string, () => Promise<void>>
-                  ).__psforge_copy_last_run_output?.();
-                }}
-                className={actionButtonClassName()}
-                title="Copy output from the last F5 run"
-              >
-                Copy Last Run
-              </button>
-              <button
-                data-testid="terminal-copy-debug-bundle-button"
-                onClick={() => {
-                  void (
-                    window as unknown as Record<string, () => Promise<void>>
-                  ).__psforge_copy_debug_bundle?.();
-                }}
-                className={actionButtonClassName()}
-                title="Copy markdown debug bundle for AI chat (output, exit code, PSSA)"
-              >
-                Copy Debug Bundle
-              </button>
               <button
                 data-testid="terminal-clear-button"
                 onClick={() =>
@@ -598,7 +384,31 @@ export function OutputPane({
                 className={actionButtonClassName()}
                 title="Restart PowerShell session"
               >
-                Restart Session
+                Restart
+              </button>
+              <button
+                data-testid="terminal-copy-output-button"
+                onClick={() => {
+                  void (
+                    window as unknown as Record<string, () => Promise<void>>
+                  ).__psforge_copy_terminal_output?.();
+                }}
+                className={actionButtonClassName()}
+                title="Copy terminal output"
+              >
+                Copy
+              </button>
+              <button
+                data-testid="terminal-copy-last-run-button"
+                onClick={() => {
+                  void (
+                    window as unknown as Record<string, () => Promise<void>>
+                  ).__psforge_copy_last_run_output?.();
+                }}
+                className={actionButtonClassName()}
+                title="Copy output from the last F5 run"
+              >
+                Last run
               </button>
             </>
           )}

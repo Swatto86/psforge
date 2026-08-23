@@ -33,8 +33,9 @@ describe("Integrated terminal stability", () => {
 });
 
 describe("Script param inspection and run guard", () => {
-  it("blocks runs when a script-level param block cannot be inspected", () => {
+  it("blocks runs when param inspection fails with status error", () => {
     expect(executionActionsSource).toContain("hasScriptLevelParamBlock");
+    expect(executionActionsSource).toContain('inspect.status === "error"');
     expect(executionActionsSource).toContain(
       "Run blocked: the script declares a param() block but PSForge could not read its parameters",
     );

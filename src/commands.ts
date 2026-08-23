@@ -18,7 +18,7 @@ import type {
   PsCompletion,
   PssaDiagnostic,
   PsVersion,
-  ScriptParameter,
+  ScriptParameterInspectResult,
   Snippet,
   VariableInfo,
 } from "./types";
@@ -91,8 +91,11 @@ export async function stopScript(): Promise<void> {
 export async function getScriptParameters(
   psPath: string,
   script: string,
-): Promise<ScriptParameter[]> {
-  return invoke<ScriptParameter[]>("get_script_parameters", { psPath, script });
+): Promise<ScriptParameterInspectResult> {
+  return invoke<ScriptParameterInspectResult>("get_script_parameters", {
+    psPath,
+    script,
+  });
 }
 
 /** Send stdin input to the running process. */

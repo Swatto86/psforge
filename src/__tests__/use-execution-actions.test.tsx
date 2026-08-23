@@ -32,7 +32,7 @@ vi.mock("../commands", () => ({
   debugStepOver: vi.fn(async () => {}),
   deleteScratchFile: vi.fn(async () => {}),
   executeScriptDebug: vi.fn(async () => 0),
-  getScriptParameters: vi.fn(async () => []),
+  getScriptParameters: vi.fn(async () => ({ status: "none", parameters: [] })),
   prepareTerminalScriptCommand: vi.fn(async () => "prepared-command"),
   readFileContent: vi.fn(async (path: string) => ({
     content: "",
@@ -182,7 +182,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   listenHandlers.clear();
   actions = undefined;
-  vi.mocked(commands.getScriptParameters).mockResolvedValue([]);
+  vi.mocked(commands.getScriptParameters).mockResolvedValue({
+    status: "none",
+    parameters: [],
+  });
   vi.mocked(commands.prepareTerminalScriptCommand).mockResolvedValue(
     "prepared-command",
   );

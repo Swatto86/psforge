@@ -795,7 +795,7 @@ impl ProcessManager {
         wrapper_script.push_str("\n$__psforge_script_path = '");
         wrapper_script.push_str(&user_script_path_ps);
         wrapper_script.push_str("'\n");
-        wrapper_script.push_str(crate::ps_invoke::PSFORGE_PERSISTENT_HOST_INVOKE_BLOCK);
+        wrapper_script.push_str(crate::ps_invoke::persistent_host_invoke_block().as_str());
         if let Some(specs) = debug_breakpoints {
             // Register debugger breakpoints. Supports line breakpoints plus
             // variable breakpoints, with optional condition/hit-count/action.
@@ -915,7 +915,7 @@ impl ProcessManager {
                 }
             }
         }
-        wrapper_script.push_str("__psforge_invoke_user_script_with_emit $args\n");
+        wrapper_script.push_str("__psforge_invoke_user_script_with_emit @args\n");
         let wrapper_script_path =
             write_secure_temp_file("psforge_wrapper", ".ps1", wrapper_script.as_bytes()).map_err(
                 |e| {

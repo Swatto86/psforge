@@ -1,14 +1,9 @@
-/** PSForge Status Bar component.
- *  Shows encoding, file path, PS version, and theme info.
- *  Clicking the encoding label opens an inline encoding picker.
- *  Clicking the file path reveals it in Windows Explorer.
- */
+/** PSForge Status Bar — live run context only. */
 
 import React, { useState, useRef, useEffect } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { UpdateStatus } from "../types";
-import { FontQuickControls } from "./FontQuickControls";
 import { resolveExecutionWorkDir } from "../run-utils";
 import { applyRunDirPreset } from "../run-dir-presets";
 
@@ -48,27 +43,9 @@ export function StatusBar({
   onInstallUpdate,
 }: StatusBarProps) {
   const { state, activeTab, dispatch } = useAppState();
-  const [showEncodingPicker, setShowEncodingPicker] = useState(false);
   const [showRunDirMenu, setShowRunDirMenu] = useState(false);
-  const encodingRef = useRef<HTMLDivElement>(null);
   const runDirRef = useRef<HTMLDivElement>(null);
 
-  // Close encoding picker on outside click.
-  useEffect(() => {
-    if (!showEncodingPicker) return;
-    const handler = (e: MouseEvent) => {
-      if (
-        encodingRef.current &&
-        !encodingRef.current.contains(e.target as Node)
-      ) {
-        setShowEncodingPicker(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showEncodingPicker]);
-
-  // Close run-dir menu on outside click.
   useEffect(() => {
     if (!showRunDirMenu) return;
     const handler = (e: MouseEvent) => {
@@ -80,30 +57,6 @@ export function StatusBar({
     return () => document.removeEventListener("mousedown", handler);
   }, [showRunDirMenu]);
 
-  const encodingLabel = (enc: string): string => {
-    switch (enc) {
-      case "utf8bom":
-        return "UTF-8 with BOM";
-      case "utf16le":
-        return "UTF-16 LE";
-      case "utf16be":
-        return "UTF-16 BE";
-      default:
-        return "UTF-8";
-    }
-  };
-
-  const encodingOptions: { value: string; label: string }[] = [
-    { value: "utf8", label: "UTF-8" },
-    { value: "utf8bom", label: "UTF-8 with BOM" },
-    { value: "utf16le", label: "UTF-16 LE" },
-    { value: "utf16be", label: "UTF-16 BE" },
-  ];
-
-  const psVersion = state.psVersions.find(
-    (v) => v.path === state.selectedPsPath,
-  );
-
   const formatRunDuration = (ms: number): string => {
     if (ms < 1000) return `${ms} ms`;
     return `${(ms / 1000).toFixed(2)} s`;
@@ -113,7 +66,7 @@ export function StatusBar({
   const lastRunLabel =
     lastRun && !state.isRunning
       ? lastRun.exitCode === null
-        ? `Run failed · ${formatRunDuration(lastRun.durationMs)}`
+        ? `Failed · ${formatRunDuration(lastRun.durationMs)}`
         : lastRun.exitCode === 0
           ? `Exit 0 · ${formatRunDuration(lastRun.durationMs)}`
           : `Exit ${lastRun.exitCode} · ${formatRunDuration(lastRun.durationMs)}`
@@ -127,11 +80,13 @@ export function StatusBar({
           state.settings.workingDirMode,
           state.settings.customWorkingDir,
           state.settings.pinnedRunDir ?? "",
-          () => (typeof navigator !== "undefined" && /win/i.test(navigator.platform) ? "C:\\" : "/"),
+          () =>
+            typeof navigator !== "undefined" && /win/i.test(navigator.platform)
+              ? "C:\\"
+              : "/",
         )
       : null;
 
-  /** Link controls on the status bar — do not use --accent (same hue as --bg-statusbar). */
   const statusBarLinkStyle: React.CSSProperties = {
     backgroundColor: "transparent",
     color: "var(--text-inverse)",
@@ -184,8 +139,6 @@ export function StatusBar({
             Installing {updateStatus.version}...
           </span>
         );
-      case "upToDate":
-        return <span data-testid="status-update-uptodate">Up to date</span>;
       case "error":
         return (
           <button
@@ -198,18 +151,11 @@ export function StatusBar({
             Update check failed
           </button>
         );
+      case "upToDate":
       case "idle":
       default:
-        return (
-          <button
-            data-testid="status-update-check"
-            onClick={onCheckForUpdates}
-            className="status-link"
-            title="Check GitHub Releases for a newer PSForge version"
-          >
-            Check for Updates
-          </button>
-        );
+        // Idle / up-to-date stays out of the bar — Help → Check for Updates.
+        return null;
     }
   };
 
@@ -225,71 +171,7 @@ export function StatusBar({
         paddingRight: "12px",
       }}
     >
-      {/* Left side */}
-      <div className="flex items-center gap-4">
-        {/* Encoding -- click to change */}
-        {activeTab && activeTab.tabType !== "welcome" && (
-          <div ref={encodingRef} className="relative">
-            <button
-              onClick={() => setShowEncodingPicker((v) => !v)}
-              title="Click to change encoding"
-              className="status-link"
-              style={{ textDecoration: "none" }}
-            >
-              {encodingLabel(activeTab.encoding)}
-            </button>
-
-            {showEncodingPicker && (
-              <div
-                className="menu-pop"
-                style={{
-                  bottom: "100%",
-                  left: 0,
-                  marginBottom: "4px",
-                  minWidth: "160px",
-                }}
-              >
-                {encodingOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => {
-                      dispatch({
-                        type: "UPDATE_TAB",
-                        id: activeTab.id,
-                        changes: { encoding: opt.value, isDirty: true },
-                      });
-                      setShowEncodingPicker(false);
-                    }}
-                    className="menu-item flex items-center gap-2"
-                    style={{
-                      backgroundColor:
-                        activeTab.encoding === opt.value
-                          ? "var(--bg-hover)"
-                          : undefined,
-                      fontSize: "var(--ui-font-size-xs)",
-                    }}
-                  >
-                    {activeTab.encoding === opt.value ? (
-                      <span style={{ color: "var(--text-accent)" }}>
-                        &#10003;
-                      </span>
-                    ) : (
-                      <span
-                        style={{ width: "12px", display: "inline-block" }}
-                      />
-                    )}
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* File path -- click to reveal in Explorer.
-             direction:rtl makes text-overflow:ellipsis trim from the LEFT,
-             so the filename at the end of the path is always visible —
-             matching VS Code status bar behaviour. */}
+      <div className="flex items-center gap-4 min-w-0">
         {activeTab?.filePath && (
           <button
             onClick={() =>
@@ -297,7 +179,7 @@ export function StatusBar({
             }
             className="status-link"
             style={{
-              maxWidth: "500px",
+              maxWidth: "420px",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -311,8 +193,7 @@ export function StatusBar({
         )}
       </div>
 
-      {/* Right side */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 shrink-0">
         {state.isDebugging ? (
           <span className="flex items-center gap-1">
             <span
@@ -322,7 +203,7 @@ export function StatusBar({
                   : "bg-green-400 animate-pulse"
               }`}
             />
-            {state.debugPaused ? "Debug Paused" : "Debugging"}
+            {state.debugPaused ? "Paused" : "Debugging"}
             {state.debugLine ? ` (Ln ${state.debugLine})` : ""}
           </span>
         ) : state.isRunning ? (
@@ -337,7 +218,10 @@ export function StatusBar({
               data-testid="status-last-run"
               onClick={() => {
                 void (
-                  window as unknown as Record<string, (() => Promise<void>) | undefined>
+                  window as unknown as Record<
+                    string,
+                    (() => Promise<void>) | undefined
+                  >
                 ).__psforge_copy_debug_bundle?.();
               }}
               className="status-link"
@@ -348,9 +232,9 @@ export function StatusBar({
                     ? "var(--text-inverse)"
                     : "var(--stream-stderr)",
               }}
-              title="Copy debug bundle for AI (last run output, exit code, PSSA)"
+              title="Copy debug bundle for AI"
             >
-              {lastRunLabel} · Copy bundle
+              {lastRunLabel}
             </button>
           )
         )}
@@ -369,9 +253,7 @@ export function StatusBar({
                 whiteSpace: "nowrap",
               }}
             >
-              {state.settings.workingDirMode === "pinned"
-                ? "📌 Pinned: "
-                : "Run: "}
+              {state.settings.workingDirMode === "pinned" ? "Pinned: " : "Run: "}
               {runCwd}
             </button>
 
@@ -506,8 +388,6 @@ export function StatusBar({
             )}
           </div>
         )}
-        <FontQuickControls />
-        {psVersion && <span>{psVersion.name}</span>}
         {activeTab && activeTab.tabType !== "welcome" && (
           <span
             style={{ fontVariantNumeric: "tabular-nums" }}
@@ -516,7 +396,6 @@ export function StatusBar({
             Ln {state.cursorLine}, Col {state.cursorColumn}
           </span>
         )}
-        <span className="capitalize">{state.settings.theme}</span>
       </div>
     </div>
   );

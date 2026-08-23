@@ -135,7 +135,18 @@ pub(crate) fn write_secure_temp_file(
     ))
 }
 
-/// Writes `bytes` to `path` atomically: serialises to a sibling temp file,
+/// Writes `bytes` to `path` with a UTF-8 BOM when missing. Windows PowerShell
+/// 5.1 decodes BOM-less `.ps1` files as the system ANSI code page, so staged
+/// run wrappers with non-ASCII paths/args must carry a BOM (same as
+/// `write_secure_temp_file` for `.ps1`).
+pub(crate) fn write_utf8_bom_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let mut out = Vec::with_capacity(content.len().saturating_add(3));
+    if !content.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        out.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    }
+    out.extend_from_slice(content);
+    atomic_write(path, &out)
+}
 /// fsyncs, then renames over the destination. Prevents the user-visible
 /// "file is empty after a power loss / crash mid-write" failure mode that
 /// `std::fs::write` can produce because it truncates first.

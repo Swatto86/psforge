@@ -76,7 +76,8 @@ const BOOL_TYPES = new Set([
 ]);
 
 function isBoolType(typeName: string): boolean {
-  return BOOL_TYPES.has(typeName.toLowerCase());
+  const lower = typeName.toLowerCase();
+  return BOOL_TYPES.has(lower) || lower === "switch" || lower.endsWith(".switchparameter");
 }
 
 function isNumericType(typeName: string): boolean {
@@ -93,7 +94,7 @@ function isSecureString(typeName: string): boolean {
 /** Short, user-friendly type label for the hint under each field. */
 function typeLabel(typeName: string): string {
   const lower = typeName.toLowerCase();
-  if (BOOL_TYPES.has(lower)) return "Boolean";
+  if (isBoolType(typeName)) return "Boolean";
   if (lower === "securestring" || lower === "system.security.securestring")
     return "SecureString";
   if (NUMERIC_TYPES.has(lower)) {

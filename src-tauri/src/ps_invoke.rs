@@ -27,7 +27,13 @@ function __psforge_coerce_arg_value {
         try {
             $__psforge_bytes = [Convert]::FromBase64String($__psforge_b64)
             $__psforge_plain = [System.Text.Encoding]::UTF8.GetString($__psforge_bytes)
-            return (ConvertTo-SecureString -String $__psforge_plain -AsPlainText -Force)
+            # ConvertTo-SecureString -AsPlainText is PowerShell 6+ only.
+            # Use NetworkCredential on Windows PowerShell 5.1 so mandatory
+            # [SecureString] params still bind after Paste + Run / F5.
+            if ($PSVersionTable.PSVersion.Major -ge 6) {
+                return (ConvertTo-SecureString -String $__psforge_plain -AsPlainText -Force)
+            }
+            return (New-Object System.Net.NetworkCredential('', $__psforge_plain)).SecurePassword
         } catch {
             # Malformed sentinel: fall through to the original token rather
             # than blocking the run. The script will then receive the
@@ -111,7 +117,10 @@ function __psforge_invoke_user_script {
                 $__psforge_name = $__psforge_body.Trim()
                 if ($__psforge_name.Length -gt 0) {
                     if (($__psforge_i + 1) -lt $__psforge_input_args.Count) {
-                        $__psforge_named[$__psforge_name] = $__psforge_input_args[$__psforge_i + 1]
+                        # Always coerce so SecureString/bool tokens bind even
+                        # when emitted in space form (-Name value) rather than
+                        # colon form (-Name:value).
+                        $__psforge_named[$__psforge_name] = __psforge_coerce_arg_value $__psforge_input_args[$__psforge_i + 1]
                         $__psforge_i += 2
                         continue
                     }
@@ -131,22 +140,16 @@ function __psforge_invoke_user_script {
 }
 "#;
 
-/// Persistent-host wrapper tail: emit variables after every dot-sourced run.
-pub(crate) const PSFORGE_PERSISTENT_HOST_INVOKE_BLOCK: &str = concat!(
-    PSFORGE_COERCE_ARG_VALUE_FN,
-    PSFORGE_EMIT_VARIABLES_FN,
-    PSFORGE_INVOKE_USER_SCRIPT_FN,
-    r#"
-function __psforge_invoke_user_script_with_emit {
-    param([object[]]$__psforge_input_args)
-    try {
-        __psforge_invoke_user_script @__psforge_input_args
-    } finally {
-        __psforge_emit_variables
-    }
+/// Persistent-host wrapper: coerce/bind args, then emit variables after the run.
+/// Built with format! (not concat!) so const &str fragments compile on stable.
+pub(crate) fn persistent_host_invoke_block() -> String {
+    format!(
+        "{coerce}\n{emit}\n{invoke}\nfunction __psforge_invoke_user_script_with_emit {{\n    param([object[]]$__psforge_input_args)\n    try {{\n        __psforge_invoke_user_script @__psforge_input_args\n    }} finally {{\n        __psforge_emit_variables\n    }}\n}}\n",
+        coerce = PSFORGE_COERCE_ARG_VALUE_FN,
+        emit = PSFORGE_EMIT_VARIABLES_FN,
+        invoke = PSFORGE_INVOKE_USER_SCRIPT_FN,
+    )
 }
-"#
-);
 
 /// Builds the child-process invoke script used by the integrated terminal psrun
 /// wrapper. Arguments arrive via `$args` when the file is launched with
@@ -168,5 +171,21 @@ mod tests {
         assert!(script.contains("__psforge_invoke_user_script"));
         assert!(script.contains("__psforge_invoke_user_script @args"));
         assert!(script.contains("$__psforge_script_path = 'C:\\temp\\run.ps1'"));
+        assert!(
+            script.contains("NetworkCredential"),
+            "PS 5.1 SecureString path must be present"
+        );
+        assert!(
+            script.contains("__psforge_coerce_arg_value $__psforge_input_args[$__psforge_i + 1]"),
+            "space-form tokens must be coerced"
+        );
+    }
+
+    #[test]
+    fn persistent_host_block_includes_emit_wrapper() {
+        let block = persistent_host_invoke_block();
+        assert!(block.contains("__psforge_invoke_user_script_with_emit"));
+        assert!(block.contains("__psforge_emit_variables"));
+        assert!(block.contains("NetworkCredential"));
     }
 }

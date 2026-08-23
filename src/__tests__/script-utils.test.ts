@@ -48,11 +48,23 @@ describe("hasScriptLevelParamBlock", () => {
     ).toBe(true);
   });
 
+  it("detects param after CmdletBinding", () => {
+    expect(
+      hasScriptLevelParamBlock(
+        "[CmdletBinding()]\nparam(\n  [string]$Name\n)\nWrite-Host $Name",
+      ),
+    ).toBe(true);
+  });
+
   it("ignores param blocks inside functions", () => {
     expect(
       hasScriptLevelParamBlock(
         "function Get-Foo {\n  param([string]$Name)\n}\nWrite-Host 1",
       ),
     ).toBe(false);
+  });
+
+  it("treats empty param() as a script-level block", () => {
+    expect(hasScriptLevelParamBlock("param()\nWrite-Host hi")).toBe(true);
   });
 });

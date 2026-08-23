@@ -159,6 +159,13 @@ export interface ScriptParameter {
   helpMessage: string;
 }
 
+/** Result of `get_script_parameters` — distinguishes inspect outcomes. */
+export interface ScriptParameterInspectResult {
+  /** "ok" | "none" | "error" */
+  status: "ok" | "none" | "error" | string;
+  parameters: ScriptParameter[];
+}
+
 /** File content result from the Rust backend. */
 export interface FileContent {
   content: string;

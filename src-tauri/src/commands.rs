@@ -219,7 +219,7 @@ pub async fn prepare_terminal_script_command(
     wrapper.push_str(&pending_path_ps);
     wrapper.push_str("' -Force -ErrorAction SilentlyContinue }\n");
 
-    if let Err(e) = std::fs::write(&pending_path, wrapper.as_bytes()) {
+    if let Err(e) = crate::utils::write_utf8_bom_file(&pending_path, wrapper.as_bytes()) {
         let _ = std::fs::remove_file(&user_script_path);
         let _ = std::fs::remove_file(&invoke_wrapper_path);
         return Err(AppError {
@@ -370,12 +370,16 @@ const PARAM_INSPECT_TIMEOUT_SECS: u64 = 15;
 /// to avoid colliding with any names declared in the user's own script.
 const PARAM_INSPECT_SCRIPT: &str = r#"
 $__s = $env:PSFORGE_SCRIPT_CONTENT
+$__errs = $null
 $__ast = [System.Management.Automation.Language.Parser]::ParseInput(
-    $__s, [ref]$null, [ref]$null)
+    $__s, [ref]$null, [ref]$__errs)
 # Script-level param() only — recursive Find() also matches function param
 # blocks and makes pasted helper functions look like the runnable script.
 $__pb = $__ast.ParamBlock
-if ($null -eq $__pb) { '[]'; exit }
+if ($null -eq $__pb) {
+    [PSCustomObject]@{ status = 'none'; parameters = @() } | ConvertTo-Json -Compress
+    exit
+}
 $__r = @(foreach ($__p in $__pb.Parameters) {
     $__mand = $false; $__help = ''; $__type = 'String'; $__pos = $null
     foreach ($__a in $__p.Attributes) {
@@ -417,12 +421,15 @@ $__r = @(foreach ($__p in $__pb.Parameters) {
         helpMessage = $__help
     }
 })
-if ($__r.Count -eq 0) { '[]' } else { $__r | ConvertTo-Json -Compress }
+[PSCustomObject]@{
+    status = 'ok'
+    parameters = @($__r)
+} | ConvertTo-Json -Compress -Depth 5
 "#;
 
 /// Metadata for a single parameter in a script's param() block.
 /// Mirrors the `ScriptParameter` TypeScript type in src/types.ts.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptParameterInfo {
     /// Parameter name without the leading `$`.
@@ -439,39 +446,54 @@ pub struct ScriptParameterInfo {
     pub help_message: String,
 }
 
-/// Inspects the param() block of a PowerShell script using the PS AST and
-/// returns metadata for each declared parameter.
+/// Result of inspecting a script's param() block.
+/// Distinguishes "no param block", "empty/ok param block", and "inspect failed"
+/// so the frontend does not block valid `param()` scripts or fall through to
+/// interactive prompts when inspection actually failed.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptParameterInspectResult {
+    /// "ok" | "none" | "error"
+    pub status: String,
+    pub parameters: Vec<ScriptParameterInfo>,
+}
+
+fn empty_param_inspect(status: &str) -> ScriptParameterInspectResult {
+    ScriptParameterInspectResult {
+        status: status.to_string(),
+        parameters: Vec::new(),
+    }
+}
+
+/// Inspects the param() block of a PowerShell script using the PS AST.
 ///
-/// Implemented as a fire-and-forget subprocess so:
-///  - The caller can detect mandatory params before committing to a run.
-///  - Failures degrade gracefully (returns empty vec, caller runs as-is).
+/// Returns a structured status so the frontend can tell apart:
+/// - `none` — no script-level param() block
+/// - `ok` — param() present (possibly empty / optional-only)
+/// - `error` — inspection failed or script too large to inspect
 ///
-/// The script content is passed via a dedicated environment variable
-/// (PSFORGE_SCRIPT_CONTENT) to avoid all shell-escaping hazards.
-/// Windows env-var size limit is ~32 767 chars; scripts larger than that
-/// will be skipped (the command will return an empty list and the frontend
-/// will fall through to a normal run).
+/// The script content is passed via PSFORGE_SCRIPT_CONTENT to avoid
+/// shell-escaping hazards. Windows env-var size limit is ~32 767 chars.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn get_script_parameters(
     ps_path: String,
     script: String,
-) -> Result<Vec<ScriptParameterInfo>, AppError> {
+) -> Result<ScriptParameterInspectResult, AppError> {
     info!("get_script_parameters called");
     powershell::validate_ps_path(&ps_path)?;
 
     if script.trim().is_empty() {
-        return Ok(Vec::new());
+        return Ok(empty_param_inspect("none"));
     }
 
     // Windows environment variables are capped at ~32 767 chars.
-    // Silently skip inspection for extremely large scripts rather than failing.
     const MAX_ENV_SCRIPT_BYTES: usize = 32_000;
     if script.len() > MAX_ENV_SCRIPT_BYTES {
         debug!(
             "Script too large for param inspection ({} bytes), skipping",
             script.len()
         );
-        return Ok(Vec::new());
+        return Ok(empty_param_inspect("error"));
     }
 
     let result = tokio::time::timeout(
@@ -494,47 +516,64 @@ pub async fn get_script_parameters(
     let output = match result {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
-            // Log and gracefully degrade: caller will run the script as-is.
             debug!("get_script_parameters spawn failed: {}", e);
-            return Ok(Vec::new());
+            return Ok(empty_param_inspect("error"));
         }
         Err(_) => {
             debug!(
                 "get_script_parameters timed out after {}s",
                 PARAM_INSPECT_TIMEOUT_SECS
             );
-            return Ok(Vec::new());
+            return Ok(empty_param_inspect("error"));
         }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let trimmed = stdout.trim();
 
-    if trimmed.is_empty() || trimmed == "[]" {
-        return Ok(Vec::new());
+    if trimmed.is_empty() {
+        return Ok(empty_param_inspect("error"));
     }
 
-    if trimmed.starts_with('[') {
-        Ok(serde_json::from_str(trimmed).unwrap_or_default())
-    } else if trimmed.starts_with('{') {
-        // Single parameter: PS emits an object, not an array, for exactly one item.
-        let single: ScriptParameterInfo =
-            serde_json::from_str(trimmed).unwrap_or_else(|_| ScriptParameterInfo {
-                name: String::new(),
-                type_name: "String".to_string(),
-                is_mandatory: false,
-                has_default: false,
-                position: None,
-                help_message: String::new(),
+    if let Ok(parsed) = serde_json::from_str::<ScriptParameterInspectResult>(trimmed) {
+        let status = parsed.status.to_ascii_lowercase();
+        if status == "ok" || status == "none" || status == "error" {
+            return Ok(ScriptParameterInspectResult {
+                status,
+                parameters: parsed
+                    .parameters
+                    .into_iter()
+                    .filter(|p| !p.name.is_empty())
+                    .collect(),
             });
-        if single.name.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Ok(vec![single])
         }
-    } else {
-        Ok(Vec::new())
     }
+
+    // Legacy fallbacks: older snippets emitted a bare array / single object.
+    if trimmed.starts_with('[') {
+        let params: Vec<ScriptParameterInfo> =
+            serde_json::from_str(trimmed).unwrap_or_default();
+        return Ok(ScriptParameterInspectResult {
+            status: if params.is_empty() {
+                "none".to_string()
+            } else {
+                "ok".to_string()
+            },
+            parameters: params,
+        });
+    }
+    if trimmed.starts_with('{') {
+        if let Ok(single) = serde_json::from_str::<ScriptParameterInfo>(trimmed) {
+            if !single.name.is_empty() {
+                return Ok(ScriptParameterInspectResult {
+                    status: "ok".to_string(),
+                    parameters: vec![single],
+                });
+            }
+        }
+    }
+
+    Ok(empty_param_inspect("error"))
 }
 
 // ---------------------------------------------------------------------------

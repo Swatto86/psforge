@@ -771,17 +771,18 @@ export function useExecutionActions({
 
     let scriptArgs: string[] = [];
     try {
-      const allParams = await cmd.getScriptParameters(psPath, scriptContent);
+      const inspect = await cmd.getScriptParameters(psPath, scriptContent);
+      const allParams = inspect.parameters ?? [];
       const required = allParams.filter((p) => p.isMandatory && !p.hasDefault);
 
-      if (allParams.length === 0 && hasScriptLevelParamBlock(scriptContent)) {
+      if (inspect.status === "error") {
         if (scriptContent.length > 32_000) {
           void writeTerminalNotice(
             "[PSForge] Script is too large to inspect parameters before running. " +
               "Mandatory parameters will not be prompted for; supply them in the script or via splatting.",
             { reveal: false },
           );
-        } else {
+        } else if (hasScriptLevelParamBlock(scriptContent)) {
           runGuardRef.current = false;
           await writeTerminalNotice(
             "[PSForge] Run blocked: the script declares a param() block but PSForge could not read its parameters. " +
@@ -1004,8 +1005,29 @@ export function useExecutionActions({
 
     let scriptArgs: string[] = [];
     try {
-      const allParams = await cmd.getScriptParameters(psPath, scriptContent);
+      const inspect = await cmd.getScriptParameters(psPath, scriptContent);
+      const allParams = inspect.parameters ?? [];
       const required = allParams.filter((p) => p.isMandatory && !p.hasDefault);
+      if (inspect.status === "error" && hasScriptLevelParamBlock(scriptContent)) {
+        runGuardRef.current = false;
+        debugSessionRef.current = false;
+        isDebuggingRef.current = false;
+        debugPausedRef.current = false;
+        dispatch({
+          type: "SET_DEBUG_STATE",
+          isDebugging: false,
+          debugPaused: false,
+          debugLine: null,
+          debugColumn: null,
+        });
+        dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
+        await writeTerminalNotice(
+          "[PSForge] Debug blocked: the script declares a param() block but PSForge could not read its parameters. " +
+            "Fix any param-block syntax errors or supply defaults before debugging.",
+          { reveal: true },
+        );
+        return;
+      }
       if (required.length > 0) {
         const paramValues = await new Promise<Record<string, string> | null>(
           (resolve) => {

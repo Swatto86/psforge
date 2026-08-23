@@ -48,12 +48,36 @@ export function removeRecentFilePath(
   return existing.filter((item) => recentPathKey(item, isWindows) !== key);
 }
 
-/** True when the script declares a top-level param() block (ignoring leading comments). */
+/** True when the script declares a top-level param() block.
+ *  Skips comments, `using` statements, and attribute lines like
+ *  `[CmdletBinding()]` so real advanced scripts are detected. */
 export function hasScriptLevelParamBlock(content: string): boolean {
-  for (const line of content.split(/\r?\n/)) {
+  let inBlockComment = false;
+  for (const rawLine of content.split(/\r?\n/)) {
+    let line = rawLine;
+    if (inBlockComment) {
+      const end = line.indexOf("#>");
+      if (end === -1) continue;
+      line = line.slice(end + 2);
+      inBlockComment = false;
+    }
+    const blockStart = line.indexOf("<#");
+    if (blockStart !== -1) {
+      const blockEnd = line.indexOf("#>", blockStart + 2);
+      if (blockEnd === -1) {
+        inBlockComment = true;
+        line = line.slice(0, blockStart);
+      } else {
+        line = line.slice(0, blockStart) + line.slice(blockEnd + 2);
+      }
+    }
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-    return /^param\s*\(/i.test(trimmed);
+    if (/^using\b/i.test(trimmed)) continue;
+    if (/^\[[\w.]+(\([^\)]*\))?\]\s*$/.test(trimmed)) continue;
+    if (/^param\b/i.test(trimmed)) return true;
+    // First real statement is not param() — no script-level param block.
+    return false;
   }
   return false;
 }
