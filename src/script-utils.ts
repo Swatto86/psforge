@@ -47,3 +47,13 @@ export function removeRecentFilePath(
   const key = recentPathKey(path, isWindows);
   return existing.filter((item) => recentPathKey(item, isWindows) !== key);
 }
+
+/** True when the script declares a top-level param() block (ignoring leading comments). */
+export function hasScriptLevelParamBlock(content: string): boolean {
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    return /^param\s*\(/i.test(trimmed);
+  }
+  return false;
+}

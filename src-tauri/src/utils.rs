@@ -225,6 +225,7 @@ pub(crate) fn cleanup_psforge_temp_files() -> std::io::Result<usize> {
         "psforge_host_bootstrap_",
         "psforge_terminal_bootstrap_",
         "psforge_terminal_run_",
+        "psforge_terminal_invoke_",
     ];
 
     let dir = psforge_temp_dir()?;

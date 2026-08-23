@@ -505,7 +505,16 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           }
 
           syncSizeToBackend();
-          if (active) focusTerminal();
+          scheduleFit();
+          if (active) {
+            requestAnimationFrame(() => {
+              scheduleFit();
+              if (term.rows > 0) {
+                term.refresh(0, term.rows - 1);
+              }
+              focusTerminal();
+            });
+          }
         } catch (err: unknown) {
           rejectPendingCommands(
             `Failed to start terminal session: ${String(err)}`,
@@ -834,20 +843,28 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
 
     useEffect(() => {
       if (!active || !termRef.current) return;
-      requestAnimationFrame(() => {
+      const term = termRef.current;
+      const syncActive = () => {
         try {
           fitRef.current?.fit();
         } catch {
           // best effort
         }
-        termRef.current?.focus();
-        if (isReadyRef.current && sessionIdRef.current > 0 && termRef.current) {
-          const cols = Math.max(termRef.current.cols || 120, 1);
-          const rows = Math.max(termRef.current.rows || 30, 1);
+        if (term.rows > 0) {
+          term.refresh(0, term.rows - 1);
+        }
+        term.focus();
+        if (isReadyRef.current && sessionIdRef.current > 0) {
+          const cols = Math.max(term.cols || 120, 1);
+          const rows = Math.max(term.rows || 30, 1);
           void cmd
             .terminalResize(sessionIdRef.current, cols, rows)
             .catch(() => {});
         }
+      };
+      // Two frames: the new console tab must finish flex layout before fit().
+      requestAnimationFrame(() => {
+        requestAnimationFrame(syncActive);
       });
     }, [active]);
 
@@ -908,6 +925,7 @@ export function TerminalPane() {
       shellPath: state.selectedPsPath || "",
       loadProfile: state.settings.terminalLoadProfile === true,
     };
+    dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(id);
   };

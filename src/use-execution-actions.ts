@@ -17,6 +17,7 @@ import {
   resolveExecutionWorkDirWithOverride,
 } from "./run-utils";
 import { isScratchBackedTab, scratchPathForTab } from "./scratch-utils";
+import { hasScriptLevelParamBlock } from "./script-utils";
 import type { Action, AppState } from "./store";
 import type {
   DebugBreakpoint,
@@ -773,13 +774,21 @@ export function useExecutionActions({
       const allParams = await cmd.getScriptParameters(psPath, scriptContent);
       const required = allParams.filter((p) => p.isMandatory && !p.hasDefault);
 
-      if (allParams.length === 0 && /\bparam\s*\(/i.test(scriptContent)) {
+      if (allParams.length === 0 && hasScriptLevelParamBlock(scriptContent)) {
         if (scriptContent.length > 32_000) {
           void writeTerminalNotice(
             "[PSForge] Script is too large to inspect parameters before running. " +
               "Mandatory parameters will not be prompted for; supply them in the script or via splatting.",
             { reveal: false },
           );
+        } else {
+          runGuardRef.current = false;
+          await writeTerminalNotice(
+            "[PSForge] Run blocked: the script declares a param() block but PSForge could not read its parameters. " +
+              "Fix any param-block syntax errors or supply defaults before running.",
+            { reveal: true },
+          );
+          return;
         }
       }
 

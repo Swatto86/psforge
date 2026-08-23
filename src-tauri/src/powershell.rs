@@ -795,127 +795,7 @@ impl ProcessManager {
         wrapper_script.push_str("\n$__psforge_script_path = '");
         wrapper_script.push_str(&user_script_path_ps);
         wrapper_script.push_str("'\n");
-        wrapper_script.push_str(
-            r#"
-function __psforge_coerce_arg_value {
-    param([object]$Raw)
-    if ($null -eq $Raw) { return $null }
-    $__psforge_text = [string]$Raw
-    if ($__psforge_text -match '^(?i)\$?true$') { return $true }
-    if ($__psforge_text -match '^(?i)\$?false$') { return $false }
-    if ($__psforge_text.StartsWith('__psforge_securestring__')) {
-        # SecureString sentinel emitted by the frontend ParamPromptDialog so
-        # plain-text values typed into the dialog can satisfy a script
-        # parameter declared as [SecureString]. Without this conversion, the
-        # parameter binder would reject the string with a "Cannot convert"
-        # error and the script would never start. The base64 encoding keeps
-        # the value safe across the colon-tokenizer and shell metacharacters.
-        $__psforge_b64 = $__psforge_text.Substring('__psforge_securestring__'.Length)
-        try {
-            $__psforge_bytes = [Convert]::FromBase64String($__psforge_b64)
-            $__psforge_plain = [System.Text.Encoding]::UTF8.GetString($__psforge_bytes)
-            return (ConvertTo-SecureString -String $__psforge_plain -AsPlainText -Force)
-        } catch {
-            # Malformed sentinel: fall through to the original token rather
-            # than blocking the run. The script will then receive the
-            # tagged string and surface its own binding error to the user.
-        }
-    }
-    return $Raw
-}
-
-function __psforge_emit_variables {
-    try {
-        $__psforge_value_max = 4096
-        $__psforge_vars = @(
-            Get-Variable |
-            Where-Object {
-                $_.Name -notmatch '^(\?|args|input|MyInvocation|PSBoundParameters|PSCommandPath|PSScriptRoot|utf8NoBom|psfHwnd)$' -and
-                $_.Name -notlike '__psforge*'
-            } |
-            ForEach-Object {
-                # Truncate large values so a single $bigArray cannot blow up the
-                # variable inspector pipe and stall the host. The frontend tab
-                # is interactive, not a data dump, so 4 KiB is plenty.
-                $__psforge_raw = if ($_.Value -ne $null) {
-                    try { $_.Value.ToString() } catch { '<unprintable>' }
-                } else { '<null>' }
-                if ($__psforge_raw.Length -gt $__psforge_value_max) {
-                    $__psforge_raw = $__psforge_raw.Substring(0, $__psforge_value_max) + "... (truncated, $($__psforge_raw.Length - $__psforge_value_max) more chars)"
-                }
-                [PSCustomObject]@{
-                    Name = $_.Name
-                    Value = $__psforge_raw
-                    TypeName = if ($_.Value -ne $null) { $_.Value.GetType().Name } else { 'Null' }
-                }
-            }
-        )
-        $__psforge_json = if ($__psforge_vars.Count -eq 0) {
-            '[]'
-        } else {
-            ConvertTo-Json -Compress -InputObject $__psforge_vars
-        }
-        [Console]::Out.WriteLine('<<PSFORGE_VARIABLES_JSON>>' + $__psforge_json)
-    } catch {
-        [Console]::Out.WriteLine('<<PSFORGE_VARIABLES_JSON>>[]')
-    } finally {
-        [Console]::Out.Flush()
-    }
-}
-
-function __psforge_invoke_user_script {
-    param([object[]]$__psforge_input_args)
-
-    $__psforge_named = @{}
-    $__psforge_positional = [System.Collections.Generic.List[object]]::new()
-    $__psforge_i = 0
-    while ($__psforge_i -lt $__psforge_input_args.Count) {
-        $__psforge_token_obj = $__psforge_input_args[$__psforge_i]
-        $__psforge_token = if ($null -eq $__psforge_token_obj) { '' } else { [string]$__psforge_token_obj }
-        if ([string]::IsNullOrWhiteSpace($__psforge_token)) {
-            $__psforge_i++
-            continue
-        }
-
-        if ($__psforge_token.StartsWith('-')) {
-            $__psforge_body = $__psforge_token.Substring(1)
-            $__psforge_colon_idx = $__psforge_body.IndexOf(':')
-            if ($__psforge_colon_idx -ge 0) {
-                $__psforge_name = $__psforge_body.Substring(0, $__psforge_colon_idx).Trim()
-                if ($__psforge_name.Length -gt 0) {
-                    $__psforge_value_text = $__psforge_body.Substring($__psforge_colon_idx + 1)
-                    $__psforge_named[$__psforge_name] = __psforge_coerce_arg_value $__psforge_value_text
-                    $__psforge_i++
-                    continue
-                }
-            } else {
-                $__psforge_name = $__psforge_body.Trim()
-                if ($__psforge_name.Length -gt 0) {
-                    if (($__psforge_i + 1) -lt $__psforge_input_args.Count) {
-                        $__psforge_named[$__psforge_name] = $__psforge_input_args[$__psforge_i + 1]
-                        $__psforge_i += 2
-                        continue
-                    }
-                    # Final bare switch token: treat as $true.
-                    $__psforge_named[$__psforge_name] = $true
-                    $__psforge_i++
-                    continue
-                }
-            }
-        }
-
-        $__psforge_positional.Add($__psforge_token_obj)
-        $__psforge_i++
-    }
-
-    try {
-        . $__psforge_script_path @__psforge_named @__psforge_positional
-    } finally {
-        __psforge_emit_variables
-    }
-}
-"#,
-        );
+        wrapper_script.push_str(crate::ps_invoke::PSFORGE_PERSISTENT_HOST_INVOKE_BLOCK);
         if let Some(specs) = debug_breakpoints {
             // Register debugger breakpoints. Supports line breakpoints plus
             // variable breakpoints, with optional condition/hit-count/action.
@@ -1035,7 +915,7 @@ function __psforge_invoke_user_script {
                 }
             }
         }
-        wrapper_script.push_str("__psforge_invoke_user_script $args\n");
+        wrapper_script.push_str("__psforge_invoke_user_script_with_emit $args\n");
         let wrapper_script_path =
             write_secure_temp_file("psforge_wrapper", ".ps1", wrapper_script.as_bytes()).map_err(
                 |e| {

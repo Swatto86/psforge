@@ -16,6 +16,30 @@ import settingsPanel from "../components/SettingsPanel.tsx?raw";
 import store from "../store.tsx?raw";
 import tabBar from "../components/TabBar.tsx?raw";
 import toolbar from "../components/Toolbar.tsx?raw";
+import terminalPane from "../components/TerminalPane.tsx?raw";
+import executionActionsSource from "../use-execution-actions.ts?raw";
+import xtermSetup from "../terminal/xterm-setup.ts?raw";
+
+describe("Integrated terminal stability", () => {
+  it("does not enable xterm WebGL (WebView2 blank-webview regression)", () => {
+    expect(xtermSetup).toContain("return null");
+    expect(xtermSetup).not.toContain("term.loadAddon(webgl)");
+  });
+
+  it("reveals the terminal pane and refits when opening a local console tab", () => {
+    expect(terminalPane).toContain('dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" })');
+    expect(terminalPane).toContain("term.refresh(0, term.rows - 1)");
+  });
+});
+
+describe("Script param inspection and run guard", () => {
+  it("blocks runs when a script-level param block cannot be inspected", () => {
+    expect(executionActionsSource).toContain("hasScriptLevelParamBlock");
+    expect(executionActionsSource).toContain(
+      "Run blocked: the script declares a param() block but PSForge could not read its parameters",
+    );
+  });
+});
 
 describe("System tray window lifecycle", () => {
   it("does not destroy the window while flushing settings on close", () => {

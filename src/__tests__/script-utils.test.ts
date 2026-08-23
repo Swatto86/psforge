@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mergeRecentFilePaths, removeRecentFilePath } from "../script-utils";
+import {
+  hasScriptLevelParamBlock,
+  mergeRecentFilePaths,
+  removeRecentFilePath,
+} from "../script-utils";
 
 describe("mergeRecentFilePaths", () => {
   it("deduplicates Windows paths by case and separator style", () => {
@@ -34,5 +38,21 @@ describe("mergeRecentFilePaths", () => {
     expect(
       mergeRecentFilePaths(["old.ps1"], ["new.ps1"], Number.NaN, true),
     ).toEqual([]);
+  });
+});
+
+describe("hasScriptLevelParamBlock", () => {
+  it("detects a script-level param block after comments", () => {
+    expect(
+      hasScriptLevelParamBlock("# header\nparam([string]$Name)\nWrite-Host $Name"),
+    ).toBe(true);
+  });
+
+  it("ignores param blocks inside functions", () => {
+    expect(
+      hasScriptLevelParamBlock(
+        "function Get-Foo {\n  param([string]$Name)\n}\nWrite-Host 1",
+      ),
+    ).toBe(false);
   });
 });

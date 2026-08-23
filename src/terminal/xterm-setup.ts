@@ -26,20 +26,12 @@ export const TERMINAL_PERFORMANCE_OPTIONS: ITerminalOptions = {
 };
 
 /**
- * Attempts to attach the WebGL2 renderer. On failure or context loss, xterm.js
- * continues with its default canvas renderer.
+ * Attempts to attach the WebGL2 renderer. Disabled by default: multiple xterm
+ * WebGL contexts in Tauri/WebView2 on Windows can blank the entire webview
+ * when a second integrated console tab is opened.
  */
-export function tryLoadWebglAddon(term: Terminal): WebglAddon | null {
-  try {
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => {
-      webgl.dispose();
-    });
-    term.loadAddon(webgl);
-    return webgl;
-  } catch {
-    return null;
-  }
+export function tryLoadWebglAddon(_term: Terminal): WebglAddon | null {
+  return null;
 }
 
 export function createTerminalWithAddons(

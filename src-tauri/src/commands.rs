@@ -163,6 +163,21 @@ pub async fn prepare_terminal_script_command(
     let user_script_path_lossy = user_script_path.to_string_lossy();
     let user_script_path_ps = ps_single_quoted(user_script_path_lossy.as_ref());
 
+    let invoke_wrapper_path = write_secure_temp_file(
+        "psforge_terminal_invoke",
+        ".ps1",
+        crate::ps_invoke::build_terminal_invoke_wrapper(&user_script_path_ps).as_bytes(),
+    )
+    .map_err(|e| {
+        let _ = std::fs::remove_file(&user_script_path);
+        AppError {
+            code: "SCRIPT_WRITE_FAILED".to_string(),
+            message: format!("Failed to write terminal invoke wrapper: {}", e),
+        }
+    })?;
+    let invoke_wrapper_path_lossy = invoke_wrapper_path.to_string_lossy();
+    let invoke_wrapper_path_ps = ps_single_quoted(invoke_wrapper_path_lossy.as_ref());
+
     let pending_path = crate::utils::pending_terminal_run_path().map_err(|e| AppError {
         code: "SCRIPT_WRITE_FAILED".to_string(),
         message: format!("Failed to resolve staged run path: {}", e),
@@ -194,16 +209,19 @@ pub async fn prepare_terminal_script_command(
         wrapper.push_str("' ");
     }
     wrapper.push_str("-File '");
-    wrapper.push_str(&user_script_path_ps);
+    wrapper.push_str(&invoke_wrapper_path_ps);
     wrapper
         .push_str("' @__psforge_script_args } finally { Pop-Location; Remove-Item -LiteralPath '");
     wrapper.push_str(&user_script_path_ps);
+    wrapper.push_str("' -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '");
+    wrapper.push_str(&invoke_wrapper_path_ps);
     wrapper.push_str("' -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '");
     wrapper.push_str(&pending_path_ps);
     wrapper.push_str("' -Force -ErrorAction SilentlyContinue }\n");
 
     if let Err(e) = std::fs::write(&pending_path, wrapper.as_bytes()) {
         let _ = std::fs::remove_file(&user_script_path);
+        let _ = std::fs::remove_file(&invoke_wrapper_path);
         return Err(AppError {
             code: "SCRIPT_WRITE_FAILED".to_string(),
             message: format!("Failed to stage terminal run script: {}", e),
@@ -354,9 +372,9 @@ const PARAM_INSPECT_SCRIPT: &str = r#"
 $__s = $env:PSFORGE_SCRIPT_CONTENT
 $__ast = [System.Management.Automation.Language.Parser]::ParseInput(
     $__s, [ref]$null, [ref]$null)
-$__pb = $__ast.Find(
-    { param($a) $a -is [System.Management.Automation.Language.ParamBlockAst] },
-    $true)
+# Script-level param() only — recursive Find() also matches function param
+# blocks and makes pasted helper functions look like the runnable script.
+$__pb = $__ast.ParamBlock
 if ($null -eq $__pb) { '[]'; exit }
 $__r = @(foreach ($__p in $__pb.Parameters) {
     $__mand = $false; $__help = ''; $__type = 'String'; $__pos = $null

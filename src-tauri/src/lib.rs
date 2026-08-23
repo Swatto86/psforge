@@ -3,6 +3,7 @@
 pub mod ai;
 pub mod commands;
 pub mod errors;
+pub mod ps_invoke;
 pub mod powershell;
 pub mod settings;
 #[cfg(not(test))]
