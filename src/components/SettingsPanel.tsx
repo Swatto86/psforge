@@ -25,6 +25,7 @@ import {
   isAssistantModeEnabled,
 } from "../assistant-mode";
 import type { RunDirPreset } from "../types";
+import { PssaInstallControls } from "./PssaInstallControls";
 
 /** Section identifiers. */
 type Section =
@@ -730,6 +731,20 @@ export function SettingsPanel() {
                   cleared from the editor on the next change.
                 </InfoBox>
               )}
+
+              <SettingRow
+                label="PSScriptAnalyzer"
+                tooltip="Installs the PowerShell Gallery module for style and best-practice rules. Runs for the selected host (PowerShell 7 or Windows PowerShell 5.1)."
+              >
+                <PssaInstallControls
+                  selectedPsPath={state.selectedPsPath}
+                  psVersions={state.psVersions}
+                  autoInstall={state.settings.autoInstallPssa !== false}
+                  onAutoInstallChange={(v) =>
+                    updateSetting("autoInstallPssa", v)
+                  }
+                />
+              </SettingRow>
             </div>
           )}
 

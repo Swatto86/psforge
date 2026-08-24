@@ -18,6 +18,7 @@ import { ShowCommandPane } from "./ShowCommandPane";
 import { HelpPane } from "./HelpPane";
 import { ReferencePane } from "./ReferencePane";
 import { AssistantPane } from "./AssistantPane";
+import { ProblemsPssaHint } from "./PssaInstallControls";
 import type { ReferenceSubview } from "../types";
 
 function breakpointLabel(bp: DebugBreakpoint): string {
@@ -534,6 +535,7 @@ export function OutputPane({
                     activeTab?.tabType === "code" ? activeTab.title : undefined
                   }
                   pssaEnabled={pssaEnabled}
+                  psPath={state.selectedPsPath}
                   onNavigate={navigateTo}
                   fontSize={state.settings.outputFontSize ?? 13}
                   fontFamily={
@@ -666,6 +668,7 @@ function ProblemsPane({
   diagnostics,
   activeTabName,
   pssaEnabled,
+  psPath,
   onNavigate,
   fontSize,
   fontFamily,
@@ -673,6 +676,7 @@ function ProblemsPane({
   diagnostics: PssaDiagnostic[];
   activeTabName?: string;
   pssaEnabled: boolean;
+  psPath: string;
   onNavigate: (line: number, column: number) => void;
   fontSize: number;
   fontFamily: string;
@@ -705,53 +709,59 @@ function ProblemsPane({
 
   if (diagnostics.length === 0) {
     return (
-      <div className="bottom-pane-empty" data-testid="problems-empty">
-        <strong>No problems</strong>
-        <span>
-          {activeTabName} has no parser or analyzer diagnostics.
-        </span>
+      <div className="flex flex-col h-full min-h-0">
+        <ProblemsPssaHint psPath={psPath} />
+        <div className="bottom-pane-empty" data-testid="problems-empty">
+          <strong>No problems</strong>
+          <span>
+            {activeTabName} has no parser or analyzer diagnostics.
+          </span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="bottom-pane-problems" style={monoStyle}>
-      {diagnostics.map((problem, index) => {
-        const severity = problemSeverity(problem.severity);
-        const severityLabel =
-          severity === "error"
-            ? "Error"
-            : severity === "warning"
-              ? "Warning"
-              : "Info";
-        const location = formatProblemLocation(problem);
-        return (
-          <button
-            key={`${problem.ruleName}-${problem.line}-${problem.column}-${index}`}
-            type="button"
-            data-testid={`problem-item-${index}`}
-            className="bottom-pane-problem"
-            onClick={() => onNavigate(problem.line, problem.column)}
-            title={`Go to ${location}`}
-          >
-            <div className="bottom-pane-problem-header">
-              <span
-                className={[
-                  "bottom-pane-problem-severity",
-                  `bottom-pane-problem-severity-${severity}`,
-                ].join(" ")}
-              >
-                {severityLabel}
-              </span>
-              <span className="bottom-pane-problem-location">{location}</span>
-              <span className="bottom-pane-problem-rule">
-                {problem.ruleName || "Diagnostics"}
-              </span>
-            </div>
-            <div className="bottom-pane-problem-message">{problem.message}</div>
-          </button>
-        );
-      })}
+    <div className="bottom-pane-problems flex flex-col h-full min-h-0" style={monoStyle}>
+      <ProblemsPssaHint psPath={psPath} />
+      <div className="flex-1 min-h-0 overflow-auto">
+        {diagnostics.map((problem, index) => {
+          const severity = problemSeverity(problem.severity);
+          const severityLabel =
+            severity === "error"
+              ? "Error"
+              : severity === "warning"
+                ? "Warning"
+                : "Info";
+          const location = formatProblemLocation(problem);
+          return (
+            <button
+              key={`${problem.ruleName}-${problem.line}-${problem.column}-${index}`}
+              type="button"
+              data-testid={`problem-item-${index}`}
+              className="bottom-pane-problem"
+              onClick={() => onNavigate(problem.line, problem.column)}
+              title={`Go to ${location}`}
+            >
+              <div className="bottom-pane-problem-header">
+                <span
+                  className={[
+                    "bottom-pane-problem-severity",
+                    `bottom-pane-problem-severity-${severity}`,
+                  ].join(" ")}
+                >
+                  {severityLabel}
+                </span>
+                <span className="bottom-pane-problem-location">{location}</span>
+                <span className="bottom-pane-problem-rule">
+                  {problem.ruleName || "Diagnostics"}
+                </span>
+              </div>
+              <div className="bottom-pane-problem-message">{problem.message}</div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

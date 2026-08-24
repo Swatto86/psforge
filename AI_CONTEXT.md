@@ -22,7 +22,8 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Terminal theme / WT sync | `src/terminal/windows-terminal-theme.ts`, `src/terminal/xterm-theme.ts`, `src-tauri/src/windows_terminal.rs` |
 | Font presets / status bar | `src/font-presets.ts`, `src/components/FontQuickControls.tsx` |
 | Terminal toolbar | `src/components/OutputPane.tsx` (`Clear` = restart session, `Copy` = selection, `Last run`) |
-| Diagnostics | `src-tauri/src/ps_analyze.rs` (`analyze_script`: built-in `Parser::ParseInput` always; PSSA merged when installed) |
+| Diagnostics | `src-tauri/src/ps_analyze.rs` (built-in parser + optional PSSA); `src-tauri/src/ps_pssa_install.rs` (check/install for PS 5.1/7); `src/components/PssaInstallControls.tsx` |
+| Fix Problem (AI) | `src/fix-problem.ts`, `src/editor-fix-problem.ts` (editor right-click on squiggle → `ask_ai` mode fix → replace script) |
 | Welcome quick start | `src/components/WelcomePane.tsx` (paste, recent runs, re-run) |
 | Scratch / project runner | `src/scratch-utils.ts`, `src/project-config.ts`, `src/run-dir-presets.ts` |
 | Phase 3 dialogs | `src/components/ScratchRecoveryDialog.tsx`, `CloseScratchDialog.tsx`, `PssaRunGateDialog.tsx` |
@@ -45,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** PSSA install + Fix Problem AI (**1.4.31**). In-app `check_psscriptanalyzer` / `install_psscriptanalyzer` for the selected host and all discovered hosts (PS 5.1 + 7, CurrentUser, TLS1.2/NuGet for 5.1). Settings auto-install when missing; Problems pane Install CTA. Editor right-click on a diagnostic squiggle → **Fix Problem (AI)** (`editor-fix-problem.ts`) sends mode `fix` and replaces the script in place.
 - **2026-08-24:** Built-in editor diagnostics (**1.4.30**). Red squiggles no longer require `Install-Module PSScriptAnalyzer` — `analyze_script` always runs PowerShell `Parser::ParseInput` (`ps_analyze.rs`); PSSA findings are merged only when the module is present. Settings toggle relabeled “Show editor diagnostics”.
 - **2026-08-24:** Terminal Clear/Copy (**1.4.29**). Clear restarts the PowerShell session so prompt/Nerd Font chrome redraws (no blank buffer). Copy copies the **selection** only (`Ctrl+Shift+C` / right-click when selected); Last run still copies F5 output. Right-click: copy if selected, else paste.
 - **2026-08-24:** Runner bulletproofing (**1.4.28**). Untitled/scratch F5 `&`s the on-disk scratch file in the live console (same as saved scripts). Named `-Param` tokens stay bare for binder matching. Temp-wrapper fallback uses call operator (`&`) not dot-source. Fixture `fixtures/runner-coverage.ps1` + live `pwsh` invoke-wrapper test locks in classes/ternary/pipelines/JSON/XML/try-catch. Edit → **Copy Selection to Terminal** (`Ctrl+Shift+Enter`). AI providers: **Codex CLI**, **Cursor CLI**, **OpenCode CLI** only.

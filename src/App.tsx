@@ -51,6 +51,7 @@ import {
 import { findProjectConfig } from "./project-config";
 import { useExecutionActions } from "./use-execution-actions";
 import { PssaRunGateDialog } from "./components/PssaRunGateDialog";
+import { usePssaAutoInstall } from "./components/PssaInstallControls";
 import {
   ScratchRecoveryDialog,
   type ScratchRecoveryCandidate,
@@ -236,6 +237,12 @@ function AppInner() {
     hasPs7,
     ps7BannerDismissedSession,
   ]);
+
+  usePssaAutoInstall({
+    enabled: state.settingsLoaded && state.settings.enablePssa !== false,
+    autoInstall: state.settings.autoInstallPssa !== false,
+    selectedPsPath: state.selectedPsPath,
+  });
 
   const openPs7InstallPage = useCallback(() => {
     setPs7BannerDismissedSession(true);

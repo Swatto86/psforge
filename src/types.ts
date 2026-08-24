@@ -216,6 +216,8 @@ export interface AppSettings {
   stickyScroll: boolean;
   /** Whether editor diagnostics (built-in parser + optional PSSA) are enabled. */
   enablePssa: boolean;
+  /** Auto-install PSScriptAnalyzer (CurrentUser) when missing for the selected host. */
+  autoInstallPssa: boolean;
   /** Whether PowerShell IntelliSense (TabExpansion2) is enabled. */
   enableIntelliSense: boolean;
   /** Clean clipboard junk on every editor paste (Ctrl+V). */
@@ -328,6 +330,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showIndentGuides: true,
   stickyScroll: false,
   enablePssa: true,
+  autoInstallPssa: true,
   enableIntelliSense: true,
   sanitizePasteOnPaste: true,
   runAfterPasteCleanFormat: true,
@@ -478,6 +481,22 @@ export interface PssaDiagnostic {
   endLine: number;
   /** End column of the problematic range (1-indexed). */
   endColumn: number;
+}
+
+/** Result of `check_psscriptanalyzer`. */
+export interface PssaModuleStatus {
+  installed: boolean;
+  version: string;
+  hostVersion: string;
+  message: string;
+}
+
+/** Result of `install_psscriptanalyzer`. */
+export interface PssaInstallResult {
+  /** "present" | "installed" | "failed" */
+  status: string;
+  version: string;
+  message: string;
 }
 
 /**

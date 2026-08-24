@@ -12,6 +12,7 @@
  *  Editor enhancements wired here:
  *  - Cursor position tracking (dispatched to store -> displayed in StatusBar).
  *  - Built-in PowerShell parser squiggles (debounced 800 ms; optional PSSA when installed).
+ *  - Fix Problem (AI) on right-click over a diagnostic squiggle.
  *  - PowerShell IntelliSense via TabExpansion2 (registered as a Monaco completion provider).
  */
 
@@ -40,6 +41,10 @@ import {
 } from "../sanitize-paste";
 import { formatPasteSummaryMessage } from "../paste-summary";
 import { showAppToast } from "./ToastStack";
+import {
+  registerFixProblemAction,
+  updateFixProblemContextKey,
+} from "../editor-fix-problem";
 
 // ---------------------------------------------------------------------------
 // Helpers — kept module-level so they are not recreated on every render.
@@ -250,6 +255,8 @@ export function EditorPane() {
   const { state, dispatch, activeTab } = useAppState();
   const settingsRef = useRef(state.settings);
   settingsRef.current = state.settings;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   // monacoRef is a plain ref, invisible to React. The IntelliSense effect
@@ -299,6 +306,10 @@ export function EditorPane() {
   const explainReqRef = useRef(0);
   // Monaco context key gating the context-menu entry on the AI master switch.
   const explainAiKeyRef = useRef<{ set(value: boolean): void } | null>(null);
+  const fixProblemApiRef = useRef<{
+    dispose: () => void;
+    setHasMarker: (value: boolean) => void;
+  } | null>(null);
 
   const closeExplain = useCallback(() => {
     explainReqRef.current++;
@@ -315,13 +326,18 @@ export function EditorPane() {
   // popover the moment AI is disabled.
   useEffect(() => {
     explainAiKeyRef.current?.set(!state.settings.disableAi);
-    if (state.settings.disableAi) closeExplain();
+    if (state.settings.disableAi) {
+      closeExplain();
+      fixProblemApiRef.current?.setHasMarker(false);
+    }
   }, [state.settings.disableAi, monacoReady, closeExplain]);
 
   // Dispose the completion provider when the component unmounts.
   useEffect(() => {
     return () => {
       completionDisposableRef.current?.dispose();
+      fixProblemApiRef.current?.dispose();
+      fixProblemApiRef.current = null;
       if (pssaTimerRef.current !== null) clearTimeout(pssaTimerRef.current);
       if (editorRef.current) {
         breakpointDecorationsRef.current = editorRef.current.deltaDecorations(
@@ -683,7 +699,17 @@ export function EditorPane() {
       // Explain Selection (AI). Monaco already moves the cursor natively when
       // right-clicking outside the selection.
       editor.onContextMenu((e) => {
-        contextMenuLineRef.current = e.target.position?.lineNumber ?? null;
+        const line = e.target.position?.lineNumber ?? null;
+        contextMenuLineRef.current = line;
+        if (monacoRef.current && fixProblemApiRef.current) {
+          updateFixProblemContextKey(
+            monacoRef.current,
+            editor,
+            line,
+            fixProblemApiRef.current.setHasMarker,
+            () => !settingsRef.current.disableAi,
+          );
+        }
       });
 
       const getTargetLine = (): number | null => {
@@ -832,6 +858,28 @@ export function EditorPane() {
         run: () => {
           void runExplainSelection();
         },
+      });
+
+      fixProblemApiRef.current?.dispose();
+      fixProblemApiRef.current = registerFixProblemAction(editor, monaco, {
+        getSettings: () => settingsRef.current,
+        getTabMeta: () => {
+          const tab = activeTabRef.current;
+          if (!tab || tab.tabType === "welcome") return null;
+          return {
+            id: tab.id,
+            title: tab.title,
+            filePath: tab.filePath || "",
+          };
+        },
+        applyFixedScript: (tabId, code) => {
+          dispatch({
+            type: "UPDATE_TAB",
+            id: tabId,
+            changes: { content: code, isDirty: true },
+          });
+        },
+        isAiEnabled: () => !settingsRef.current.disableAi,
       });
 
       // PowerShell IntelliSense provider lifecycle is owned by the

@@ -11,6 +11,7 @@ pub mod errors;
 pub mod powershell;
 pub mod ps_analyze;
 pub mod ps_invoke;
+pub mod ps_pssa_install;
 pub mod settings;
 #[cfg(not(test))]
 pub mod terminal;
@@ -141,6 +142,8 @@ pub fn run() {
             commands::save_user_snippets,
             commands::reveal_in_explorer,
             ps_analyze::analyze_script,
+            ps_pssa_install::check_psscriptanalyzer,
+            ps_pssa_install::install_psscriptanalyzer,
             commands::get_completions,
             commands::suggest_modules_for_command,
             commands::get_execution_policy,

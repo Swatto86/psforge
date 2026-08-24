@@ -109,6 +109,10 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub enable_pssa: bool,
 
+    /// Auto-install PSScriptAnalyzer (CurrentUser) when missing for the selected host.
+    #[serde(default = "default_true")]
+    pub auto_install_pssa: bool,
+
     /// Whether PowerShell IntelliSense (TabExpansion2) is enabled.
     #[serde(default = "default_true")]
     pub enable_intelli_sense: bool,
@@ -431,6 +435,7 @@ impl Default for AppSettings {
             show_indent_guides: true,
             sticky_scroll: false,
             enable_pssa: true,
+            auto_install_pssa: true,
             enable_intelli_sense: true,
             sanitize_paste_on_paste: true,
             run_after_paste_clean_format: true,

@@ -18,6 +18,8 @@ import type {
   ModuleInstallSuggestion,
   PsCompletion,
   PssaDiagnostic,
+  PssaInstallResult,
+  PssaModuleStatus,
   PsVersion,
   ScriptParameterInspectResult,
   Snippet,
@@ -387,6 +389,18 @@ export async function analyzeScript(
   scriptContent: string,
 ): Promise<PssaDiagnostic[]> {
   return invoke<PssaDiagnostic[]>("analyze_script", { psPath, scriptContent });
+}
+
+export async function checkPsScriptAnalyzer(
+  psPath: string,
+): Promise<PssaModuleStatus> {
+  return invoke<PssaModuleStatus>("check_psscriptanalyzer", { psPath });
+}
+
+export async function installPsScriptAnalyzer(
+  psPath: string,
+): Promise<PssaInstallResult> {
+  return invoke<PssaInstallResult>("install_psscriptanalyzer", { psPath });
 }
 
 /**
