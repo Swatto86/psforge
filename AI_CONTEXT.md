@@ -16,7 +16,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 |------|------|
 | Shell / shortcuts | `src/App.tsx` |
 | Menu bar + workflow toolbar | `src/components/Toolbar.tsx` (File/Edit/View/Help menus; Paste + Run / Run / Stop / Copy for AI) |
-| AI assistant pane / providers | `src/components/AssistantPane.tsx`, `src-tauri/src/ai.rs` (`disableAi` master switch hides the in-app assistant; "Copy for AI" is external-AI and unaffected) |
+| AI assistant pane / providers | `src/components/AssistantPane.tsx`, `src/components/AiProviderBar.tsx`, `src-tauri/src/ai.rs`, `src-tauri/src/ai_opencode.rs` (`disableAi` hides the in-app assistant; OpenCode CLI can use local Ollama models; "Copy for AI" is external-AI and unaffected) |
 | Editor + paste sanitize | `src/components/EditorPane.tsx`, `src/sanitize-paste.ts` |
 | Run helpers | `src/run-utils.ts`, `src/terminal-utils.ts`, `src/direct-run.ts` (saved-file F5) |
 | Terminal theme / WT sync | `src/terminal/windows-terminal-theme.ts`, `src/terminal/xterm-theme.ts`, `src-tauri/src/windows_terminal.rs` |
@@ -44,6 +44,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** OpenCode is a first-class AI provider (**1.4.25**). Settings and the AI tab can pick provider/model. OpenCode CLI (`opencode run --format json --model … --auto`) uses local Ollama models (`ollama/<tag>`), discovered via `GET /api/tags` on a loopback URL. Provider/model changes persist through the existing settings save debounce.
 - **2026-08-24:** Open-and-run like VS Code (**1.4.24**). F5 on a saved `.ps1` invokes `& 'path'` in the current console after `Set-Location` (no temp wrapper / `-NoProfile` child). Mandatory params prompt in the terminal. Untitled/scratch still uses `psrun`. Consoles load the PowerShell profile by default. Welcome leads with Open script.
 - **2026-08-24:** Integrated consoles honor Windows Terminal appearance (**1.4.23**). `read_windows_terminal_settings` loads Terminal `settings.json`; xterm uses that colour scheme (e.g. Tokyo Night) and font face (e.g. JetBrainsMono Nerd Font). Fallback is PSForge CSS theme + glyph-capable Nerd Font stack. PTY sets `COLORTERM=truecolor`. Compile-speed defaults: `[profile.dev.package."*"] opt-level = 1`, CI sccache + rust-cache; Cargo 1.96 rejects `jobs = 0` so that key is omitted. Local Windows NSIS timed build: **157.1s** wall clock → `PSForge_1.4.22_x64-setup.exe` (unsigned local, updater artifacts off).
 - **2026-08-23:** UI simplify + PS 5/7 hardening (**1.4.22**). Welcome is brand-first with one primary paste CTA; toolbar drops duplicate Modules/Settings icons; status bar keeps only live run context (path, run status, run dir, cursor); bottom pane drops title/subtitle/chip chrome and densifies tabs/actions (no pills). Fixed v1.4.21 release compile break (`concat!` → `format!` in `ps_invoke.rs`). PS 5.1 SecureString via NetworkCredential; pending psrun wrapper written with UTF-8 BOM; param inspect returns `{status,parameters}` so empty `param()` runs and inspect failures are distinct; CmdletBinding-aware param heuristic; space-form arg coerce; switch type in ParamPromptDialog; debug preflight parity with F5.

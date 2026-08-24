@@ -170,6 +170,18 @@ pub struct AppSettings {
     #[serde(default)]
     pub ai_kilo_cli_user_profile: String,
 
+    /// Optional path to the OpenCode CLI binary.
+    #[serde(default)]
+    pub ai_opencode_cli_path: String,
+
+    /// Optional Windows user profile whose OpenCode config/login should be used.
+    #[serde(default)]
+    pub ai_opencode_user_profile: String,
+
+    /// Local Ollama base URL used with the OpenCode provider. Blank means http://127.0.0.1:11434.
+    #[serde(default)]
+    pub ai_ollama_base_url: String,
+
     /// Save the active file automatically before running (F5).
     /// Default matches the frontend (types.ts DEFAULT_SETTINGS) — a mismatch
     /// here silently overrides the frontend default on first launch.
@@ -394,6 +406,7 @@ fn normalize_ai_provider(value: &str) -> String {
         "claude_cli" => "claude_cli".to_string(),
         "openrouter" | "open_router" => "openrouter".to_string(),
         "kilo_cli" | "kilocode" | "kilo" => "kilo_cli".to_string(),
+        "opencode_cli" | "opencode" | "opencode-cli" => "opencode_cli".to_string(),
         _ => default_ai_provider(),
     }
 }
@@ -439,6 +452,9 @@ impl Default for AppSettings {
             ai_claude_user_profile: String::new(),
             ai_kilo_cli_path: String::new(),
             ai_kilo_cli_user_profile: String::new(),
+            ai_opencode_cli_path: String::new(),
+            ai_opencode_user_profile: String::new(),
+            ai_ollama_base_url: String::new(),
             auto_save_on_run: true,
             clear_output_on_run: true,
             persist_runspace_between_runs: true,
@@ -834,6 +850,11 @@ mod tests {
         settings.sanitize();
         assert_eq!(settings.ai_provider, "openrouter");
         assert_eq!(settings.ai_effort, "high");
+
+        let mut opencode: AppSettings =
+            serde_json::from_str(r#"{"aiProvider":"opencode"}"#).expect("opencode alias");
+        opencode.sanitize();
+        assert_eq!(opencode.ai_provider, "opencode_cli");
     }
 
     #[test]

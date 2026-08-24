@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { askAi } from "../commands";
+import { AiProviderBar } from "./AiProviderBar";
 import { takeExplainHandoff, EXPLAIN_HANDOFF_EVENT } from "../explain-selection";
 import { buildDebugBundleMarkdown } from "../debug-bundle";
 import {
@@ -194,6 +195,7 @@ export function AssistantPane() {
             </button>
           ))}
         </div>
+        <AiProviderBar />
         <textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}

@@ -13,6 +13,9 @@ import closeScratchDialog from "../components/CloseScratchDialog.tsx?raw";
 import keyboardShortcutPanel from "../components/KeyboardShortcutPanel.tsx?raw";
 import scratchRecoveryDialog from "../components/ScratchRecoveryDialog.tsx?raw";
 import settingsPanel from "../components/SettingsPanel.tsx?raw";
+import assistantPane from "../components/AssistantPane.tsx?raw";
+import aiProviders from "../ai-providers.ts?raw";
+import aiProviderBar from "../components/AiProviderBar.tsx?raw";
 import store from "../store.tsx?raw";
 import tabBar from "../components/TabBar.tsx?raw";
 import toolbar from "../components/Toolbar.tsx?raw";
@@ -232,5 +235,18 @@ describe("Dialog and icon-button accessibility", () => {
     expect(keyboardShortcutPanel).toContain(
       'aria-label="Close keyboard shortcut reference"',
     );
+  });
+});
+
+describe("AI provider surfaces", () => {
+  it("exposes OpenCode in Settings and provider/model pickers on the AI tab", () => {
+    expect(aiProviders).toContain('id: "anthropic"');
+    expect(aiProviders).toContain('id: "opencode_cli"');
+    expect(settingsPanel).toContain("AI_PROVIDERS.map");
+    expect(settingsPanel).toContain('data-testid="settings-ai-provider"');
+    expect(assistantPane).toContain("<AiProviderBar");
+    expect(aiProviderBar).toContain('data-testid="assistant-ai-provider"');
+    expect(aiProviderBar).toContain('data-testid="assistant-ai-model"');
+    expect(aiProviderBar).toContain("SET_SETTINGS");
   });
 });

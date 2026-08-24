@@ -18,6 +18,7 @@ import {
   presetIdForFamily,
 } from "../font-presets";
 import { applyRunDirPreset } from "../run-dir-presets";
+import { AI_PROVIDERS, modelHintFor } from "../ai-providers";
 import {
   applyAssistantMode,
   clearAssistantModeFlag,
@@ -1491,12 +1492,13 @@ export function SettingsPanel() {
 
               <InfoBox warn>
                 API keys are stored in PSForge settings on this Windows account.
-                Claude CLI and Kilo CLI reuse your local logged-in CLI session.
+                Claude CLI, Kilo CLI, and OpenCode CLI reuse your local logged-in
+                CLI session. OpenCode can use local Ollama models.
               </InfoBox>
 
               <SettingRow
                 label="Provider"
-                tooltip="Uses the same provider styles as Eir: Anthropic API, Claude CLI, OpenRouter, or Kilo CLI."
+                tooltip="Anthropic API, Claude CLI, OpenRouter, Kilo CLI, or OpenCode CLI (including local Ollama models)."
               >
                 <select
                   data-testid="settings-ai-provider"
@@ -1509,21 +1511,22 @@ export function SettingsPanel() {
                   }
                   className="w-56 text-sm"
                 >
-                  <option value="anthropic">Anthropic API</option>
-                  <option value="claude_cli">Claude CLI</option>
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="kilo_cli">Kilo CLI</option>
+                  {AI_PROVIDERS.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.label}
+                    </option>
+                  ))}
                 </select>
               </SettingRow>
 
               <SettingRow
                 label="Model"
-                tooltip="Blank uses the provider default where supported. Kilo CLI requires a model."
+                tooltip="Blank uses the provider default where supported. Kilo CLI requires a model. OpenCode lists local Ollama models on the AI tab."
               >
                 <TextInput
                   value={state.settings.aiModel}
                   onChange={(v) => updateSetting("aiModel", v)}
-                  placeholder="haiku, sonnet, openrouter/free, kilo/..."
+                  placeholder={modelHintFor(state.settings.aiProvider)}
                   width="w-96"
                 />
               </SettingRow>
@@ -1621,6 +1624,42 @@ export function SettingsPanel() {
                   value={state.settings.aiKiloCliUserProfile}
                   onChange={(v) => updateSetting("aiKiloCliUserProfile", v)}
                   placeholder="C:\\Users\\You"
+                  width="w-96"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="OpenCode CLI Path"
+                tooltip="Optional. Blank auto-detects OpenCode, then PATH."
+              >
+                <TextInput
+                  value={state.settings.aiOpencodeCliPath}
+                  onChange={(v) => updateSetting("aiOpencodeCliPath", v)}
+                  placeholder="C:\\Users\\You\\AppData\\Roaming\\npm\\opencode.cmd"
+                  width="w-96"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="OpenCode User Profile"
+                tooltip="Optional Windows profile root whose OpenCode config should be used."
+              >
+                <TextInput
+                  value={state.settings.aiOpencodeUserProfile}
+                  onChange={(v) => updateSetting("aiOpencodeUserProfile", v)}
+                  placeholder="C:\\Users\\You"
+                  width="w-96"
+                />
+              </SettingRow>
+
+              <SettingRow
+                label="Ollama URL"
+                tooltip="Used when Provider is OpenCode CLI. Blank is http://127.0.0.1:11434. Must be a local address."
+              >
+                <TextInput
+                  value={state.settings.aiOllamaBaseUrl}
+                  onChange={(v) => updateSetting("aiOllamaBaseUrl", v)}
+                  placeholder="http://127.0.0.1:11434"
                   width="w-96"
                 />
               </SettingRow>

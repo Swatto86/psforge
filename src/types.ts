@@ -229,7 +229,7 @@ export interface AppSettings {
   /** Master switch: when true, every AI feature is hidden and AI requests are refused. */
   disableAi: boolean;
   /** AI provider used by the Assistant pane. */
-  aiProvider: "anthropic" | "claude_cli" | "openrouter" | "kilo_cli";
+  aiProvider: "anthropic" | "claude_cli" | "openrouter" | "kilo_cli" | "opencode_cli";
   /** AI model name; blank uses the provider default where supported. */
   aiModel: string;
   /** Provider reasoning effort. */
@@ -246,6 +246,12 @@ export interface AppSettings {
   aiKiloCliPath: string;
   /** Optional Windows profile root for Kilo CLI login reuse. */
   aiKiloCliUserProfile: string;
+  /** Optional OpenCode CLI binary path. */
+  aiOpencodeCliPath: string;
+  /** Optional Windows profile root for OpenCode config/login reuse. */
+  aiOpencodeUserProfile: string;
+  /** Local Ollama URL used with OpenCode. Blank means http://127.0.0.1:11434. */
+  aiOllamaBaseUrl: string;
 
   // ---- Execution ----
   /** Save the active file automatically before running (F5). */
@@ -341,6 +347,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   aiClaudeUserProfile: "",
   aiKiloCliPath: "",
   aiKiloCliUserProfile: "",
+  aiOpencodeCliPath: "",
+  aiOpencodeUserProfile: "",
+  aiOllamaBaseUrl: "",
   autoSaveOnRun: true,
   clearOutputOnRun: true,
   persistRunspaceBetweenRuns: true,
@@ -526,6 +535,17 @@ export interface AiAssistantResponse {
   code?: string | null;
   provider: string;
   model: string;
+}
+
+export interface AiModelChoice {
+  id: string;
+  label: string;
+  source: string;
+}
+
+export interface AiModelList {
+  models: AiModelChoice[];
+  warning?: string | null;
 }
 
 /** A code-signing certificate from the current user's certificate store. */

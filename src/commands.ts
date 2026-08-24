@@ -5,6 +5,7 @@ import type {
   AppSettings,
   AiAssistantRequest,
   AiAssistantResponse,
+  AiModelList,
   AssociationStatus,
   BatchResult,
   CertInfo,
@@ -29,6 +30,13 @@ export async function askAi(
   request: AiAssistantRequest,
 ): Promise<AiAssistantResponse> {
   return invoke<AiAssistantResponse>("ask_ai", { settings, request });
+}
+
+/** List models for the current AI provider (Ollama tags when using OpenCode). */
+export async function listAiModels(
+  settings: AppSettings,
+): Promise<AiModelList> {
+  return invoke<AiModelList>("list_ai_models", { settings });
 }
 
 /** Execute a script under the debugger with optional line breakpoints. */

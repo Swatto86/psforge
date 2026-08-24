@@ -1,6 +1,9 @@
 /// PSForge - Modern PowerShell Editor
 /// Main library module that registers all Tauri commands and plugins.
 pub mod ai;
+pub mod ai_cli;
+pub mod ai_ollama;
+pub mod ai_opencode;
 pub mod commands;
 pub mod errors;
 pub mod powershell;
@@ -148,6 +151,7 @@ pub fn run() {
             commands::get_signing_certificates,
             commands::sign_script,
             ai::ask_ai,
+            ai::list_ai_models,
             terminal::start_terminal,
             terminal::terminal_write,
             terminal::terminal_exec,

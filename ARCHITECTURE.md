@@ -22,8 +22,10 @@ and other trusted I/O.
    the restore path.
 6. Backend modules own their I/O concerns: `powershell.rs` and `terminal.rs`
    manage processes; `settings.rs` owns persisted settings; `commands.rs`
-   handles file, analysis, signing, and association commands; `ai.rs` owns AI
-   provider calls.
+   handles file, analysis, signing, and association commands; `ai.rs`,
+   `ai_opencode.rs`, and `ai_ollama.rs` own AI provider calls (OpenCode and
+   local Ollama included). The AI tab (`AiProviderBar.tsx`) writes provider
+   and model through the same settings save path as Settings.
 
 ## Dependency direction
 
