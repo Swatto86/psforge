@@ -246,6 +246,9 @@ export function EditorPane() {
   // below must re-run once Monaco finishes its async mount, so mount also
   // flips this state flag.
   const [monacoReady, setMonacoReady] = useState(false);
+  // Bumped on every Monaco mount so diagnostics re-run after tab remounts
+  // (Editor key={tab.id}) even when monacoReady was already true.
+  const [editorMountGen, setEditorMountGen] = useState(0);
 
   // Ref that always holds the latest selected PS path so that async callbacks
   // (completions, PSSA) never capture a stale closure value.
@@ -275,24 +278,20 @@ export function EditorPane() {
     }
   }, [activeTab?.id]);
 
-  // Drive diagnostics from tab content so Reference → Problems updates after
-  // typing, open, paste, and AI Fix This / Fix All (not only onChange).
+  // Typing / AI rewrite: debounce so we do not spawn a PS process per key.
   useEffect(() => {
     const tab = activeTabRef.current;
     if (!monacoReady || !tab || tab.tabType === "welcome") return;
-    const mon = monacoRef.current;
-    const ed = editorRef.current;
-    const model = ed?.getModel() ?? null;
     scheduleEditorDiagnostics({
       enabled: state.settings.enablePssa !== false,
       psPath: psPathRef.current,
       scriptContent: tab.content,
       tabId: tab.id,
-      monaco: mon,
-      model,
+      monaco: monacoRef.current,
+      model: editorRef.current?.getModel() ?? null,
       timerRef: pssaTimerRef,
       requestIdRef: pssaRequestIdRef,
-      debounceMs: 350,
+      debounceMs: 300,
       analyze: analyzeScript,
       setProblems: (tabId, diagnostics) => {
         dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
@@ -300,8 +299,34 @@ export function EditorPane() {
     });
   }, [
     monacoReady,
-    activeTab?.id,
     activeTab?.content,
+    state.settings.enablePssa,
+    dispatch,
+  ]);
+
+  // Open / remount / host change: run immediately (no keystroke required).
+  useEffect(() => {
+    const tab = activeTabRef.current;
+    if (!monacoReady || !tab || tab.tabType === "welcome") return;
+    scheduleEditorDiagnostics({
+      enabled: state.settings.enablePssa !== false,
+      psPath: psPathRef.current,
+      scriptContent: tab.content,
+      tabId: tab.id,
+      monaco: monacoRef.current,
+      model: editorRef.current?.getModel() ?? null,
+      timerRef: pssaTimerRef,
+      requestIdRef: pssaRequestIdRef,
+      debounceMs: 0,
+      analyze: analyzeScript,
+      setProblems: (tabId, diagnostics) => {
+        dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
+      },
+    });
+  }, [
+    monacoReady,
+    editorMountGen,
+    activeTab?.id,
     state.settings.enablePssa,
     state.selectedPsPath,
     dispatch,
@@ -628,6 +653,27 @@ export function EditorPane() {
       editorRef.current = editor;
       monacoRef.current = monaco;
       setMonacoReady(true);
+      setEditorMountGen((n) => n + 1);
+
+      // Analyze the open script immediately — do not wait for a keystroke.
+      const tab = activeTabRef.current;
+      if (tab && tab.tabType !== "welcome") {
+        scheduleEditorDiagnostics({
+          enabled: settingsRef.current.enablePssa !== false,
+          psPath: psPathRef.current,
+          scriptContent: tab.content,
+          tabId: tab.id,
+          monaco,
+          model: editor.getModel(),
+          timerRef: pssaTimerRef,
+          requestIdRef: pssaRequestIdRef,
+          debounceMs: 0,
+          analyze: analyzeScript,
+          setProblems: (tabId, diagnostics) => {
+            dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
+          },
+        });
+      }
 
       // Track selection for F8 legacy fallback consumers.
       editor.onDidChangeCursorSelection(() => {

@@ -61,6 +61,9 @@ function clearMarkersAndProblems(args: ScheduleDiagnosticsArgs): void {
 /**
  * Debounced editor diagnostics. Drive from tab content (typing, open, AI Fix)
  * so Reference → Problems stays in sync without requiring a keystroke.
+ *
+ * When Monaco/model/PowerShell path are not ready yet, wait — do not clear
+ * Problems (that race left the Reference tab empty until the user typed).
  */
 export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
   if (args.timerRef.current !== null) {
@@ -75,7 +78,6 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
 
   const { monaco, model, psPath } = args;
   if (!monaco || !model || !psPath) {
-    clearMarkersAndProblems(args);
     return;
   }
 

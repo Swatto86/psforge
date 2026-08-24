@@ -16,11 +16,28 @@ describe("clampPtyDims", () => {
 });
 
 describe("editor diagnostics scheduling", () => {
-  it("EditorPane schedules analysis from tab content for live Reference updates", () => {
+  it("EditorPane schedules analysis on mount and from tab content", () => {
     expect(editorPane).toContain("scheduleEditorDiagnostics");
-    expect(editorPane).toContain("Drive diagnostics from tab content");
-    expect(editorPane).toContain("activeTab?.content");
-    expect(editorPane).toContain("requestIdRef");
+    expect(editorPane).toContain("Analyze the open script immediately");
+    expect(editorPane).toContain("editorMountGen");
+    expect(editorPane).toContain("debounceMs: 0");
+  });
+
+  it("does not clear Problems while Monaco or the PS host are not ready", () => {
+    const setProblems = vi.fn();
+    scheduleEditorDiagnostics({
+      enabled: true,
+      psPath: "",
+      scriptContent: "$($$(",
+      tabId: "tab-1",
+      monaco: null,
+      model: null,
+      timerRef: { current: null },
+      debounceMs: 0,
+      analyze: vi.fn(),
+      setProblems,
+    });
+    expect(setProblems).not.toHaveBeenCalled();
   });
 
   it("maps ParseError to Monaco Error severity", () => {

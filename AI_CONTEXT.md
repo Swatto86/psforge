@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** Open-time diagnostics (**1.4.35**). Analyzer runs as soon as the editor mounts (and again when the PowerShell host is selected), not only after an edit. Waiting for Monaco/model/host no longer clears Problems (that race left Reference empty until typing).
 - **2026-08-24:** Fix All batches + Problems **Fix This** + live Reference (**1.4.34**). Large Problem lists no longer fail with “AI request is too long”: Fix All prioritizes parse/errors, keeps the question under 8k chars, attaches the list as diagnostics (not a truncated debug bundle), and toasts remaining count. Right-click a Problem → **Fix This**. Editor diagnostics follow `activeTab.content` so Reference → Problems / the badge update after typing and after AI fixes (not only on keystrokes).
 - **2026-08-24:** Editor diagnostics + short-terminal warning (**1.4.33**). Squiggles run when a tab opens / Monaco mounts (not only after typing). Analyzer JSON survives trailing Windows PowerShell CLIXML noise. PTY rows floor at 5; terminal bootstrap sets PSReadLine `InlineView` so short panes no longer print `'WindowHeight' is not less than …`.
 - **2026-08-24:** OpenCode lists Zen + Go + other CLI providers (**1.4.32**). Model refresh calls `opencode models` (`ai_opencode_list.rs`) instead of only Ollama. Labels mark `opencode/…` as Zen and `opencode-go/…` as Go. Connect Zen/Go/ChatGPT in the OpenCode TUI (`/connect`) so they appear after Refresh.
