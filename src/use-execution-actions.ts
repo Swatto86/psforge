@@ -710,7 +710,8 @@ export function useExecutionActions({
     dispatch({ type: "CLEAR_DEBUG_INSPECTOR_VALUES" });
 
     let recordScriptPath = tab.filePath;
-    const recordTabTitle = tab.title;
+    let recordTabTitle = tab.title;
+    let runDiskPath = recordScriptPath;
 
     // Flush dirty buffer before a live-console `& path` run (including scratch).
     // Untitled tabs pick up a scratch path when auto-scratch is on.
@@ -735,6 +736,7 @@ export function useExecutionActions({
           { reveal: false },
         );
         savePath = "";
+        runDiskPath = "";
       }
       if (savePath) {
         try {
@@ -765,7 +767,8 @@ export function useExecutionActions({
           });
           recordScriptPath = savePath;
         } catch {
-          // Save failed; continue running with unsaved content via temp wrapper.
+          // Save failed: run the in-memory buffer via psrun, not stale disk.
+          runDiskPath = "";
         }
       }
     }
@@ -782,10 +785,10 @@ export function useExecutionActions({
 
     const directPath = isSavedDiskScript(
       tab,
-      recordScriptPath,
+      runDiskPath,
       scratchDirRef.current,
     )
-      ? recordScriptPath
+      ? runDiskPath
       : "";
 
     let scriptArgs: string[] = [];

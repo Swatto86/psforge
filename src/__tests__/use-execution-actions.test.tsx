@@ -421,4 +421,31 @@ describe("useExecutionActions", () => {
       reveal: true,
     });
   });
+
+  it("falls back to psrun when auto-save before run fails", async () => {
+    const tab = codeTab();
+    tab.isDirty = true;
+    tab.content = "Write-Host 'from buffer'";
+    vi.mocked(commands.saveFileContent).mockRejectedValue(new Error("disk full"));
+
+    await renderHarness(appState([tab], tab.id), tab);
+    await act(async () => {
+      await getActions().runScript();
+      await flushPromises();
+    });
+
+    expect(commands.prepareTerminalScriptCommand).toHaveBeenCalledTimes(1);
+    expect(commands.prepareTerminalScriptCommand).toHaveBeenCalledWith(
+      expect.any(String),
+      "Write-Host 'from buffer'",
+      expect.any(String),
+      expect.any(String),
+      [],
+      tab.title,
+    );
+    expect(runCommandInTerminal).toHaveBeenCalledWith("prepared-command", {
+      clearBeforeRun: false,
+      reveal: true,
+    });
+  });
 });

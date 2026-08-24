@@ -65,12 +65,19 @@ if ($__ast) {
     }
     if ($typeAsts.Count -gt 0) {
         $classInfo = @{}
+        $classCtorCounts = @{}
         foreach ($t in $typeAsts) {
             $ctors = @($t.Members | Where-Object {
                 $_ -is [System.Management.Automation.Language.FunctionMemberAst] -and
                 $_.Name -eq $t.Name
             })
+            if ($ctors.Count -eq 0) {
+                $classCtorCounts[[string]$t.Name] = @(0)
+            } else {
+                $classCtorCounts[[string]$t.Name] = @($ctors | ForEach-Object { $_.Parameters.Count })
+            }
             $hasParamless = @($ctors | Where-Object { $_.Parameters.Count -eq 0 }).Count -gt 0
+            if ($ctors.Count -eq 0) { $hasParamless = $true }
             $classInfo[[string]$t.Name] = @{ HasParamlessCtor = $hasParamless }
         }
         foreach ($t in $typeAsts) {
@@ -93,6 +100,28 @@ if ($__ast) {
                 endLine   = [int]$ext.EndLineNumber
                 endColumn = [int]$ext.EndColumnNumber
             })
+        }
+        foreach ($inv in $__ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]
+        }, $true)) {
+            if ($null -eq $inv.Member -or $inv.Member.Value -ne 'new') { continue }
+            if ($inv.Expression -isnot [System.Management.Automation.Language.TypeExpressionAst]) { continue }
+            $typeName = [string]$inv.Expression.TypeName.FullName
+            if (-not $classCtorCounts.ContainsKey($typeName)) { continue }
+            $argCount = @($inv.Arguments).Count
+            if ($classCtorCounts[$typeName] -notcontains $argCount) {
+                $ext = $inv.Extent
+                [void]$__out.Add([pscustomobject]@{
+                    message   = "Cannot find an overload for `"new`" and the argument count: `"$argCount`"."
+                    severity  = 'ParseError'
+                    ruleName  = 'Parser'
+                    line      = [int]$ext.StartLineNumber
+                    column    = [int]$ext.StartColumnNumber
+                    endLine   = [int]$ext.EndLineNumber
+                    endColumn = [int]$ext.EndColumnNumber
+                })
+            }
         }
     }
 }
@@ -309,6 +338,27 @@ mod tests {
         assert!(
             ANALYZE_SCRIPT_PS.contains("TypeDefinitionAst"),
             "analyze path must validate class inheritance"
+        );
+    }
+
+    /// Live gate: `[Type]::new(...)` must match a declared constructor on that class.
+    #[tokio::test]
+    async fn analyze_script_reports_new_overload_errors() {
+        let Some(pwsh) = find_pwsh() else {
+            eprintln!("skip: pwsh not on PATH");
+            return;
+        };
+
+        let broken = "class Pet { Pet() { } Pet([string]$n,[int]$a) { } }\nclass Dog : Pet { }\n[Dog]::new('Rex', 7)\n";
+        let diags = analyze_script(pwsh.to_string_lossy().into_owned(), broken.to_string())
+            .await
+            .expect("analyze_script must not error");
+
+        assert!(
+            diags.iter().any(|d| {
+                d.rule_name == "Parser" && d.line == 3 && d.message.contains("overload for \"new\"")
+            }),
+            "expected ::new overload diagnostic, got: {diags:?}"
         );
     }
 
