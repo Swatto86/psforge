@@ -80,3 +80,17 @@ export async function copyLastRunOutputToClipboard(): Promise<boolean> {
   await navigator.clipboard.writeText(text);
   return true;
 }
+
+/** Floor PTY dims so PowerShell RawUI does not warn on short panes. */
+export const MIN_PTY_ROWS = 5;
+export const MIN_PTY_COLS = 1;
+
+export function clampPtyDims(
+  cols: number,
+  rows: number,
+): { cols: number; rows: number } {
+  return {
+    cols: Math.max(cols || 120, MIN_PTY_COLS),
+    rows: Math.max(rows || 30, MIN_PTY_ROWS),
+  };
+}

@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** Editor diagnostics + short-terminal warning (**1.4.33**). Squiggles run when a tab opens / Monaco mounts (not only after typing). Analyzer JSON survives trailing Windows PowerShell CLIXML noise. PTY rows floor at 5; terminal bootstrap sets PSReadLine `InlineView` so short panes no longer print `'WindowHeight' is not less than …`.
 - **2026-08-24:** OpenCode lists Zen + Go + other CLI providers (**1.4.32**). Model refresh calls `opencode models` (`ai_opencode_list.rs`) instead of only Ollama. Labels mark `opencode/…` as Zen and `opencode-go/…` as Go. Connect Zen/Go/ChatGPT in the OpenCode TUI (`/connect`) so they appear after Refresh.
 - **2026-08-24:** Reference **Fix All** (**1.4.32**). Problems toolbar sends every diagnostic + debug bundle to the configured AI (`buildFixAllProblemsQuestion` / `applyAiFix`) and replaces the script in place. Shares the Fix Problem path used by squiggle right-click.
 - **2026-08-24:** PSSA install + Fix Problem AI (**1.4.31**). In-app `check_psscriptanalyzer` / `install_psscriptanalyzer` for the selected host and all discovered hosts (PS 5.1 + 7, CurrentUser, TLS1.2/NuGet for 5.1). Settings auto-install when missing; Problems pane Install CTA. Editor right-click on a diagnostic squiggle → **Fix Problem (AI)** (`editor-fix-problem.ts`) sends mode `fix` and replaces the script in place.

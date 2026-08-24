@@ -14,6 +14,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
+import { clampPtyDims } from "../terminal-utils";
 import {
   createTerminalWithAddons,
   type TerminalPerformanceAddons,
@@ -386,8 +387,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
 
       const syncSizeToBackend = () => {
         if (!isReadyRef.current || sessionIdRef.current <= 0) return;
-        const cols = Math.max(term.cols || 120, 1);
-        const rows = Math.max(term.rows || 30, 1);
+        const { cols, rows } = clampPtyDims(term.cols, term.rows);
         void cmd
           .terminalResize(sessionIdRef.current, cols, rows)
           .catch(() => {});
@@ -451,8 +451,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           sessionIdRef.current = 0;
         }
 
-        const cols = Math.max(term.cols || 120, 1);
-        const rows = Math.max(term.rows || 30, 1);
+        const { cols, rows } = clampPtyDims(term.cols, term.rows);
 
         try {
           const sid = await cmd.startTerminal(
@@ -817,8 +816,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         // best effort
       }
       if (isReadyRef.current && sessionIdRef.current > 0) {
-        const cols = Math.max(term.cols || 120, 1);
-        const rows = Math.max(term.rows || 30, 1);
+        const { cols, rows } = clampPtyDims(term.cols, term.rows);
         void cmd
           .terminalResize(sessionIdRef.current, cols, rows)
           .catch(() => {});
@@ -848,8 +846,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         }
         term.focus();
         if (isReadyRef.current && sessionIdRef.current > 0) {
-          const cols = Math.max(term.cols || 120, 1);
-          const rows = Math.max(term.rows || 30, 1);
+          const { cols, rows } = clampPtyDims(term.cols, term.rows);
           void cmd
             .terminalResize(sessionIdRef.current, cols, rows)
             .catch(() => {});

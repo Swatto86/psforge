@@ -30,6 +30,7 @@ pub struct PssaDiagnostic {
 
 /// Combined analyzer: always `Parser::ParseInput`, then PSSA if available.
 const ANALYZE_SCRIPT_PS: &str = r#"
+$ProgressPreference = 'SilentlyContinue'
 $ErrorActionPreference = 'SilentlyContinue'
 $path = $env:PSFORGE_ANALYZE_PATH
 if (-not $path -or -not (Test-Path -LiteralPath $path)) { '[]'; exit 0 }
@@ -85,14 +86,36 @@ fn ps_utf8_script(script: &str) -> String {
     )
 }
 
+fn extract_json_payload(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    // Windows PowerShell may append CLIXML progress after JSON; take the
+    // outermost JSON array/object so serde_json does not fail on junk.
+    if let Some(start) = trimmed.find('[') {
+        if let Some(end) = trimmed.rfind(']') {
+            if end >= start {
+                return &trimmed[start..=end];
+            }
+        }
+    }
+    if let Some(start) = trimmed.find('{') {
+        if let Some(end) = trimmed.rfind('}') {
+            if end >= start {
+                return &trimmed[start..=end];
+            }
+        }
+    }
+    trimmed
+}
+
 fn parse_diagnostics_json(trimmed: &str) -> Vec<PssaDiagnostic> {
-    if trimmed.is_empty() || trimmed == "[]" {
+    let payload = extract_json_payload(trimmed);
+    if payload.is_empty() || payload == "[]" {
         return Vec::new();
     }
-    if trimmed.starts_with('[') {
-        serde_json::from_str(trimmed).unwrap_or_default()
+    if payload.starts_with('[') {
+        serde_json::from_str(payload).unwrap_or_default()
     } else {
-        match serde_json::from_str::<PssaDiagnostic>(trimmed) {
+        match serde_json::from_str::<PssaDiagnostic>(payload) {
             Ok(single) => vec![single],
             Err(e) => {
                 debug!("analyze_script: JSON parse error: {} | raw: {}", e, trimmed);
@@ -197,6 +220,21 @@ mod tests {
 
         let empty = parse_diagnostics_json("[]");
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn parse_diagnostics_json_strips_trailing_clixml() {
+        let polluted = r#"[{"message":"Unexpected token '(' in expression or statement.","severity":"ParseError","ruleName":"Parser","line":126,"column":40,"endLine":126,"endColumn":41}]
+#< CLIXML
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN></Obj></Objs>"#;
+        let diags = parse_diagnostics_json(polluted);
+        assert_eq!(
+            diags.len(),
+            1,
+            "CLIXML after JSON must not wipe diagnostics"
+        );
+        assert_eq!(diags[0].line, 126);
+        assert!(diags[0].message.contains("Unexpected token"));
     }
 
     #[test]

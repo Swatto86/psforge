@@ -22,6 +22,10 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use tauri::{Emitter, Window};
 
+/// Minimum ConPTY rows. PowerShell RawUI / some host paths reject height < 5.
+const MIN_PTY_ROWS: u16 = 5;
+const MIN_PTY_COLS: u16 = 1;
+
 /// Startup script loaded once per terminal process.
 ///
 /// Responsibilities:
@@ -167,6 +171,10 @@ try {
 try {
     if (Get-Module -ListAvailable -Name PSReadLine) {
         Import-Module PSReadLine -ErrorAction SilentlyContinue | Out-Null
+        # ListView needs a tall console; short bottom panes otherwise print
+        # "'WindowHeight' is not less than ..." warnings. InlineView is fine
+        # in an IDE-sized terminal.
+        Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
         Set-PSReadLineOption -AddToHistoryHandler {
             param([string]$line)
             $esc = [char]27
@@ -286,9 +294,11 @@ pub async fn start_terminal(
     };
 
     let pty_system = native_pty_system();
+    // PowerShell / RawUI reject WindowHeight < 5; clamp so short panes do not
+    // emit "'WindowHeight' is not less than '5'" on start/resize.
     let size = PtySize {
-        rows: rows.unwrap_or(30).max(1),
-        cols: cols.unwrap_or(120).max(1),
+        rows: rows.unwrap_or(30).max(MIN_PTY_ROWS),
+        cols: cols.unwrap_or(120).max(MIN_PTY_COLS),
         pixel_width: 0,
         pixel_height: 0,
     };
@@ -596,8 +606,8 @@ pub async fn terminal_resize(
     session
         .master
         .resize(PtySize {
-            rows: rows.max(1),
-            cols: cols.max(1),
+            rows: rows.max(MIN_PTY_ROWS),
+            cols: cols.max(MIN_PTY_COLS),
             pixel_width: 0,
             pixel_height: 0,
         })

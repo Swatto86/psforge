@@ -29,6 +29,7 @@ import { getPsMonarchGrammar } from "../ps-grammar";
 import type { DebugBreakpoint, PsCompletion, ThemeName } from "../types";
 import { WelcomePane } from "./WelcomePane";
 import { analyzeScript, askAi, getCompletions } from "../commands";
+import { scheduleEditorDiagnostics } from "../editor-diagnostics";
 import {
   buildExplainQuestion,
   setExplainHandoff,
@@ -49,24 +50,6 @@ import {
 // ---------------------------------------------------------------------------
 // Helpers — kept module-level so they are not recreated on every render.
 // ---------------------------------------------------------------------------
-
-/** Maps a PSScriptAnalyzer severity string to the Monaco MarkerSeverity number. */
-function pssaSeverity(
-  monaco: typeof import("monaco-editor"),
-  severity: string,
-): number {
-  switch (severity) {
-    case "Error":
-    case "ParseError":
-      return monaco.MarkerSeverity.Error;
-    case "Warning":
-      return monaco.MarkerSeverity.Warning;
-    case "Information":
-      return monaco.MarkerSeverity.Info;
-    default:
-      return monaco.MarkerSeverity.Hint;
-  }
-}
 
 /** Maps a PS TabExpansion2 ResultType string to a Monaco CompletionItemKind. */
 function completionKind(
@@ -278,12 +261,49 @@ export function EditorPane() {
   // pending analysis from the previous tab does not fire after the switch,
   // wasting a PS process spawn (the captured model mitigates stale-marker
   // application per BUG-NEW-1 fix, but skipping the spawn is still valuable).
+  // Also clear shared-model markers immediately so the previous tab's
+  // squiggles do not linger on the newly shown script.
   useEffect(() => {
     if (pssaTimerRef.current !== null) {
       clearTimeout(pssaTimerRef.current);
       pssaTimerRef.current = null;
     }
+    const mon = monacoRef.current;
+    const model = editorRef.current?.getModel();
+    if (mon && model) {
+      mon.editor.setModelMarkers(model, "pssa", []);
+    }
   }, [activeTab?.id]);
+
+  // Analyze on open / Monaco ready / host change — not only on keystrokes.
+  // Opening a broken .ps1 previously showed no squiggles until the user typed.
+  useEffect(() => {
+    const tab = activeTabRef.current;
+    if (!monacoReady || !tab || tab.tabType === "welcome") return;
+    const mon = monacoRef.current;
+    const ed = editorRef.current;
+    const model = ed?.getModel() ?? null;
+    scheduleEditorDiagnostics({
+      enabled: state.settings.enablePssa !== false,
+      psPath: psPathRef.current,
+      scriptContent: tab.content,
+      tabId: tab.id,
+      monaco: mon,
+      model,
+      timerRef: pssaTimerRef,
+      debounceMs: 200,
+      analyze: analyzeScript,
+      setProblems: (tabId, diagnostics) => {
+        dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
+      },
+    });
+  }, [
+    monacoReady,
+    activeTab?.id,
+    state.settings.enablePssa,
+    state.selectedPsPath,
+    dispatch,
+  ]);
 
   // Disposable for the registered completion provider (kept so we can clean
   // up when the editor unmounts or a new provider is registered).
@@ -1020,71 +1040,22 @@ export function EditorPane() {
         changes: { content: value, isDirty },
       });
 
-      const clearPssaState = (
-        monacoInstance = monacoRef.current,
-        modelInstance = editorRef.current?.getModel() ?? null,
-      ) => {
-        if (monacoInstance && modelInstance) {
-          monacoInstance.editor.setModelMarkers(modelInstance, "pssa", []);
-        }
-        dispatch({
-          type: "SET_PROBLEMS",
-          tabId: activeTab.id,
-          diagnostics: [],
-        });
-      };
-
-      // --- Feature 2: PSScriptAnalyzer squiggles (debounced 800 ms) ---
-      if (pssaTimerRef.current !== null) clearTimeout(pssaTimerRef.current);
-
-      // Clear any existing markers immediately when PSSA is disabled.
-      if (!state.settings.enablePssa) {
-        clearPssaState();
-        return;
-      }
-
-      // BUG-NEW-1 fix: capture editor, monaco instance, and model HERE (before the
-      // timer fires) so a tab switch during the 800 ms debounce window cannot
-      // cause this analysis result to be applied to a different tab's model.
-      // Previously these refs were read inside the callback (at fire time), meaning
-      // editorRef.current could already point to a newly-mounted editor for a
-      // different tab by the time the async analysis completed.
-      const ed = editorRef.current;
-      const mon = monacoRef.current;
-      const psPath = psPathRef.current;
-      if (!ed || !mon || !psPath) {
-        clearPssaState(mon, ed?.getModel() ?? null);
-        return;
-      }
-      const model = ed.getModel();
-      if (!model) {
-        clearPssaState(mon, null);
-        return;
-      }
-
-      pssaTimerRef.current = setTimeout(() => {
-        analyzeScript(psPath, value)
-          .then((diags) => {
-            const markers = diags.map((d) => ({
-              severity: pssaSeverity(mon, d.severity),
-              message: d.message,
-              source: d.ruleName,
-              startLineNumber: d.line,
-              startColumn: d.column,
-              endLineNumber: d.endLine > 0 ? d.endLine : d.line,
-              endColumn: d.endColumn > 0 ? d.endColumn : d.column + 1,
-            }));
-            mon.editor.setModelMarkers(model, "pssa", markers);
-            dispatch({
-              type: "SET_PROBLEMS",
-              tabId: activeTab.id,
-              diagnostics: diags,
-            });
-          })
-          .catch(() => {
-            clearPssaState(mon, model);
-          });
-      }, 800);
+      // BUG-NEW-1: capture monaco/model here so a tab switch during debounce
+      // cannot apply markers to a different tab's model.
+      scheduleEditorDiagnostics({
+        enabled: state.settings.enablePssa !== false,
+        psPath: psPathRef.current,
+        scriptContent: value,
+        tabId: activeTab.id,
+        monaco: monacoRef.current,
+        model: editorRef.current?.getModel() ?? null,
+        timerRef: pssaTimerRef,
+        debounceMs: 800,
+        analyze: analyzeScript,
+        setProblems: (tabId, diagnostics) => {
+          dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
+        },
+      });
     },
     [activeTab, state.settings.enablePssa, dispatch],
   );
