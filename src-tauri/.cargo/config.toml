@@ -1,0 +1,2 @@
+# cargo 1.96+ rejects `jobs = 0` ("jobs may not be 0").
+# Cargo already uses all logical CPUs by default; do not pin a count.

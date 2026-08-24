@@ -30,6 +30,13 @@ describe("Integrated terminal stability", () => {
     expect(terminalPane).toContain('dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" })');
     expect(terminalPane).toContain("term.refresh(0, term.rows - 1)");
   });
+
+  it("applies Windows Terminal scheme and glyph font to consoles", () => {
+    expect(terminalPane).toContain("readWindowsTerminalSettings");
+    expect(terminalPane).toContain("windowsTerminalSchemeToXtermTheme");
+    expect(terminalPane).toContain("resolveConsoleFontFamily");
+    expect(xtermSetup).toContain("customGlyphs: true");
+  });
 });
 
 describe("Script param inspection and run guard", () => {

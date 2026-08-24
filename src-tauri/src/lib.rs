@@ -3,13 +3,14 @@
 pub mod ai;
 pub mod commands;
 pub mod errors;
-pub mod ps_invoke;
 pub mod powershell;
+pub mod ps_invoke;
 pub mod settings;
 #[cfg(not(test))]
 pub mod terminal;
 pub mod utils;
 pub mod win_compat;
+pub mod windows_terminal;
 
 #[cfg(not(test))]
 use log::{info, warn};
@@ -152,6 +153,7 @@ pub fn run() {
             terminal::terminal_exec,
             terminal::terminal_resize,
             terminal::stop_terminal,
+            windows_terminal::read_windows_terminal_settings,
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "Show PSForge", true, None::<&str>)?;

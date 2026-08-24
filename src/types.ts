@@ -357,7 +357,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   terminalLoadProfile: false,
   showTimestamps: false,
   outputFontSize: 13,
-  outputFontFamily: "Cascadia Code, Consolas, 'Segoe UI Emoji', 'Segoe UI Symbol', 'Apple Color Emoji', 'Noto Color Emoji', monospace",
+  outputFontFamily: "'JetBrainsMono Nerd Font', 'CaskaydiaCove Nerd Font', 'CaskaydiaCove NF', 'Cascadia Code NF', Cascadia Code, Consolas, 'Segoe UI Emoji', 'Segoe UI Symbol', 'Apple Color Emoji', 'Noto Color Emoji', monospace",
   outputWordWrap: false,
   uiFontFamily: "Segoe UI, sans-serif",
   uiFontSize: 14,

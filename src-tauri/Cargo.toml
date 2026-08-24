@@ -1,6 +1,6 @@
 [package]
 name = "psforge"
-version = "1.4.22"
+version = "1.4.23"
 description = "PSForge - Modern PowerShell Editor"
 authors = ["PSForge Contributors"]
 edition = "2021"
@@ -35,3 +35,6 @@ tauri-plugin-updater = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+
+[profile.dev.package."*"]
+opt-level = 1

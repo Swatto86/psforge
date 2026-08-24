@@ -551,8 +551,7 @@ pub async fn get_script_parameters(
 
     // Legacy fallbacks: older snippets emitted a bare array / single object.
     if trimmed.starts_with('[') {
-        let params: Vec<ScriptParameterInfo> =
-            serde_json::from_str(trimmed).unwrap_or_default();
+        let params: Vec<ScriptParameterInfo> = serde_json::from_str(trimmed).unwrap_or_default();
         return Ok(ScriptParameterInspectResult {
             status: if params.is_empty() {
                 "none".to_string()

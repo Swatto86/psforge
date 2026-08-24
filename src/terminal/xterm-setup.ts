@@ -23,6 +23,9 @@ export const TERMINAL_PERFORMANCE_OPTIONS: ITerminalOptions = {
   scrollSensitivity: 1,
   /** Instant scroll — avoids animation fighting high-throughput PTY output. */
   smoothScrollDuration: 0,
+  /** Draw box-drawing / powerline glyph cells with the terminal font metrics. */
+  customGlyphs: true,
+  rescaleOverlappingGlyphs: true,
 };
 
 /**

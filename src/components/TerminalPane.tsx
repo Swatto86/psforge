@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -17,6 +18,14 @@ import {
   createTerminalWithAddons,
   type TerminalPerformanceAddons,
 } from "../terminal/xterm-setup";
+import { terminalThemeFromCss } from "../terminal/xterm-theme";
+import {
+  parseWindowsTerminalAppearance,
+  resolveConsoleFontFamily,
+  windowsTerminalSchemeToXtermTheme,
+  type WindowsTerminalAppearance,
+} from "../terminal/windows-terminal-theme";
+import type { ITheme } from "@xterm/xterm";
 
 const MAX_TERMINAL_WRITE_PER_FRAME = 256 * 1024;
 
@@ -149,42 +158,6 @@ function highlightPs(text: string): string {
   return result;
 }
 
-function cssVar(name: string, fallback: string): string {
-  return (
-    getComputedStyle(document.documentElement).getPropertyValue(name).trim() ||
-    fallback
-  );
-}
-
-function terminalThemeFromCss() {
-  return {
-    background: cssVar("--terminal-bg", cssVar("--bg-primary", "#1e1e1e")),
-    foreground: cssVar("--terminal-fg", cssVar("--text-primary", "#cccccc")),
-    cursor: cssVar("--terminal-cursor", "#ffffff"),
-    cursorAccent: cssVar("--terminal-cursor-accent", "#1e1e1e"),
-    selectionBackground: cssVar(
-      "--terminal-selection",
-      "rgba(0, 122, 204, 0.35)",
-    ),
-    black: cssVar("--terminal-ansi-black", "#1e1e1e"),
-    red: cssVar("--terminal-ansi-red", "#f44747"),
-    green: cssVar("--terminal-ansi-green", "#4ec9b0"),
-    yellow: cssVar("--terminal-ansi-yellow", "#dcdcaa"),
-    blue: cssVar("--terminal-ansi-blue", "#569cd6"),
-    magenta: cssVar("--terminal-ansi-magenta", "#c586c0"),
-    cyan: cssVar("--terminal-ansi-cyan", "#4fc1ff"),
-    white: cssVar("--terminal-ansi-white", "#d4d4d4"),
-    brightBlack: cssVar("--terminal-ansi-bright-black", "#808080"),
-    brightRed: cssVar("--terminal-ansi-bright-red", "#f44747"),
-    brightGreen: cssVar("--terminal-ansi-bright-green", "#4ec9b0"),
-    brightYellow: cssVar("--terminal-ansi-bright-yellow", "#dcdcaa"),
-    brightBlue: cssVar("--terminal-ansi-bright-blue", "#569cd6"),
-    brightMagenta: cssVar("--terminal-ansi-bright-magenta", "#c586c0"),
-    brightCyan: cssVar("--terminal-ansi-bright-cyan", "#4fc1ff"),
-    brightWhite: cssVar("--terminal-ansi-bright-white", "#ffffff"),
-  };
-}
-
 type TerminalOutputEvent = {
   sessionId: number;
   data: string;
@@ -258,7 +231,8 @@ interface TerminalSessionProps {
   loadProfile: boolean;
   fontFamily: string;
   fontSize: number;
-  appTheme: string;
+  /** xterm colour theme (Windows Terminal scheme or PSForge CSS fallback). */
+  theme: ITheme;
   startupCommand?: string;
 }
 
@@ -270,7 +244,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       loadProfile,
       fontFamily,
       fontSize,
-      appTheme,
+      theme,
       startupCommand,
     },
     ref,
@@ -365,7 +339,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           cursorInactiveStyle: "block",
           fontFamily,
           fontSize,
-          theme: terminalThemeFromCss(),
+          theme,
         },
       );
       const fitAddon = addons.fit;
@@ -835,11 +809,11 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
     useEffect(() => {
       const term = termRef.current;
       if (!term) return;
-      term.options.theme = terminalThemeFromCss();
+      term.options.theme = theme;
       if (term.rows > 0) {
         term.refresh(0, term.rows - 1);
       }
-    }, [appTheme]);
+    }, [theme]);
 
     useEffect(() => {
       if (!active || !termRef.current) return;
@@ -872,7 +846,10 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       <div
         ref={containerRef}
         className="w-full h-full"
-        style={{ backgroundColor: "var(--bg-primary)", minHeight: 0 }}
+        style={{
+          backgroundColor: theme.background ?? "var(--bg-primary)",
+          minHeight: 0,
+        }}
       />
     );
   },
@@ -891,6 +868,8 @@ export function TerminalPane() {
   const tabCounterRef = useRef(1);
   const sessionRefs = useRef<Record<string, TerminalSessionHandle | null>>({});
   const remoteTargetInputRef = useRef<HTMLInputElement>(null);
+  const [wtAppearance, setWtAppearance] =
+    useState<WindowsTerminalAppearance | null>(null);
   const [tabs, setTabs] = useState<ConsoleTabModel[]>(() => [
     {
       id: "console-1",
@@ -903,6 +882,36 @@ export function TerminalPane() {
   const [showRemoteDialog, setShowRemoteDialog] = useState(false);
   const [remoteTarget, setRemoteTarget] = useState("");
   const [remoteValidationError, setRemoteValidationError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void cmd
+      .readWindowsTerminalSettings()
+      .then((text) => {
+        if (cancelled || !text) return;
+        setWtAppearance(parseWindowsTerminalAppearance(text));
+      })
+      .catch(() => {
+        // Terminal not installed or settings unreadable — keep CSS theme.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const consoleTheme = useMemo((): ITheme => {
+    if (wtAppearance?.scheme) {
+      return windowsTerminalSchemeToXtermTheme(wtAppearance.scheme);
+    }
+    return terminalThemeFromCss();
+  }, [wtAppearance, state.settings.theme]);
+
+  const consoleFontFamily = resolveConsoleFontFamily(
+    wtAppearance?.fontFace,
+    state.settings.outputFontFamily,
+  );
+  const consoleFontSize =
+    wtAppearance?.fontSize ?? state.settings.outputFontSize ?? 13;
 
   const getActiveHandle = () => sessionRefs.current[activeTabId] ?? null;
 
@@ -1399,12 +1408,9 @@ export function TerminalPane() {
               shellPath={tab.shellPath}
               loadProfile={tab.loadProfile}
               startupCommand={tab.startupCommand}
-              appTheme={state.settings.theme ?? "dark"}
-              fontFamily={
-                state.settings.outputFontFamily ??
-                "Cascadia Code, Consolas, monospace"
-              }
-              fontSize={state.settings.outputFontSize ?? 13}
+              theme={consoleTheme}
+              fontFamily={consoleFontFamily}
+              fontSize={consoleFontSize}
             />
           </div>
         ))}

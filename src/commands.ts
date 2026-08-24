@@ -329,6 +329,11 @@ export async function startTerminal(
   });
 }
 
+/** Raw Windows Terminal settings.json text, or null when Terminal is absent. */
+export async function readWindowsTerminalSettings(): Promise<string | null> {
+  return invoke<string | null>("read_windows_terminal_settings");
+}
+
 /** Writes raw terminal input bytes to a PTY session. */
 export async function terminalWrite(
   sessionId: number,

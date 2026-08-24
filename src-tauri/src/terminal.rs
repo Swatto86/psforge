@@ -325,6 +325,7 @@ pub async fn start_terminal(
     cmd.arg("-Command");
     cmd.arg(bootstrap_command);
     cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
     cmd.env("PSFORGE_PTY_HOST", "1");
     // Where prepare_terminal_script_command stages the run wrapper; the
     // bootstrap's `psrun` executes it so runs echo as `psrun 'Name.ps1'`.

@@ -43,7 +43,10 @@ const SESSION_STORAGE_KEY = "psforge.session.v1";
  * so users gain emoji/symbol fallback coverage without manual intervention.
  * Customised values are left untouched.
  */
-const LEGACY_DEFAULT_FONT_FAMILIES = ["Cascadia Code, Consolas, monospace"];
+const LEGACY_DEFAULT_FONT_FAMILIES = [
+  "Cascadia Code, Consolas, monospace",
+  "Cascadia Code, Consolas, 'Segoe UI Emoji', 'Segoe UI Symbol', 'Apple Color Emoji', 'Noto Color Emoji', monospace",
+];
 
 function migrateLoadedSettings(loaded: AppSettings): AppSettings {
   let migrated = loaded;

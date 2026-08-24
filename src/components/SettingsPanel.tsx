@@ -1216,7 +1216,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Terminal Profile Loading"
-                tooltip="Loads PowerShell profile scripts when opening the integrated terminal."
+                tooltip="Loads PowerShell profile scripts when opening the integrated terminal (needed for Oh My Posh and similar prompt themes)."
               >
                 <div className="flex flex-col gap-1">
                   <Toggle
@@ -1225,9 +1225,10 @@ export function SettingsPanel() {
                     label="Load PowerShell profile scripts when terminal starts"
                   />
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Enables profile-based customizations (for example
-                    command-not-found addons) but may slow startup or run
-                    profile side effects.
+                    Enables profile-based customizations (Oh My Posh, aliases,
+                    command-not-found helpers). Console colours and Nerd Fonts
+                    still follow Windows Terminal settings when available. May
+                    slow startup or run profile side effects.
                   </p>
                 </div>
               </SettingRow>

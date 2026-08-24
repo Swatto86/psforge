@@ -9,6 +9,16 @@ export const MONOSPACE_FONT_PRESETS: ReadonlyArray<{
   family: string;
 }> = [
   {
+    id: "cascadia-nf",
+    label: "Cascadia Code NF",
+    family: `'Cascadia Code NF', 'CaskaydiaCove Nerd Font', Cascadia Code, Consolas, ${MONOSPACE_EMOJI_FALLBACK}, monospace`,
+  },
+  {
+    id: "jetbrains-nerd",
+    label: "JetBrainsMono Nerd Font",
+    family: `'JetBrainsMono Nerd Font', 'JetBrains Mono', Consolas, ${MONOSPACE_EMOJI_FALLBACK}, monospace`,
+  },
+  {
     id: "cascadia",
     label: "Cascadia Code",
     family: `Cascadia Code, Consolas, ${MONOSPACE_EMOJI_FALLBACK}, monospace`,

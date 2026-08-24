@@ -339,7 +339,7 @@ fn default_output_font_size() -> u32 {
 }
 
 fn default_output_font_family() -> String {
-    "Cascadia Code, Consolas, monospace".to_string()
+    "'JetBrainsMono Nerd Font', 'CaskaydiaCove Nerd Font', 'CaskaydiaCove NF', 'Cascadia Code NF', Cascadia Code, Consolas, 'Segoe UI Emoji', 'Segoe UI Symbol', 'Apple Color Emoji', 'Noto Color Emoji', monospace".to_string()
 }
 
 fn default_ui_font_size() -> u32 {
