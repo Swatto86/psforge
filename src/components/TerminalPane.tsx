@@ -14,6 +14,13 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
+import {
+  createRunOutputCaptureState,
+  feedRunOutputCapture,
+  getRunScriptOutputFromState,
+  startRunOutputCapture,
+  type RunOutputCaptureState,
+} from "../run-output-capture";
 import { clampPtyDims } from "../terminal-utils";
 import {
   createTerminalWithAddons,
@@ -220,7 +227,9 @@ interface TerminalSessionHandle {
   getSelection: () => string;
   /** Register a reflow/eviction-safe marker at the current row as the
    *  "last run" output baseline (S3-13). */
-  markRunStart: () => void;
+  markRunStart: (command: string) => void;
+  /** stdout/stderr from the last script run (prompt/command echo stripped). */
+  getRunScriptOutput: () => string | null;
   /** Lines of output since the last markRunStart(), tracked via an xterm
    *  marker so it survives resize reflow and scrollback eviction. Returns
    *  null if no run has started or the baseline row was evicted. */
@@ -305,8 +314,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
     const clearBufferFnRef = useRef<(() => void) | null>(null);
     const contentFnRef = useRef<((lineCount?: number) => string) | null>(null);
     const selectionFnRef = useRef<(() => string) | null>(null);
-    const markRunStartFnRef = useRef<(() => void) | null>(null);
+    const markRunStartFnRef = useRef<((command: string) => void) | null>(null);
     const runOutputLineCountFnRef = useRef<(() => number | null) | null>(null);
+    const runScriptOutputFnRef = useRef<(() => string | null) | null>(null);
     const execFnRef = useRef<
       ((command: string) => Promise<number | null>) | null
     >(null);
@@ -326,8 +336,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         getContent: (lineCount?: number) =>
           contentFnRef.current?.(lineCount) ?? "",
         getSelection: () => selectionFnRef.current?.() ?? "",
-        markRunStart: () => markRunStartFnRef.current?.(),
+        markRunStart: (command: string) => markRunStartFnRef.current?.(command),
         getRunOutputLineCount: () => runOutputLineCountFnRef.current?.() ?? null,
+        getRunScriptOutput: () => runScriptOutputFnRef.current?.() ?? null,
         isReady: () => isReadyRef.current,
         submitCurrentInput: () => queueInputFnRef.current?.("\r", true),
         resetInput: () => queueInputFnRef.current?.("\u0003", true),
@@ -548,10 +559,16 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       // kept current by xterm and disposed when its row is evicted (S3-13).
       let runStartMarker: ReturnType<Terminal["registerMarker"]> | undefined =
         undefined;
-      markRunStartFnRef.current = () => {
+      const runOutputCaptureRef: { current: RunOutputCaptureState } = {
+        current: createRunOutputCaptureState(),
+      };
+      markRunStartFnRef.current = (command: string) => {
         runStartMarker?.dispose();
         runStartMarker = term.registerMarker() ?? undefined;
+        startRunOutputCapture(runOutputCaptureRef.current, command);
       };
+      runScriptOutputFnRef.current = () =>
+        getRunScriptOutputFromState(runOutputCaptureRef.current);
       runOutputLineCountFnRef.current = () => {
         if (
           !runStartMarker ||
@@ -608,6 +625,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       resizeObserver.observe(containerRef.current);
 
       const processOutputChunk = (chunk: string) => {
+        feedRunOutputCapture(runOutputCaptureRef.current, chunk);
+
         for (const match of chunk.matchAll(/\x1b]633;D;(-?\d+)(?:\x07|\x1b\\)/g)) {
           const exitCode = Number.parseInt(match[1] ?? "", 10);
           const pending = pendingCommandExecutionsRef.current.shift();
@@ -789,6 +808,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         contentFnRef.current = null;
         markRunStartFnRef.current = null;
         runOutputLineCountFnRef.current = null;
+        runScriptOutputFnRef.current = null;
         execFnRef.current = null;
         writeLocalFnRef.current = null;
         pasteTextFnRef.current = null;
@@ -1095,7 +1115,7 @@ export function TerminalPane() {
       }
       // Mark the run-start baseline AFTER any clear, right before the command
       // starts, via a reflow/eviction-safe xterm marker (S3-13).
-      handle.markRunStart();
+      handle.markRunStart(command);
       lastRunTabIdRef.current = tabId;
       if (reveal) {
         handle.focus();
@@ -1177,6 +1197,8 @@ export function TerminalPane() {
     };
     w.__psforge_terminal_get_run_output_line_count = () =>
       getRunHandle()?.getRunOutputLineCount() ?? null;
+    w.__psforge_terminal_get_run_script_output = () =>
+      getRunHandle()?.getRunScriptOutput() ?? null;
     w.__psforge_terminal_is_ready = () => getActiveHandle()?.isReady() ?? false;
     w.__psforge_terminal_submit_current_input = () =>
       getActiveHandle()?.submitCurrentInput();
@@ -1209,6 +1231,7 @@ export function TerminalPane() {
       delete w.__psforge_terminal_get_selection;
       delete w.__psforge_terminal_get_run_content;
       delete w.__psforge_terminal_get_run_output_line_count;
+      delete w.__psforge_terminal_get_run_script_output;
       delete w.__psforge_terminal_is_ready;
       delete w.__psforge_terminal_submit_current_input;
       delete w.__psforge_terminal_write_notice;

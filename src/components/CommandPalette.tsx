@@ -205,7 +205,7 @@ export function CommandPalette() {
 
       result.push({
         id: "cmd-copy-last-run-output",
-        label: "Copy Last Run Output",
+        label: "Copy Script Output",
         category: "Terminal",
         description: "Copy integrated terminal output from the last F5 run",
         action: () => {

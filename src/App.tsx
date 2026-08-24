@@ -1331,7 +1331,7 @@ function AppInner() {
       const lastRun = await copyLastRunOutputToClipboard();
       if (lastRun) return;
       void writeTerminalNotice(
-        "[PSForge] Select text in the terminal to copy (Ctrl+Shift+C), or use Last run.",
+        "[PSForge] Select text in the terminal to copy (Ctrl+Shift+C), or use Script output.",
         { reveal: false },
       );
     };

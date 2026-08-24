@@ -65,7 +65,22 @@ export function getRunOutputLineCount(): number | null {
   return getCount?.() ?? null;
 }
 
+export function getRunScriptOutput(): string | null {
+  const w = window as unknown as Record<string, unknown>;
+  const getOutput = w.__psforge_terminal_get_run_script_output as
+    | (() => string | null)
+    | undefined;
+  return getOutput?.() ?? null;
+}
+
 export async function copyLastRunOutputToClipboard(): Promise<boolean> {
+  const scriptOutput = getRunScriptOutput();
+  if (scriptOutput !== null) {
+    if (!scriptOutput.trim()) return false;
+    await navigator.clipboard.writeText(scriptOutput);
+    return true;
+  }
+
   const count = getRunOutputLineCount();
   // count === 0 means the last run produced no output — copy nothing rather
   // than dumping the whole prior scrollback. Only a null baseline (no run yet,

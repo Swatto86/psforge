@@ -391,9 +391,9 @@ export function OutputPane({
                   ).__psforge_copy_last_run_output?.();
                 }}
                 className={actionButtonClassName()}
-                title="Copy output from the last F5 run"
+                title="Copy stdout/stderr from the last F5 run (no prompt)"
               >
-                Last run
+                Script output
               </button>
             </>
           )}

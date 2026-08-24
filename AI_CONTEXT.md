@@ -21,7 +21,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Run helpers | `src/run-utils.ts`, `src/terminal-utils.ts`, `src/direct-run.ts` (saved-file F5) |
 | Terminal theme / WT sync | `src/terminal/windows-terminal-theme.ts`, `src/terminal/xterm-theme.ts`, `src-tauri/src/windows_terminal.rs` |
 | Font presets / status bar | `src/font-presets.ts`, `src/components/FontQuickControls.tsx` |
-| Terminal toolbar | `src/components/OutputPane.tsx` (`Clear` = restart session, `Copy` = selection, `Last run`) |
+| Terminal toolbar | `src/components/OutputPane.tsx` (`Clear` = restart session, `Copy` = selection, `Script output` = last F5 stdout/stderr) |
 | Diagnostics | `src-tauri/src/ps_analyze.rs` (built-in parser + optional PSSA); `src-tauri/src/ps_pssa_install.rs` (check/install for PS 5.1/7); `src/components/PssaInstallControls.tsx` |
 | Fix Problem (AI) | `src/fix-problem.ts`, `src/editor-fix-problem.ts`, `src/components/ProblemsPane.tsx` (squiggle Fix + Reference **Fix This** / **Fix All** batches) |
 | Welcome quick start | `src/components/WelcomePane.tsx` (paste, recent runs, re-run) |
@@ -37,7 +37,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 1. **Paste:** Ctrl+V sanitize; Ctrl+Shift+Alt+V or Welcome **Paste from clipboard** → clean → format → optional F5.
 2. **Scratch:** Untitled tabs auto-save to `%APPDATA%/PSForge/scratch/{tabId}.ps1`; orphans offered via `list_scratch_files` + `ScratchRecoveryDialog`; close via `CloseScratchDialog`.
 3. **Run:** Saved and scratch-backed tabs: `& 'path'` in the current console after `Set-Location` (`direct-run.ts`). Truly pathless buffers: `psrun` temp wrapper. `resolveExecutionWorkDir()` + optional override; `.psforge.json` via `findProjectConfig`; presets in `settings.runDirPresets`; PSSA gate uses `PssaRunGateDialog` when warn.
-4. **Output:** `__psforge_copy_terminal_output` (full scrollback); `__psforge_copy_last_run_output` (from `lastRunOutputStartLineRef` + line count).
+4. **Output:** `__psforge_copy_terminal_output` (full scrollback); `__psforge_copy_last_run_output` / **Script output** button copies stdout+stderr via OSC 633 capture in `src/run-output-capture.ts` (marker scrollback fallback).
 5. **Fonts:** `fontFamily` / `outputFontFamily` + sizes persist in Rust settings; `linkEditorOutputFonts` syncs family; status bar `FontQuickControls` + Settings presets.
 
 ## Primary user workflow
@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** Terminal **Script output** copy (**1.4.40**). Toolbar button (was "Last run") copies last F5 stdout/stderr only: `run-output-capture.ts` parses OSC 633 markers to drop prompts and strips echoed command line; debug bundle uses same path.
 - **2026-08-24:** Runner + class `::new` diagnostics (**1.4.39**). F5 no longer runs stale disk when auto-save fails or is skipped (falls back to psrun with editor buffer). Analyzer flags invalid `[Type]::new(argCount)` for script-defined classes (e.g. `[Dog]::new('Rex', 7)` when Dog only has a parameterless ctor).
 - **2026-08-24:** Diagnostics launch + class inheritance (**1.4.38**). `useEditorDiagnostics` in `App.tsx` runs `analyze_script` independent of Monaco mount (fixes Reference/squiggles never starting). Analyzer AST-walks `TypeDefinitionAst` for implicit derived ctor vs non-parameterless base (e.g. `class Dog : Pet` at line 67). EditorPane only paints markers.
 - **2026-08-24:** Terminal prompt chrome + diagnostics race (**1.4.37**). Bootstrap captures `PSForgePriorPrompt` **after** deferred profile load so oh-my-posh / custom prompts render again with shell integration. Editor diagnostics use one scheduler (no requestId bump on tab switch); stale results dropped via active-tab guard; PSSA line-0 findings map to line 1 for squiggles; Monaco themes set explicit error/warning squiggle colours.

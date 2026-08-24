@@ -1,5 +1,6 @@
 import {
   getRunOutputLineCount,
+  getRunScriptOutput,
   getRunTerminalPlainContent,
 } from "./terminal-utils";
 import type { EditorTab, LastRunResult, PssaDiagnostic } from "./types";
@@ -94,8 +95,11 @@ export function buildDebugBundleMarkdown(input: DebugBundleInput): string {
   return lines.join("\n");
 }
 
-/** Snapshot last-run terminal output the same way Copy Last Run does. */
+/** Snapshot last-run terminal output the same way Copy Script Output does. */
 export function captureLastRunOutput(): string {
+  const scriptOutput = getRunScriptOutput();
+  if (scriptOutput !== null) return scriptOutput;
+
   // Reflow/eviction-safe count of the last run's output lines (S3-13).
   // count === 0 means the run produced no output (leave it empty); only a null
   // baseline (no run / evicted) falls back to the full scrollback. Both reads
