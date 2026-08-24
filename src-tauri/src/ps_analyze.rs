@@ -365,9 +365,9 @@ mod tests {
             .expect("analyze_script must not error");
 
         assert!(
-            diags.iter().any(|d| {
-                d.rule_name == "Parser" && d.message.contains("overload for 'new'")
-            }),
+            diags
+                .iter()
+                .any(|d| { d.rule_name == "Parser" && d.message.contains("overload for 'new'") }),
             "expected ::new overload diagnostic, got: {diags:?}"
         );
     }
