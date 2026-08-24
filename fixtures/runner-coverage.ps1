@@ -137,13 +137,20 @@ $pwshCount = @($ps).Count
 Write-Host "pwsh processes running: $pwshCount"
 
 Section "Output streams"
-$toPipeline = Get-Service -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like 'spooler' -or $_.Name -like 'spatial*' } |
-    Select-Object -First 2
-if ($toPipeline) {
-    $toPipeline | Format-Table -AutoSize | Out-String | Write-Host
+if (Get-Command Get-Service -ErrorAction SilentlyContinue) {
+    $toPipeline = Get-Service -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'spooler' -or $_.Name -like 'spatial*' } |
+        Select-Object -First 2
+    if ($toPipeline) {
+        $toPipeline | Format-Table -AutoSize | Out-String | Write-Host
+    } else {
+        Write-Host "(no matching services — pipeline output still emitted correctly)"
+    }
 } else {
-    Write-Host "(no matching services — pipeline output still emitted correctly)"
+    # Linux/macOS pwsh has no Get-Service; still exercise pipeline formatting.
+    1..2 | ForEach-Object {
+        [pscustomobject]@{ Name = "svc$_"; Status = 'Running' }
+    } | Format-Table -AutoSize | Out-String | Write-Host
 }
 
 Section "SUMMARY"
