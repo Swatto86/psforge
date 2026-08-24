@@ -19,20 +19,37 @@ export function pssaSeverity(
   }
 }
 
+/** Monaco markers are 1-indexed; PSSA file-level rules may report line/column 0. */
+function markerSpan(d: PssaDiagnostic): {
+  startLineNumber: number;
+  startColumn: number;
+  endLineNumber: number;
+  endColumn: number;
+} {
+  const startLineNumber = d.line <= 0 ? 1 : d.line;
+  const startColumn =
+    d.line <= 0 ? 1 : d.column <= 0 ? 1 : d.column;
+  const endLineNumber =
+    d.endLine > 0 ? d.endLine : startLineNumber;
+  const endColumn =
+    d.endColumn > 0 ? d.endColumn : startColumn + 1;
+  return { startLineNumber, startColumn, endLineNumber, endColumn };
+}
+
 /** Convert backend diagnostics into Monaco model markers (owner "pssa"). */
 export function diagnosticsToMarkers(
   monaco: typeof import("monaco-editor"),
   diags: PssaDiagnostic[],
 ): MonacoEditor.IMarkerData[] {
-  return diags.map((d) => ({
-    severity: pssaSeverity(monaco, d.severity),
-    message: d.message,
-    source: d.ruleName,
-    startLineNumber: d.line,
-    startColumn: d.column,
-    endLineNumber: d.endLine > 0 ? d.endLine : d.line,
-    endColumn: d.endColumn > 0 ? d.endColumn : d.column + 1,
-  }));
+  return diags.map((d) => {
+    const span = markerSpan(d);
+    return {
+      severity: pssaSeverity(monaco, d.severity),
+      message: d.message,
+      source: d.ruleName,
+      ...span,
+    };
+  });
 }
 
 export function applyDiagnosticsMarkers(
@@ -58,6 +75,8 @@ export type ScheduleDiagnosticsArgs = {
   timerRef: { current: ReturnType<typeof setTimeout> | null };
   /** Bumped on each schedule so a slower older analyze cannot overwrite newer results. */
   requestIdRef?: { current: number };
+  /** When set, results apply only if this still matches `tabId` at completion. */
+  activeTabIdRef?: { current: string | undefined };
   debounceMs: number;
   analyze: (psPath: string, content: string) => Promise<PssaDiagnostic[]>;
   setProblems: (tabId: string, diagnostics: PssaDiagnostic[]) => void;
@@ -108,6 +127,12 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
         ) {
           return;
         }
+        if (
+          args.activeTabIdRef &&
+          args.activeTabIdRef.current !== tabId
+        ) {
+          return;
+        }
         setProblems(tabId, diags);
         applyDiagnosticsMarkers(monaco, model, diags);
       })
@@ -115,6 +140,12 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
         if (
           args.requestIdRef &&
           requestId !== args.requestIdRef.current
+        ) {
+          return;
+        }
+        if (
+          args.activeTabIdRef &&
+          args.activeTabIdRef.current !== tabId
         ) {
           return;
         }

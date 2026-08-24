@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { PssaDiagnostic } from "../types";
 import {
   diagnosticsToMarkers,
   pssaSeverity,
@@ -20,7 +21,8 @@ describe("editor diagnostics scheduling", () => {
     expect(editorPane).toContain("scheduleEditorDiagnostics");
     expect(editorPane).toContain("Analyze the open script immediately");
     expect(editorPane).toContain("editorMountGen");
-    expect(editorPane).toContain("debounceMs: 0");
+    expect(editorPane).toContain("activeTabIdRef");
+    expect(editorPane).toContain("contentChanged ? 300 : 0");
   });
 
   it("runs analyze when only the PS host is ready (Monaco model optional)", async () => {
@@ -86,6 +88,70 @@ describe("editor diagnostics scheduling", () => {
       MarkerSeverity: { Error: 8, Warning: 4, Info: 2, Hint: 1 },
     } as unknown as typeof import("monaco-editor");
     expect(pssaSeverity(monaco, "ParseError")).toBe(8);
+  });
+
+  it("maps file-level PSSA diagnostics (line 0) to line 1 for Monaco", () => {
+    const monaco = {
+      MarkerSeverity: { Error: 8, Warning: 4, Info: 2, Hint: 1 },
+    } as unknown as typeof import("monaco-editor");
+    const markers = diagnosticsToMarkers(monaco, [
+      {
+        message: "Missing BOM",
+        severity: "Warning",
+        ruleName: "PSUseBOMForUnicodeEncodedFile",
+        line: 0,
+        column: 0,
+        endLine: 0,
+        endColumn: 0,
+      },
+    ]);
+    expect(markers[0].startLineNumber).toBe(1);
+    expect(markers[0].startColumn).toBe(1);
+  });
+
+  it("ignores stale results when the active tab changed mid-flight", async () => {
+    vi.useFakeTimers();
+    let resolveAnalyze: (v: PssaDiagnostic[]) => void = () => {};
+    const analyze = vi.fn(
+      () =>
+        new Promise<PssaDiagnostic[]>((resolve) => {
+          resolveAnalyze = resolve;
+        }),
+    );
+    const setProblems = vi.fn();
+    const activeTabIdRef = { current: "tab-1" };
+    const timerRef = { current: null as ReturnType<typeof setTimeout> | null };
+
+    scheduleEditorDiagnostics({
+      enabled: true,
+      psPath: "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      scriptContent: "$x = 1",
+      tabId: "tab-1",
+      monaco: null,
+      model: null,
+      timerRef,
+      debounceMs: 0,
+      analyze,
+      setProblems,
+      activeTabIdRef,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    activeTabIdRef.current = "tab-2";
+    resolveAnalyze([
+      {
+        message: "Unexpected token",
+        severity: "ParseError",
+        ruleName: "Parser",
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 2,
+      },
+    ]);
+    await Promise.resolve();
+    expect(setProblems).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it("builds markers from diagnostics", () => {
@@ -159,6 +225,13 @@ describe("editor diagnostics scheduling", () => {
 });
 
 describe("terminal WindowHeight warning mitigations", () => {
+  it("bootstrap captures user prompt after deferred profile load", () => {
+    const profileIdx = terminalBootstrap.indexOf("PSFORGE_LOAD_PROFILE");
+    const priorIdx = terminalBootstrap.indexOf("PSForgePriorPrompt");
+    expect(profileIdx).toBeGreaterThan(0);
+    expect(priorIdx).toBeGreaterThan(profileIdx);
+  });
+
   it("bootstrap forces PSReadLine InlineView and deferred profile load", () => {
     expect(terminalBootstrap).toContain(
       "Set-PSReadLineOption -PredictionViewStyle InlineView",

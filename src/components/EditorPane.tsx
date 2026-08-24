@@ -265,17 +265,23 @@ export function EditorPane() {
   // Timer ref for debouncing analyzer invocations.
   const pssaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pssaRequestIdRef = useRef(0);
+  const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
+  const diagContentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTab?.id;
+  }, [activeTab?.id]);
 
   // Clear stale debounce timer whenever the active tab changes so a pending
   // analysis from the previous tab does not fire after the switch.
   // Also clear shared-model markers so the previous tab's squiggles do not
   // linger on the newly shown script.
   useEffect(() => {
+    diagContentRef.current = null;
     if (pssaTimerRef.current !== null) {
       clearTimeout(pssaTimerRef.current);
       pssaTimerRef.current = null;
     }
-    pssaRequestIdRef.current += 1;
     const mon = monacoRef.current;
     const model = editorRef.current?.getModel();
     if (mon && model) {
@@ -283,58 +289,42 @@ export function EditorPane() {
     }
   }, [activeTab?.id]);
 
-  // Typing / AI rewrite: debounce so we do not spawn a PS process per key.
+  // Open / remount / host / typing: one scheduler (immediate on open, debounced on edit).
   useEffect(() => {
     const tab = activeTabRef.current;
-    if (!monacoReady || !tab || tab.tabType === "welcome") return;
-    scheduleEditorDiagnostics({
-      enabled: state.settings.enablePssa !== false,
-      psPath: psPathRef.current,
-      scriptContent: tab.content,
-      tabId: tab.id,
-      monaco: monacoRef.current,
-      model: editorRef.current?.getModel() ?? null,
-      timerRef: pssaTimerRef,
-      requestIdRef: pssaRequestIdRef,
-      debounceMs: 300,
-      analyze: analyzeScript,
-      setProblems: (tabId, diagnostics) => {
-        dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
-      },
-    });
-  }, [
-    monacoReady,
-    activeTab?.content,
-    state.settings.enablePssa,
-    dispatch,
-  ]);
+    if (!tab || tab.tabType === "welcome") return;
+    if (state.settings.enablePssa === false) return;
+    const psPath = psPathRef.current.trim();
+    if (!psPath) return;
 
-  // Open / remount / host change: run immediately (no keystroke required).
-  useEffect(() => {
-    const tab = activeTabRef.current;
-    if (!monacoReady || !tab || tab.tabType === "welcome") return;
+    const contentChanged =
+      diagContentRef.current !== null &&
+      diagContentRef.current !== tab.content;
+    diagContentRef.current = tab.content;
+
     scheduleEditorDiagnostics({
-      enabled: state.settings.enablePssa !== false,
-      psPath: psPathRef.current,
+      enabled: true,
+      psPath,
       scriptContent: tab.content,
       tabId: tab.id,
       monaco: monacoRef.current,
       model: editorRef.current?.getModel() ?? null,
       timerRef: pssaTimerRef,
       requestIdRef: pssaRequestIdRef,
-      debounceMs: 0,
+      activeTabIdRef,
+      debounceMs: contentChanged ? 300 : 0,
       analyze: analyzeScript,
       setProblems: (tabId, diagnostics) => {
         dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
       },
     });
   }, [
-    monacoReady,
-    editorMountGen,
     activeTab?.id,
+    activeTab?.content,
     state.settings.enablePssa,
     state.settingsLoaded,
     state.selectedPsPath,
+    editorMountGen,
     dispatch,
   ]);
 
@@ -685,21 +675,6 @@ export function EditorPane() {
           model,
           problemsRef.current[tab.id] ?? [],
         );
-        scheduleEditorDiagnostics({
-          enabled: settingsRef.current.enablePssa !== false,
-          psPath: psPathRef.current,
-          scriptContent: tab.content,
-          tabId: tab.id,
-          monaco,
-          model,
-          timerRef: pssaTimerRef,
-          requestIdRef: pssaRequestIdRef,
-          debounceMs: 0,
-          analyze: analyzeScript,
-          setProblems: (tabId, diagnostics) => {
-            dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
-          },
-        });
       }
 
       // Track selection for F8 legacy fallback consumers.

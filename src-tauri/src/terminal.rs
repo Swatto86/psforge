@@ -162,15 +162,6 @@ function global:psrun {
 # A = prompt start, B = prompt end, D = command finished with exit code,
 # E = command line submitted, P;Cwd=... = current working directory.
 $global:PSForgePromptInitialised = $false
-$script:PSForgePriorPrompt = $null
-try {
-    $existingPrompt = Get-Command -Name prompt -CommandType Function -ErrorAction SilentlyContinue
-    if ($existingPrompt -and $existingPrompt.ScriptBlock) {
-        $script:PSForgePriorPrompt = $existingPrompt.ScriptBlock
-    }
-} catch {
-    $script:PSForgePriorPrompt = $null
-}
 
 try {
     if (Get-Module -ListAvailable -Name PSReadLine) {
@@ -210,6 +201,19 @@ if ($env:PSFORGE_LOAD_PROFILE -eq '1') {
     } catch {
         # Profile may have reset PSReadLine; re-apply InlineView quietly.
     }
+}
+
+# Capture the user prompt *after* profile load (oh-my-posh, posh-git, etc.).
+# With -NoProfile on the process, the default prompt is all that existed before
+# profile init; saving it first would wrap the wrong prompt and drop OMP chrome.
+$script:PSForgePriorPrompt = $null
+try {
+    $existingPrompt = Get-Command -Name prompt -CommandType Function -ErrorAction SilentlyContinue
+    if ($existingPrompt -and $existingPrompt.ScriptBlock) {
+        $script:PSForgePriorPrompt = $existingPrompt.ScriptBlock
+    }
+} catch {
+    $script:PSForgePriorPrompt = $null
 }
 
 function global:prompt {

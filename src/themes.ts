@@ -40,6 +40,8 @@ export function getMonacoThemeData(
           "editor.lineHighlightBackground": "#f5f5f5",
           "editorWidget.background": "#f3f3f3",
           "editorWidget.border": "#cecece",
+          "editorError.foreground": "#e51400",
+          "editorWarning.foreground": "#bf8803",
         },
       };
 
@@ -70,6 +72,8 @@ export function getMonacoThemeData(
           "editor.lineHighlightBackground": "#01356e",
           "editorWidget.background": "#01184a",
           "editorWidget.border": "#01356e",
+          "editorError.foreground": "#ff6b6b",
+          "editorWarning.foreground": "#ffd866",
         },
       };
 
@@ -109,6 +113,8 @@ export function getMonacoThemeData(
           "editor.lineHighlightBackground": "#2a2d2e",
           "editorWidget.background": "#252526",
           "editorWidget.border": "#3c3c3c",
+          "editorError.foreground": "#f14c4c",
+          "editorWarning.foreground": "#cca700",
         },
       };
   }
