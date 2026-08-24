@@ -528,6 +528,8 @@ export interface AiAssistantRequest {
   script: string;
   terminalOutput: string;
   diagnostics: string;
+  /** Markdown debug bundle (script, last run, PSSA). Empty for callers that send fields separately. */
+  debugBundle?: string;
 }
 
 export interface AiAssistantResponse {

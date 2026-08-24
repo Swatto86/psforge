@@ -2,22 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { askAi } from "../commands";
 import { AiProviderBar } from "./AiProviderBar";
 import { takeExplainHandoff, EXPLAIN_HANDOFF_EVENT } from "../explain-selection";
-import { buildDebugBundleMarkdown } from "../debug-bundle";
-import {
-  getRunOutputLineCount,
-  getRunTerminalPlainContent,
-} from "../terminal-utils";
+import { collectDebugBundleMarkdown } from "../debug-bundle";
 import type { AiMode } from "../types";
 import { useAppState, newTabId, untitledCounter } from "../store";
-
-function getLastRunOutput(): string {
-  const count = getRunOutputLineCount();
-  if (count === 0) return "";
-  // Read from the tab that ran the script, not the active one (S6-20).
-  return count !== null
-    ? getRunTerminalPlainContent(count)
-    : getRunTerminalPlainContent();
-}
 
 function modeQuestion(mode: AiMode, current: string): string {
   const trimmed = current.trim();
@@ -88,17 +75,20 @@ export function AssistantPane() {
     setCodeTabId(null);
     setMeta("");
     try {
-      const terminalOutput = getLastRunOutput();
-      const diagnostics = activeProblems
-        .map((d) => `Line ${d.line}: ${d.message}${d.ruleName ? ` (${d.ruleName})` : ""}`)
-        .join("\n");
+      const bundle = collectDebugBundleMarkdown({
+        tab: codeTab,
+        lastRun: state.lastRunResult,
+        workingDir: state.workingDir,
+        problems: activeProblems,
+      });
       const response = await askAi(state.settings, {
         mode,
         question: prompt,
         scriptPath: codeTab ? codeTab.filePath || codeTab.title : "",
-        script: codeTab ? codeTab.content : "",
-        terminalOutput,
-        diagnostics,
+        script: "",
+        terminalOutput: "",
+        diagnostics: "",
+        debugBundle: bundle,
       });
       setAnswer(response.answer);
       setCode(response.code ?? "");
@@ -161,17 +151,6 @@ export function AssistantPane() {
     window.dispatchEvent(new CustomEvent("psforge-insert", { detail: code }));
   };
 
-  const copyContext = async () => {
-    const markdown = buildDebugBundleMarkdown({
-      tab: codeTab,
-      lastRun: state.lastRunResult,
-      workingDir: state.workingDir,
-      problems: activeProblems,
-      getRunOutput: getLastRunOutput,
-    });
-    await navigator.clipboard.writeText(markdown);
-  };
-
   return (
     <div
       data-testid="assistant-pane"
@@ -223,12 +202,9 @@ export function AssistantPane() {
           >
             {busy ? "Asking..." : "Send"}
           </button>
-          <button type="button" onClick={() => void copyContext()} className="bottom-pane-action">
-            Copy Context
-          </button>
         </div>
         <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-          Context includes the active script, PSSA diagnostics, and last run output.
+          Each question includes the debug bundle: script, last run, and PSSA findings.
         </div>
       </form>
 

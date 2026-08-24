@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { buildDebugBundleMarkdown } from "../debug-bundle";
+import { describe, expect, it, vi } from "vitest";
+import {
+  buildDebugBundleMarkdown,
+  collectDebugBundleMarkdown,
+} from "../debug-bundle";
 import type { EditorTab } from "../types";
 
 const tab: EditorTab = {
@@ -55,5 +58,21 @@ describe("buildDebugBundleMarkdown", () => {
     expect(md).toContain("\n````");
     // The embedded fence survives verbatim inside the wrapping fence.
     expect(md).toContain("```powershell\nGet-Date\n```");
+  });
+});
+
+describe("collectDebugBundleMarkdown", () => {
+  it("includes script and last run even when terminal output is empty", () => {
+    vi.stubGlobal("window", {});
+    const md = collectDebugBundleMarkdown({
+      tab,
+      lastRun: { exitCode: 0, durationMs: 50 },
+      workingDir: "C:\\Scripts",
+      problems: [],
+    });
+    expect(md).toContain("Get-Process");
+    expect(md).toContain("exit 0");
+    expect(md).toContain("C:\\Scripts");
+    expect(md).toContain("No captured output");
   });
 });

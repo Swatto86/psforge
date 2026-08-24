@@ -213,18 +213,8 @@ export function StatusBar({
           </span>
         ) : (
           lastRunLabel && (
-            <button
-              type="button"
+            <span
               data-testid="status-last-run"
-              onClick={() => {
-                void (
-                  window as unknown as Record<
-                    string,
-                    (() => Promise<void>) | undefined
-                  >
-                ).__psforge_copy_debug_bundle?.();
-              }}
-              className="status-link"
               style={{
                 fontVariantNumeric: "tabular-nums",
                 color:
@@ -232,10 +222,10 @@ export function StatusBar({
                     ? "var(--text-inverse)"
                     : "var(--stream-stderr)",
               }}
-              title="Copy debug bundle for AI"
+              title="Last run result"
             >
               {lastRunLabel}
-            </button>
+            </span>
           )
         )}
         {renderUpdateControl()}

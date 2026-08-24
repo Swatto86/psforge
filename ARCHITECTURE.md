@@ -25,7 +25,9 @@ and other trusted I/O.
    handles file, analysis, signing, and association commands; `ai.rs`,
    `ai_opencode.rs`, and `ai_ollama.rs` own AI provider calls (OpenCode and
    local Ollama included). The AI tab (`AiProviderBar.tsx`) writes provider
-   and model through the same settings save path as Settings.
+   and model through the same settings save path as Settings. Each Ask / Write
+   / Fix request attaches a frontend-built debug bundle (`debugBundle`) so the
+   model sees the active script, last run, and PSSA findings without a copy step.
 
 ## Dependency direction
 

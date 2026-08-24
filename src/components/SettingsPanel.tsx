@@ -1472,9 +1472,7 @@ export function SettingsPanel() {
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                     Turn off to completely disable the in-app assistant: the
                     AI tab disappears and no AI requests leave PSForge. API
-                    keys below are kept but unused. &quot;Copy for AI&quot;
-                    stays available — it only copies to the clipboard for
-                    external AI chats.
+                    keys below are kept but unused.
                   </p>
                 </div>
               </SettingRow>

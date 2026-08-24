@@ -31,7 +31,7 @@ function formatExitLabel(exitCode: number | null): string {
   return String(exitCode);
 }
 
-/** Build markdown suitable for pasting into an AI chat thread. */
+/** Build markdown for the in-app assistant (script, last run, PSSA). */
 export function buildDebugBundleMarkdown(input: DebugBundleInput): string {
   const tab = input.tab;
   const title = tab?.filePath
@@ -94,30 +94,28 @@ export function buildDebugBundleMarkdown(input: DebugBundleInput): string {
   return lines.join("\n");
 }
 
-export async function copyDebugBundleToClipboard(
-  input: DebugBundleInput,
-): Promise<boolean> {
-  const markdown = buildDebugBundleMarkdown(input);
-  if (!markdown.trim()) return false;
-  await navigator.clipboard.writeText(markdown);
-  return true;
-}
-
-/** Build bundle using terminal scrollback from the last F5 run when possible. */
-export async function copyDebugBundleWithRunOutput(
-  input: DebugBundleInput,
-): Promise<boolean> {
+/** Snapshot last-run terminal output the same way Copy Last Run does. */
+export function captureLastRunOutput(): string {
   // Reflow/eviction-safe count of the last run's output lines (S3-13).
   // count === 0 means the run produced no output (leave it empty); only a null
   // baseline (no run / evicted) falls back to the full scrollback. Both reads
   // target the console tab that ran the script, not the active one (S6-20).
   const count = getRunOutputLineCount();
+  if (count === 0) return "";
   let runOutput = count !== null ? getRunTerminalPlainContent(count) : "";
   if (count === null && !runOutput.trim()) {
     runOutput = getRunTerminalPlainContent();
   }
-  return copyDebugBundleToClipboard({
+  return runOutput;
+}
+
+/** Debug bundle for the in-app assistant: script, last run, PSSA, working dir. */
+export function collectDebugBundleMarkdown(
+  input: Omit<DebugBundleInput, "getRunOutput">,
+): string {
+  const output = captureLastRunOutput();
+  return buildDebugBundleMarkdown({
     ...input,
-    getRunOutput: () => runOutput,
+    getRunOutput: () => output,
   });
 }

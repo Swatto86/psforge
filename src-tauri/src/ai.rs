@@ -42,6 +42,8 @@ pub struct AiAssistantRequest {
     pub terminal_output: String,
     #[serde(default)]
     pub diagnostics: String,
+    #[serde(default)]
+    pub debug_bundle: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -237,6 +239,19 @@ fn build_user_prompt(request: &AiAssistantRequest) -> String {
         "fix" => "fix",
         _ => "ask",
     };
+    let question = request.question.trim();
+    let bundle = truncate_chars(
+        &request.debug_bundle,
+        MAX_SCRIPT_CHARS + MAX_TERMINAL_CHARS + MAX_DIAGNOSTICS_CHARS,
+    );
+    if !bundle.trim().is_empty() {
+        return format!(
+            "MODE: {mode}\n\
+             USER REQUEST:\n{question}\n\n\
+             DEBUG BUNDLE (script, last run, diagnostics — already attached; do not ask the user to paste it):\n\
+             {bundle}\n"
+        );
+    }
     let script = truncate_chars(&request.script, MAX_SCRIPT_CHARS);
     let terminal = truncate_chars(&request.terminal_output, MAX_TERMINAL_CHARS);
     let diagnostics = truncate_chars(&request.diagnostics, MAX_DIAGNOSTICS_CHARS);
@@ -245,12 +260,11 @@ fn build_user_prompt(request: &AiAssistantRequest) -> String {
 
     format!(
         "MODE: {mode}\n\
-         USER REQUEST:\n{}\n\n\
+         USER REQUEST:\n{question}\n\n\
          ACTIVE SCRIPT PATH:\n{}\n\n\
          PSSCRIPTANALYZER DIAGNOSTICS:\n{}\n\n\
          LAST RUN TERMINAL OUTPUT:\n{terminal_fence}text\n{terminal}\n{terminal_fence}\n\n\
          ACTIVE SCRIPT:\n{script_fence}powershell\n{script}\n{script_fence}\n",
-        request.question.trim(),
         if request.script_path.trim().is_empty() {
             "(unsaved)"
         } else {
@@ -738,6 +752,7 @@ mod tests {
             script: String::new(),
             terminal_output: String::new(),
             diagnostics: String::new(),
+            debug_bundle: String::new(),
         };
         let err = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -775,9 +790,28 @@ mod tests {
             script: "Write-Output '```'".into(),
             terminal_output: String::new(),
             diagnostics: String::new(),
+            debug_bundle: String::new(),
         };
         let prompt = build_user_prompt(&req);
         assert!(prompt.contains("````powershell"));
+    }
+
+    #[test]
+    fn prompt_uses_debug_bundle_when_present() {
+        let req = AiAssistantRequest {
+            mode: "ask".into(),
+            question: "why did this fail?".into(),
+            script_path: String::new(),
+            script: "should-not-appear".into(),
+            terminal_output: String::new(),
+            diagnostics: String::new(),
+            debug_bundle: "## PSForge debug bundle\n- **Script:** foo.ps1".into(),
+        };
+        let prompt = build_user_prompt(&req);
+        assert!(prompt.contains("DEBUG BUNDLE"));
+        assert!(prompt.contains("foo.ps1"));
+        assert!(prompt.contains("why did this fail?"));
+        assert!(!prompt.contains("should-not-appear"));
     }
 
     #[test]

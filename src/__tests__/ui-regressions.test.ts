@@ -14,6 +14,8 @@ import keyboardShortcutPanel from "../components/KeyboardShortcutPanel.tsx?raw";
 import scratchRecoveryDialog from "../components/ScratchRecoveryDialog.tsx?raw";
 import settingsPanel from "../components/SettingsPanel.tsx?raw";
 import assistantPane from "../components/AssistantPane.tsx?raw";
+import commandPalette from "../components/CommandPalette.tsx?raw";
+import statusBar from "../components/StatusBar.tsx?raw";
 import aiProviders from "../ai-providers.ts?raw";
 import aiProviderBar from "../components/AiProviderBar.tsx?raw";
 import store from "../store.tsx?raw";
@@ -248,5 +250,23 @@ describe("AI provider surfaces", () => {
     expect(aiProviderBar).toContain('data-testid="assistant-ai-provider"');
     expect(aiProviderBar).toContain('data-testid="assistant-ai-model"');
     expect(aiProviderBar).toContain("SET_SETTINGS");
+  });
+});
+
+describe("In-app AI debug bundle", () => {
+  it("does not expose Copy for AI; Send attaches the debug bundle", () => {
+    expect(toolbar).toContain('data-testid="toolbar-stop"');
+    expect(toolbar).not.toContain("Copy for AI");
+    expect(toolbar).not.toContain("toolbar-copy-bundle");
+    expect(assistantPane).toContain("collectDebugBundleMarkdown");
+    expect(assistantPane).toContain("debugBundle:");
+    expect(app).toContain("__psforge_copy_last_run_output");
+    expect(app).not.toContain("__psforge_copy_debug_bundle");
+    expect(commandPalette).toContain("cmd-copy-last-run-output");
+    expect(commandPalette).not.toContain("cmd-copy-debug-bundle");
+    expect(statusBar).toContain('data-testid="status-last-run"');
+    expect(statusBar).not.toContain("__psforge_copy_debug_bundle");
+    expect(settingsPanel).toContain("Enable AI features");
+    expect(settingsPanel).not.toContain("Copy for AI");
   });
 });

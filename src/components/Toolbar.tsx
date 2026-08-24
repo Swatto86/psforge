@@ -31,8 +31,6 @@ interface ToolbarProps {
   /** Paste from clipboard, clean, format, and (per settings) run.
    *  Works from the Welcome tab too (opens a new script tab). */
   onPasteScript: () => void;
-  /** Copy the debug bundle (last run output + exit code + PSSA). */
-  onCopyDebugBundle: () => void;
   /** Trigger Monaco's built-in Find & Replace widget. */
   onFindReplace: () => void;
   /** Open the current user's $PROFILE for editing. */
@@ -62,7 +60,6 @@ export function Toolbar({
   onStop,
   onFormat,
   onPasteScript,
-  onCopyDebugBundle,
   onFindReplace,
   onOpenProfile,
   onPrint,
@@ -466,23 +463,6 @@ export function Toolbar({
           <rect x="3" y="3" width="10" height="10" rx="1" />
         </svg>
         Stop
-      </button>
-
-      {/* "Copy for AI" targets EXTERNAL AI chats (copy bundle → paste into a
-          conversation), so it stays — with this name — even when the in-app
-          AI assistant is disabled. */}
-      <button
-        type="button"
-        data-testid="toolbar-copy-bundle"
-        title="Copy debug bundle: last run output, exit code, and PSScriptAnalyzer findings as markdown"
-        onClick={onCopyDebugBundle}
-        disabled={!state.lastRunResult || state.isRunning}
-        className="tb-action tb-action-accent"
-      >
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M4 2a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-1v1a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h1V2zm1 1h6a1 1 0 0 1 1 1v8h1V2H5v1zM3 4v10h8V4H3z" />
-        </svg>
-        Copy for AI
       </button>
 
       <div className="tb-divider" />

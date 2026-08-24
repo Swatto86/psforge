@@ -1,6 +1,6 @@
 # PSForge
 
-PSForge is a desktop PowerShell editor built with **Tauri**, **React**, and **Monaco Editor**. It is tuned for a fast loop: **paste script from an AI or the web → clean → format → F5 → read output → paste results back for debugging**.
+PSForge is a desktop PowerShell editor built with **Tauri**, **React**, and **Monaco Editor**. It is tuned for a fast loop: **paste script from an AI or the web → clean → format → F5 → ask the in-app AI** (it already has the debug bundle).
 
 The default layout keeps the integrated terminal large (~72% of the vertical space) so run output is easy to read without resizing panes.
 
@@ -14,7 +14,7 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.4.25](https://github.com/Swatto86/psforge/releases/tag/v1.4.25)
+**Current version:** [1.4.26](https://github.com/Swatto86/psforge/releases/tag/v1.4.26)
 
 ## AI-assisted workflow (paste → run → debug)
 
@@ -27,7 +27,7 @@ Typical use with an assistant writing PowerShell for you:
    - **`Ctrl+V`** — Normal paste with light cleanup when **Clean Paste** is enabled (Settings → Editor).
 3. **Run** — **`F5`** (auto-save + scratch for untitled tabs when enabled).
 4. **Inspect** — Terminal output below the editor; **Reference → Problems** for PSScriptAnalyzer errors.
-5. **Share back** — **Copy Debug Bundle** (markdown: output + exit code + PSSA + script), **Copy Last Run**, or full **Copy Output**; paste into the AI thread.
+5. **Ask in the AI tab** — each question automatically includes the debug bundle (script, last run, PSSA). **Copy Last Run** or **Copy Output** remain if you want the terminal text yourself.
 6. **Iterate** — Edit, F5 again, or **Re-run** from Welcome **Recent runs** (restores working directory).
 
 ### Recommended settings for paste-and-run
@@ -65,7 +65,7 @@ Optional repo file **`.psforge.json`** next to your scripts (walks up from opene
 | `F5` | Run script (or debug if breakpoints exist) |
 | `F8` | Run selection or current line |
 | `Shift+F5` | Stop |
-| `Ctrl+Shift+P` | Command palette (copy debug bundle, output, …) |
+| `Ctrl+Shift+P` | Command palette (copy output, …) |
 | `Ctrl+Shift+E` | Explain selection with AI (popover; also in right-click menu) |
 | `Ctrl+F1` | Full shortcut list |
 
@@ -82,14 +82,14 @@ More shortcuts: **Help → Keyboard Shortcuts** (`Ctrl+F1`).
 - **Recent runs** — Welcome history: re-run, open run folder, clear, failed-run highlight.
 - **Assistant mode** — One setting applies paste/run/scratch/PSSA defaults for AI workflows.
 - **Paste summary** — Toast after cleanup (`Ctrl+V` or Paste Clean + Format).
-- **Copy Debug Bundle** — Markdown for AI chat (terminal output, exit code, analyzer errors, script).
+- **In-app AI debug bundle** — Ask / Write / Fix automatically receive script, last run, and PSSA findings.
 - **Terminal** — Copy full scrollback or **last F5 run only**; restart session from toolbar.
 - **Fonts** — Editor/terminal presets + status bar quick control.
 
 ## Other capabilities
 
 - Classic **File / Edit / View / Help** menu bar — every action is discoverable with its shortcut listed
-- In-app **AI assistant** (Ask / Write / Fix) using Anthropic API, Claude CLI, OpenRouter, Kilo CLI, or OpenCode CLI (including local Ollama models) — pick provider and model on the AI tab or in **Settings → AI**. You can turn the assistant off entirely there ("Copy for AI" keeps working; it's clipboard-only, for external AI chats)
+- In-app **AI assistant** (Ask / Write / Fix) using Anthropic API, Claude CLI, OpenRouter, Kilo CLI, or OpenCode CLI (including local Ollama models) — pick provider and model on the AI tab or in **Settings → AI**. Each question includes the debug bundle. You can turn the assistant off entirely in Settings.
 - Multi-tab editor with session restore
 - PowerShell 5.1 / 7 detection and selection
 - Mandatory `param()` prompt before run
