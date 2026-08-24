@@ -370,31 +370,19 @@ export function OutputPane({
                   ).__psforge_terminal_clear?.()
                 }
                 className={actionButtonClassName()}
-                title="Clear terminal output"
+                title="Restart the PowerShell session (fresh prompt)"
               >
                 Clear
-              </button>
-              <button
-                data-testid="terminal-restart-button"
-                onClick={() =>
-                  (
-                    window as unknown as Record<string, () => void>
-                  ).__psforge_terminal_restart?.()
-                }
-                className={actionButtonClassName()}
-                title="Restart PowerShell session"
-              >
-                Restart
               </button>
               <button
                 data-testid="terminal-copy-output-button"
                 onClick={() => {
                   void (
                     window as unknown as Record<string, () => Promise<void>>
-                  ).__psforge_copy_terminal_output?.();
+                  ).__psforge_copy_terminal_selection?.();
                 }}
                 className={actionButtonClassName()}
-                title="Copy terminal output"
+                title="Copy the selected terminal text (Ctrl+Shift+C)"
               >
                 Copy
               </button>

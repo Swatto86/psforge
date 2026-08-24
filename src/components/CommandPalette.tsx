@@ -177,7 +177,7 @@ export function CommandPalette() {
         id: "cmd-clear-output",
         label: "Clear Terminal",
         category: "Command",
-        description: "Clear the integrated terminal buffer",
+        description: "Restart the integrated terminal (fresh PowerShell prompt)",
         action: () => {
           (
             window as unknown as Record<string, (() => void) | undefined>
@@ -188,14 +188,18 @@ export function CommandPalette() {
 
       result.push({
         id: "cmd-copy-terminal-output",
-        label: "Copy Terminal Output",
+        label: "Copy Terminal Selection",
         category: "Terminal",
-        description: "Copy integrated terminal scrollback to the clipboard",
+        description:
+          "Copy the selected terminal text (Ctrl+Shift+C / right-click)",
         action: () => {
           close();
           void (
-            window as unknown as Record<string, (() => Promise<void>) | undefined>
-          ).__psforge_copy_terminal_output?.();
+            window as unknown as Record<
+              string,
+              (() => Promise<void>) | undefined
+            >
+          ).__psforge_copy_terminal_selection?.();
         },
       });
 
@@ -207,7 +211,10 @@ export function CommandPalette() {
         action: () => {
           close();
           void (
-            window as unknown as Record<string, (() => Promise<void>) | undefined>
+            window as unknown as Record<
+              string,
+              (() => Promise<void>) | undefined
+            >
           ).__psforge_copy_last_run_output?.();
         },
       });

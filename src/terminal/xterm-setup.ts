@@ -37,6 +37,13 @@ export function tryLoadWebglAddon(_term: Terminal): WebglAddon | null {
   return null;
 }
 
+async function copyTerminalSelection(term: Terminal): Promise<boolean> {
+  const text = term.getSelection();
+  if (!text) return false;
+  await navigator.clipboard.writeText(text);
+  return true;
+}
+
 export function createTerminalWithAddons(
   container: HTMLElement,
   options: ITerminalOptions,
@@ -53,21 +60,33 @@ export function createTerminalWithAddons(
 
   const webgl = tryLoadWebglAddon(term);
 
-  // Right-click pastes, like a classic PowerShell console. The native browser
-  // context menu is suppressed app-wide (main.tsx), so without this the
-  // terminal would have no mouse paste path at all. term.paste() routes
-  // through xterm's normal (bracketed) paste handling into the PTY.
-  const onContextMenu = () => {
+  // Classic console: right-click copies the selection when one exists,
+  // otherwise pastes. App-wide contextmenu suppress means we own this path.
+  const onContextMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    if (term.hasSelection()) {
+      void copyTerminalSelection(term).catch(() => {});
+      return;
+    }
     void navigator.clipboard
       .readText()
       .then((text) => {
         if (text) term.paste(text);
       })
-      .catch(() => {
-        // Clipboard unavailable (permission/empty) — nothing to paste.
-      });
+      .catch(() => {});
   };
   container.addEventListener("contextmenu", onContextMenu);
+
+  // Ctrl+Shift+C copies the selection (Windows Terminal / xterm convention).
+  // Ctrl+C alone stays interrupt when there is no selection.
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== "keydown") return true;
+    if (!(ev.ctrlKey && ev.shiftKey) || ev.altKey || ev.metaKey) return true;
+    if (ev.key.toLowerCase() !== "c") return true;
+    if (!term.hasSelection()) return true;
+    void copyTerminalSelection(term).catch(() => {});
+    return false;
+  });
 
   return {
     terminal: term,

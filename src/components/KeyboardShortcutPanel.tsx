@@ -91,7 +91,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     shortcuts: [
       { keys: "Ctrl+J", description: "Open snippets picker (ISE style)" },
       { keys: "Ctrl+Shift+P", description: "Open Command Palette" },
-      { keys: "Ctrl+Shift+C", description: "Open Show Command tab" },
+      { keys: "Ctrl+Shift+C", description: "Copy terminal selection, or open Show Command" },
       { keys: "Ctrl+,", description: "Open Settings" },
       { keys: "Ctrl+B", description: "Toggle sidebar" },
       { keys: "F1", description: "Context help for token/command under cursor" },
@@ -140,6 +140,14 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     category: "Terminal",
     shortcuts: [
+      {
+        keys: "Ctrl+Shift+C",
+        description: "Copy selected terminal text (right-click also copies)",
+      },
+      {
+        keys: "Right-click",
+        description: "Copy selection if any, otherwise paste",
+      },
       {
         keys: "Terminal input + Enter",
         description: "Send input to interactive script prompts or the shell",

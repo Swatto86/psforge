@@ -39,7 +39,8 @@ import {
 } from "./run-utils";
 import {
   copyLastRunOutputToClipboard,
-  copyTerminalOutputToClipboard,
+  copyTerminalSelectionToClipboard,
+  getTerminalSelection,
 } from "./terminal-utils";
 import {
   scratchPathForTab,
@@ -1308,10 +1309,22 @@ function AppInner() {
       void pasteFromClipboardAsNewScript();
     };
     w.__psforge_copy_terminal_output = async () => {
-      const copied = await copyTerminalOutputToClipboard();
+      // Legacy alias: prefer selection; fall back to last-run, never full
+      // scrollback with prompt/Nerd Font chrome.
+      const selected = await copyTerminalSelectionToClipboard();
+      if (selected) return;
+      const lastRun = await copyLastRunOutputToClipboard();
+      if (lastRun) return;
+      void writeTerminalNotice(
+        "[PSForge] Select text in the terminal to copy (Ctrl+Shift+C), or use Last run.",
+        { reveal: false },
+      );
+    };
+    w.__psforge_copy_terminal_selection = async () => {
+      const copied = await copyTerminalSelectionToClipboard();
       if (!copied) {
         void writeTerminalNotice(
-          "[PSForge] Nothing to copy from the terminal.",
+          "[PSForge] Select text in the terminal first (or Ctrl+Shift+C).",
           { reveal: false },
         );
       }
@@ -1337,6 +1350,7 @@ function AppInner() {
     return () => {
       delete w.__psforge_pasteFromClipboardAsNewScript;
       delete w.__psforge_copy_terminal_output;
+      delete w.__psforge_copy_terminal_selection;
       delete w.__psforge_copy_last_run_output;
       delete w.__psforge_requestCloseTab;
       delete w.__psforge_rerunFromRecord;
@@ -1592,9 +1606,13 @@ function AppInner() {
         dispatch({ type: "OPEN_COMMAND_PALETTE", mode: "snippets" });
       }
 
-      // Ctrl+Shift+C: Open Show Command tab.
+      // Ctrl+Shift+C: copy terminal selection when present; else Show Command.
       if (e.ctrlKey && e.shiftKey && keyLower === "c") {
         e.preventDefault();
+        if (getTerminalSelection()) {
+          void copyTerminalSelectionToClipboard();
+          return;
+        }
         dispatch({ type: "SET_BOTTOM_TAB", tab: "show-command" });
       }
 

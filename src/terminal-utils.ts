@@ -5,6 +5,23 @@ export function stripAnsi(text: string): string {
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
 }
 
+/** Selected text in the active integrated terminal ("" if none). */
+export function getTerminalSelection(): string {
+  const w = window as unknown as Record<string, unknown>;
+  const getSelection = w.__psforge_terminal_get_selection as
+    | (() => string)
+    | undefined;
+  return getSelection?.() ?? "";
+}
+
+/** Copy the active terminal selection. Returns false when nothing is selected. */
+export async function copyTerminalSelectionToClipboard(): Promise<boolean> {
+  const text = getTerminalSelection();
+  if (!text) return false;
+  await navigator.clipboard.writeText(text);
+  return true;
+}
+
 /** Read plain-text terminal scrollback from the integrated terminal bridge. */
 export function getTerminalPlainContent(lineCount?: number): string {
   const w = window as unknown as Record<string, unknown>;

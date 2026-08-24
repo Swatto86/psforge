@@ -207,11 +207,16 @@ function validateRemoteTarget(raw: string): string | null {
 }
 
 interface TerminalSessionHandle {
+  /** Restart the PowerShell session (Clear button). */
   clear: () => void;
+  /** Wipe the xterm buffer without killing the session (clear-on-run). */
+  clearBuffer: () => void;
   exec: (command: string) => Promise<number | null>;
   focus: () => void;
   restart: () => void;
   getContent: (lineCount?: number) => string;
+  /** Selected plain text in this console, or "" when nothing is selected. */
+  getSelection: () => string;
   /** Register a reflow/eviction-safe marker at the current row as the
    *  "last run" output baseline (S3-13). */
   markRunStart: () => void;
@@ -296,7 +301,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
     const startSessionFnRef = useRef<(() => void) | null>(null);
     const focusFnRef = useRef<(() => void) | null>(null);
     const clearFnRef = useRef<(() => void) | null>(null);
+    const clearBufferFnRef = useRef<(() => void) | null>(null);
     const contentFnRef = useRef<((lineCount?: number) => string) | null>(null);
+    const selectionFnRef = useRef<(() => string) | null>(null);
     const markRunStartFnRef = useRef<(() => void) | null>(null);
     const runOutputLineCountFnRef = useRef<(() => number | null) | null>(null);
     const execFnRef = useRef<
@@ -309,6 +316,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       ref,
       () => ({
         clear: () => clearFnRef.current?.(),
+        clearBuffer: () => clearBufferFnRef.current?.(),
         exec: (command: string) =>
           execFnRef.current?.(command) ??
           Promise.reject(new Error("Terminal session is unavailable.")),
@@ -316,6 +324,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         restart: () => startSessionFnRef.current?.(),
         getContent: (lineCount?: number) =>
           contentFnRef.current?.(lineCount) ?? "",
+        getSelection: () => selectionFnRef.current?.() ?? "",
         markRunStart: () => markRunStartFnRef.current?.(),
         getRunOutputLineCount: () => runOutputLineCountFnRef.current?.() ?? null,
         isReady: () => isReadyRef.current,
@@ -505,7 +514,12 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         void startSession();
       };
       focusFnRef.current = focusTerminal;
-      clearFnRef.current = () => term.clear();
+      // Clear means a fresh shell so prompt / Nerd Font chrome redraws.
+      // term.clear() alone wipes the buffer and leaves a blank prompt-less pane.
+      clearFnRef.current = () => {
+        void startSession();
+      };
+      clearBufferFnRef.current = () => term.clear();
       writeLocalFnRef.current = (text: string) => {
         if (!text) return;
         term.write(text.replace(/\r?\n/g, "\r\n"));
@@ -516,7 +530,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       };
       contentFnRef.current = (lineCount?: number) => {
         const buf = term.buffer.active;
-        // No explicit count means "copy everything" (Copy Output, debug-bundle
+        // No explicit count means "copy everything" (debug-bundle
         // fallback) — return the full scrollback, not a stale 80-line default
         // that silently truncated long runs (S3-4).
         const count = lineCount ?? buf.length;
@@ -528,6 +542,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         }
         return lines.join("\n");
       };
+      selectionFnRef.current = () => term.getSelection();
       // Reflow/eviction-safe "last run" baseline. A raw buffer index goes
       // stale the moment the terminal is resized (xterm re-wraps the whole
       // scrollback) or the scrollback cap trims old lines; an xterm marker is
@@ -770,6 +785,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         startSessionFnRef.current = null;
         focusFnRef.current = null;
         clearFnRef.current = null;
+        clearBufferFnRef.current = null;
+        selectionFnRef.current = null;
         contentFnRef.current = null;
         markRunStartFnRef.current = null;
         runOutputLineCountFnRef.current = null;
@@ -1077,7 +1094,7 @@ export function TerminalPane() {
       await sleep(0);
       const handle = await waitForReadyHandle(tabId);
       if (options?.clearBeforeRun) {
-        handle.clear();
+        handle.clearBuffer();
       }
       // Mark the run-start baseline AFTER any clear, right before the command
       // starts, via a reflow/eviction-safe xterm marker (S3-13).
@@ -1146,6 +1163,8 @@ export function TerminalPane() {
     // "Copy Output" semantics: the console the user is looking at.
     w.__psforge_terminal_get_content = (lineCount?: number) =>
       getActiveHandle()?.getContent(lineCount) ?? "";
+    w.__psforge_terminal_get_selection = () =>
+      getActiveHandle()?.getSelection() ?? "";
     // Run-output semantics (Copy Last Run, debug bundle, AI context): the tab
     // that ran the script — including the marker-evicted no-count fallback,
     // which previously leaked back to the active tab (S6-20 round 4). If the
@@ -1190,6 +1209,7 @@ export function TerminalPane() {
       delete w.__psforge_terminal_run_command;
       delete w.__psforge_terminal_restart;
       delete w.__psforge_terminal_get_content;
+      delete w.__psforge_terminal_get_selection;
       delete w.__psforge_terminal_get_run_content;
       delete w.__psforge_terminal_get_run_output_line_count;
       delete w.__psforge_terminal_is_ready;
@@ -1298,7 +1318,7 @@ export function TerminalPane() {
             backgroundColor: "transparent",
             color: "var(--text-secondary)",
           }}
-          title="Clear active console"
+          title="Restart the active console (fresh prompt)"
         >
           Clear
         </button>
