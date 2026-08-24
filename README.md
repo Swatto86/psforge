@@ -14,7 +14,7 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.4.29](https://github.com/Swatto86/psforge/releases/tag/v1.4.29)
+**Current version:** [1.4.30](https://github.com/Swatto86/psforge/releases/tag/v1.4.30)
 
 ## AI-assisted workflow (paste → run → debug)
 
@@ -26,7 +26,7 @@ Typical use with an assistant writing PowerShell for you:
    - **`Ctrl+Shift+Alt+V`** — Paste Clean + Format on the active tab (best default for AI output).
    - **`Ctrl+V`** — Normal paste with light cleanup when **Clean Paste** is enabled (Settings → Editor).
 3. **Run** — **`F5`** (auto-save + scratch for untitled tabs when enabled).
-4. **Inspect** — Terminal output below the editor; **Reference → Problems** for PSScriptAnalyzer errors.
+4. **Inspect** — Terminal output below the editor; **Reference → Problems** for parser/analyzer errors.
 5. **Ask in the AI tab** — each question automatically includes the debug bundle (script, last run, PSSA). **Copy Last Run** or **Copy Output** remain if you want the terminal text yourself.
 6. **Iterate** — Edit, F5 again, or **Re-run** from Welcome **Recent runs** (restores working directory).
 
@@ -77,7 +77,7 @@ More shortcuts: **Help → Keyboard Shortcuts** (`Ctrl+F1`).
 
 - **Scratch auto-save** — Untitled scripts under `%APPDATA%\PSForge\scratch\{tabId}.ps1` (Windows); orphan files offered on startup.
 - **Close untitled tabs** — Save as, keep in scratch, or discard.
-- **PSSA run gate** — In-app dialog on warn; block mode stops F5 until Problems are fixed.
+- **Diagnostics run gate** — In-app dialog on warn; block mode stops F5 until Problems are fixed.
 - **Run directory** — Per-file folder, custom path, pinned folder, named **presets** in Settings.
 - **Recent runs** — Welcome history: re-run, open run folder, clear, failed-run highlight.
 - **Assistant mode** — One setting applies paste/run/scratch/PSSA defaults for AI workflows.

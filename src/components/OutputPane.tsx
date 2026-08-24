@@ -696,8 +696,8 @@ function ProblemsPane({
       <div className="bottom-pane-empty" data-testid="problems-empty">
         <strong>Problems pane is disabled</strong>
         <span>
-          Enable PSScriptAnalyzer squiggles in Settings to populate
-          diagnostics for {activeTabName}.
+          Enable editor diagnostics in Settings to populate Problems for{" "}
+          {activeTabName}.
         </span>
       </div>
     );
@@ -706,8 +706,10 @@ function ProblemsPane({
   if (diagnostics.length === 0) {
     return (
       <div className="bottom-pane-empty" data-testid="problems-empty">
-        <strong>No pre-run problems</strong>
-        <span>{activeTabName} currently has no reported diagnostics.</span>
+        <strong>No problems</strong>
+        <span>
+          {activeTabName} has no parser or analyzer diagnostics.
+        </span>
       </div>
     );
   }
@@ -743,7 +745,7 @@ function ProblemsPane({
               </span>
               <span className="bottom-pane-problem-location">{location}</span>
               <span className="bottom-pane-problem-rule">
-                {problem.ruleName || "PSScriptAnalyzer"}
+                {problem.ruleName || "Diagnostics"}
               </span>
             </div>
             <div className="bottom-pane-problem-message">{problem.message}</div>

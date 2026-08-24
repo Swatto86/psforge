@@ -2331,11 +2331,6 @@ fn builtin_snippets() -> Vec<Snippet> {
 // Static Analysis & IntelliSense
 // ---------------------------------------------------------------------------
 
-/// Maximum seconds to wait for a PSScriptAnalyzer invocation before giving up.
-/// On slower machines or cold PowerShell starts, 5s is too aggressive and can
-/// cause false "no diagnostics" results.
-const ANALYSIS_TIMEOUT_SECS: u64 = 12;
-
 /// Maximum seconds to wait for a TabExpansion2 completion request.
 /// Cold starts under test load can exceed 3s; keep this high enough so normal
 /// completions are not dropped as empty results.
@@ -2343,26 +2338,6 @@ const COMPLETION_TIMEOUT_SECS: u64 = 12;
 /// Maximum seconds to wait when querying online module suggestions for an
 /// unknown command in the integrated terminal.
 const MODULE_SUGGEST_TIMEOUT_SECS: u64 = 8;
-
-/// Diagnostic produced by PSScriptAnalyzer. All line/column numbers are 1-indexed,
-/// matching Monaco editor conventions.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PssaDiagnostic {
-    pub message: String,
-    /// Severity as a string: "Error", "Warning", "Information", or "ParseError".
-    pub severity: String,
-    /// PSSA rule name (e.g. "PSAvoidUsingWriteHost").
-    pub rule_name: String,
-    /// Start line (1-indexed).
-    pub line: u32,
-    /// Start column (1-indexed).
-    pub column: u32,
-    /// End line (1-indexed).
-    pub end_line: u32,
-    /// End column (1-indexed).
-    pub end_column: u32,
-}
 
 /// A single completion candidate produced by PowerShell's TabExpansion2.
 #[derive(Debug, Serialize, Deserialize)]
@@ -2390,110 +2365,6 @@ pub struct ModuleInstallSuggestion {
     pub repository: String,
     /// Concrete install command users can run in the terminal.
     pub install_command: String,
-}
-
-/// Runs PSScriptAnalyzer on `script_content` and returns structured diagnostics.
-///
-/// Silently returns an empty list when:
-/// - PSScriptAnalyzer module is not installed.
-/// - The analysis exceeds `ANALYSIS_TIMEOUT_SECS`.
-/// - Any process or JSON-parsing error occurs.
-///
-/// This ensures the frontend always gets a typed result without crashing the editor
-/// (Rule 11 graceful degradation).
-#[cfg_attr(not(test), tauri::command)]
-pub async fn analyze_script(
-    ps_path: String,
-    script_content: String,
-) -> Result<Vec<PssaDiagnostic>, AppError> {
-    debug!("analyze_script called ({} chars)", script_content.len());
-    let ps_path = ps_path.trim();
-    if ps_path.is_empty() {
-        return Ok(Vec::new());
-    }
-    if let Err(err) = powershell::validate_ps_path(ps_path) {
-        debug!("analyze_script: invalid PowerShell path: {}", err);
-        return Ok(Vec::new());
-    }
-
-    // Write content to a temp file so PSSA receives accurate file-path info
-    // and we avoid all single-quote escaping issues with -Command.
-    let temp_path = write_temp_ps_file(&script_content).map_err(|e| AppError {
-        code: "TEMP_WRITE_FAILED".to_string(),
-        message: format!("Failed to create temp analysis file: {}", e),
-    })?;
-
-    // Escape single quotes in the path (extremely unlikely but safe).
-    let path_str = temp_path.to_string_lossy().replace('\'', "''");
-
-    let ps_script = format!(
-        "$ErrorActionPreference = 'SilentlyContinue';\
-if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {{ '[]'; exit }}\
-Import-Module PSScriptAnalyzer -EA SilentlyContinue;\
-$d = Invoke-ScriptAnalyzer -Path '{}';\
-if (-not $d) {{ '[]'; exit }}\
-($d | Select-Object @{{N='message';E={{$_.Message}}}},\
-@{{N='severity';E={{$_.Severity.ToString()}}}},\
-@{{N='ruleName';E={{$_.RuleName}}}},\
-@{{N='line';E={{$_.Extent.StartLineNumber}}}},\
-@{{N='column';E={{$_.Extent.StartColumnNumber}}}},\
-@{{N='endLine';E={{$_.Extent.EndLineNumber}}}},\
-@{{N='endColumn';E={{$_.Extent.EndColumnNumber}}}} | ConvertTo-Json -Compress)",
-        path_str
-    );
-
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(ANALYSIS_TIMEOUT_SECS),
-        ps_command(ps_path)
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "RemoteSigned",
-                "-Command",
-            ])
-            .arg(ps_utf8_script(&ps_script))
-            .creation_flags(0x08000000)
-            .output(),
-    )
-    .await;
-
-    // Always clean up the temp file, regardless of outcome.
-    let _ = std::fs::remove_file(&temp_path);
-
-    let output = match result {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => {
-            debug!("analyze_script: process error: {}", e);
-            return Ok(Vec::new());
-        }
-        Err(_) => {
-            debug!("analyze_script: timed out after {}s", ANALYSIS_TIMEOUT_SECS);
-            return Ok(Vec::new());
-        }
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
-
-    if trimmed.is_empty() || trimmed == "[]" {
-        return Ok(Vec::new());
-    }
-
-    let diagnostics: Vec<PssaDiagnostic> = if trimmed.starts_with('[') {
-        serde_json::from_str(trimmed).unwrap_or_default()
-    } else {
-        match serde_json::from_str::<PssaDiagnostic>(trimmed) {
-            Ok(single) => vec![single],
-            Err(e) => {
-                debug!("analyze_script: JSON parse error: {} | raw: {}", e, trimmed);
-                Vec::new()
-            }
-        }
-    };
-
-    debug!("analyze_script: {} diagnostics", diagnostics.len());
-    Ok(diagnostics)
 }
 
 /// Returns TabExpansion2 completion candidates for `script_content` at `cursor_column`.

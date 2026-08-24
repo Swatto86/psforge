@@ -1,4 +1,4 @@
-/** Modal shown when PSScriptAnalyzer reports errors before F5 (warn mode). */
+/** Modal shown when editor diagnostics report errors before F5 (warn mode). */
 
 import React, { useEffect, useRef } from "react";
 import type { PssaDiagnostic } from "../types";
@@ -57,7 +57,7 @@ export function PssaRunGateDialog({
           id="pssa-gate-title"
           style={{ borderBottom: "1px solid var(--border-primary)" }}
         >
-          PSScriptAnalyzer found {errors.length} error
+          Diagnostics found {errors.length} error
           {errors.length === 1 ? "" : "s"}
         </div>
         <div className="px-4 py-3 overflow-auto flex-1">

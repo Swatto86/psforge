@@ -714,20 +714,20 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
-                label="Enable PSSA Analysis"
-                tooltip="Runs PSScriptAnalyzer in the editor and shows squiggle diagnostics."
+                label="Show editor diagnostics"
+                tooltip="Red squiggles from PowerShell's built-in parser (no extra modules). When PSScriptAnalyzer is installed, style and best-practice rules are added automatically."
               >
                 <Toggle
                   checked={state.settings.enablePssa !== false}
                   onChange={(v) => updateSetting("enablePssa", v)}
-                  label="Show PSScriptAnalyzer squiggles as you type"
+                  label="Show diagnostics as you type (built-in parser)"
                 />
               </SettingRow>
 
               {!state.settings.enablePssa && (
                 <InfoBox>
-                  PSScriptAnalyzer squiggles are disabled. Existing markers will
-                  be cleared from the editor on the next change.
+                  Editor diagnostics are disabled. Existing markers will be
+                  cleared from the editor on the next change.
                 </InfoBox>
               )}
             </div>
@@ -740,7 +740,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Assistant mode"
-                tooltip="Optimizes PSForge for AI paste-and-run: clean paste, run after Paste Clean + Format, scratch auto-save, clear terminal on F5, PSSA warn, large terminal pane."
+                tooltip="Optimizes PSForge for AI paste-and-run: clean paste, run after Paste Clean + Format, scratch auto-save, clear terminal on F5, diagnostics warn, large terminal pane."
               >
                 <div className="flex flex-col gap-1">
                   <Toggle
@@ -865,8 +865,8 @@ export function SettingsPanel() {
               </SettingRow>
 
               <SettingRow
-                label="PSSA Run Gate"
-                tooltip="Warn or block F5 when PSScriptAnalyzer reports errors in the active script."
+                label="Diagnostics Run Gate"
+                tooltip="Warn or block F5 when the editor reports Error/ParseError diagnostics."
               >
                 <select
                   data-testid="settings-pssa-run-gate"

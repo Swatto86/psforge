@@ -379,10 +379,8 @@ export async function stopTerminal(sessionId?: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Runs PSScriptAnalyzer on the given script content and returns diagnostics.
- * Returns an empty array when PSScriptAnalyzer is not installed or on any error
- * (Rule 11 graceful degradation — backend never propagates PSSA absence as a
- * user-visible error).
+ * Runs built-in PowerShell parser diagnostics (and optional PSScriptAnalyzer
+ * when installed). Returns an empty array on timeout or process failure.
  */
 export async function analyzeScript(
   psPath: string,

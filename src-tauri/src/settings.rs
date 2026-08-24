@@ -105,7 +105,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub sticky_scroll: bool,
 
-    /// Whether PSScriptAnalyzer squiggles are enabled.
+    /// Whether editor diagnostics (built-in parser + optional PSSA) are enabled.
     #[serde(default = "default_true")]
     pub enable_pssa: bool,
 
@@ -188,7 +188,7 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub persist_runspace_between_runs: bool,
 
-    /// Block or warn before F5 when PSScriptAnalyzer reports errors.
+    /// Block or warn before F5 when diagnostics report errors.
     #[serde(default = "default_pssa_run_gate")]
     pub pssa_run_gate: String,
 

@@ -11,7 +11,7 @@
  *
  *  Editor enhancements wired here:
  *  - Cursor position tracking (dispatched to store -> displayed in StatusBar).
- *  - PSScriptAnalyzer squiggles (debounced 800 ms, degrades gracefully when not installed).
+ *  - Built-in PowerShell parser squiggles (debounced 800 ms; optional PSSA when installed).
  *  - PowerShell IntelliSense via TabExpansion2 (registered as a Monaco completion provider).
  */
 

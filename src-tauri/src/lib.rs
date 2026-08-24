@@ -9,6 +9,7 @@ pub mod ai_opencode;
 pub mod commands;
 pub mod errors;
 pub mod powershell;
+pub mod ps_analyze;
 pub mod ps_invoke;
 pub mod settings;
 #[cfg(not(test))]
@@ -139,7 +140,7 @@ pub fn run() {
             commands::get_snippets,
             commands::save_user_snippets,
             commands::reveal_in_explorer,
-            commands::analyze_script,
+            ps_analyze::analyze_script,
             commands::get_completions,
             commands::suggest_modules_for_command,
             commands::get_execution_policy,

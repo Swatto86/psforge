@@ -845,7 +845,7 @@ export function useExecutionActions({
       if (pssaGate === "block") {
         runGuardRef.current = false;
         await writeTerminalNotice(
-          `[PSForge] Run blocked: ${pssaErrors.length} PSScriptAnalyzer error(s). See Reference → Problems.`,
+          `[PSForge] Run blocked: ${pssaErrors.length} diagnostic error(s). See Reference → Problems.`,
           { reveal: true },
         );
         dispatch({

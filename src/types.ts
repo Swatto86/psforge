@@ -214,7 +214,7 @@ export interface AppSettings {
   showIndentGuides: boolean;
   /** Sticky scroll: pin active scope headers while scrolling. */
   stickyScroll: boolean;
-  /** Whether PSScriptAnalyzer squiggles are enabled. */
+  /** Whether editor diagnostics (built-in parser + optional PSSA) are enabled. */
   enablePssa: boolean;
   /** Whether PowerShell IntelliSense (TabExpansion2) is enabled. */
   enableIntelliSense: boolean;
