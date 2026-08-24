@@ -1505,7 +1505,8 @@ export function SettingsPanel() {
 
               <InfoBox warn>
                 Cursor CLI, Codex CLI, and OpenCode CLI reuse your local
-                logged-in CLI session. OpenCode can also use local Ollama models.
+                logged-in CLI session. OpenCode lists Zen, Go, ChatGPT, and
+                other providers from `opencode models`, plus local Ollama.
               </InfoBox>
 
               <SettingRow
@@ -1533,7 +1534,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Model"
-                tooltip="Blank uses the provider default where supported. OpenCode lists local Ollama models on the AI tab; Cursor CLI can Refresh models."
+                tooltip="Blank uses the provider default where supported. OpenCode Refresh models lists Zen (`opencode/`), Go (`opencode-go/`), ChatGPT, and Ollama from the CLI."
               >
                 <TextInput
                   value={state.settings.aiModel}

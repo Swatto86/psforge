@@ -142,7 +142,7 @@ pub async fn list_ai_models(
         });
     }
     match AiProvider::parse(&settings.ai_provider) {
-        AiProvider::OpenCodeCli => crate::ai_ollama::list_models(&settings).await,
+        AiProvider::OpenCodeCli => crate::ai_opencode_list::list_opencode_models(&settings).await,
         AiProvider::CursorCli => crate::ai_cursor::list_cursor_models(&settings).await,
         AiProvider::CodexCli => Ok(crate::ai_ollama::AiModelList {
             models: Vec::new(),

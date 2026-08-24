@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildFixAllProblemsQuestion,
   buildFixProblemQuestion,
   filterMarkersAtLine,
   pickPrimaryMarker,
   MAX_FIX_PROBLEM_CHARS,
 } from "../fix-problem";
 import type { editor as MonacoEditor } from "monaco-editor";
+import type { PssaDiagnostic } from "../types";
 
 function marker(
   partial: Partial<MonacoEditor.IMarker> &
@@ -16,7 +18,9 @@ function marker(
 ): MonacoEditor.IMarker {
   return {
     owner: "pssa",
-    resource: { toString: () => "inmemory://x.ps1" } as MonacoEditor.IMarker["resource"],
+    resource: {
+      toString: () => "inmemory://x.ps1",
+    } as MonacoEditor.IMarker["resource"],
     code: undefined,
     severity: partial.severity,
     message: partial.message,
@@ -31,12 +35,41 @@ function marker(
   };
 }
 
+function diag(
+  partial: Partial<PssaDiagnostic> & Pick<PssaDiagnostic, "message" | "line">,
+): PssaDiagnostic {
+  return {
+    message: partial.message,
+    severity: partial.severity ?? "Error",
+    ruleName: partial.ruleName ?? "Parser",
+    line: partial.line,
+    column: partial.column ?? 1,
+    endLine: partial.endLine ?? partial.line,
+    endColumn: partial.endColumn ?? 2,
+  };
+}
+
 describe("fix-problem helpers", () => {
   it("filters markers to the clicked line", () => {
     const markers = [
-      marker({ startLineNumber: 2, endLineNumber: 2, severity: 8, message: "a" }),
-      marker({ startLineNumber: 5, endLineNumber: 5, severity: 4, message: "b" }),
-      marker({ startLineNumber: 2, endLineNumber: 4, severity: 4, message: "span" }),
+      marker({
+        startLineNumber: 2,
+        endLineNumber: 2,
+        severity: 8,
+        message: "a",
+      }),
+      marker({
+        startLineNumber: 5,
+        endLineNumber: 5,
+        severity: 4,
+        message: "b",
+      }),
+      marker({
+        startLineNumber: 2,
+        endLineNumber: 4,
+        severity: 4,
+        message: "span",
+      }),
     ];
     const at2 = filterMarkersAtLine(markers, 2);
     expect(at2.map((m) => m.message).sort()).toEqual(["a", "span"]);
@@ -78,5 +111,23 @@ describe("fix-problem helpers", () => {
     expect(question).toContain("complete corrected script");
     expect(question).toContain("PROBLEM");
     expect(question.length).toBeLessThan(MAX_FIX_PROBLEM_CHARS + 800);
+  });
+
+  it("buildFixAllProblemsQuestion lists every diagnostic and asks to fix all", () => {
+    const { question, diagnostics } = buildFixAllProblemsQuestion([
+      diag({ message: "Unexpected token", line: 2, severity: "ParseError" }),
+      diag({
+        message: "Avoid Write-Host",
+        line: 10,
+        severity: "Warning",
+        ruleName: "PSAvoidUsingWriteHost",
+      }),
+    ]);
+    expect(diagnostics).toContain("Unexpected token");
+    expect(diagnostics).toContain("Avoid Write-Host");
+    expect(diagnostics).toContain("PSAvoidUsingWriteHost");
+    expect(question).toContain("Fix ALL");
+    expect(question).toContain("PROBLEMS (2)");
+    expect(question).toContain("complete corrected script");
   });
 });

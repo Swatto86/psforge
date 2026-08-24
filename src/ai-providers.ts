@@ -11,7 +11,7 @@ export type AiProviderId = (typeof AI_PROVIDERS)[number]["id"];
 export const AI_PROVIDER_MODEL_HINT: Record<AiProviderId, string> = {
   codex_cli: "gpt-5.3-codex (blank = CLI default)",
   cursor_cli: "auto, gpt-5.3-codex, …",
-  opencode_cli: "ollama/qwen2.5-coder",
+  opencode_cli: "opencode/… (Zen), opencode-go/… (Go), or ollama/…",
 };
 
 export const AI_PROVIDER_PRESET_MODELS: Record<
@@ -43,9 +43,14 @@ export function settingsAfterProviderChange(
   const presets = AI_PROVIDER_PRESET_MODELS[next];
   const current = settings.aiModel.trim();
   const isOllama = current.toLowerCase().startsWith("ollama/");
+  const isQualifiedOpenCode =
+    current.includes("/") &&
+    !current.toLowerCase().startsWith("gpt-") &&
+    current.length > 0;
   const keep =
     presets.some((model) => model.id === current) ||
-    (next === "opencode_cli" && (current.length === 0 || isOllama)) ||
+    (next === "opencode_cli" &&
+      (current.length === 0 || isOllama || isQualifiedOpenCode)) ||
     (next === "cursor_cli" && current.length > 0 && !isOllama) ||
     (next === "codex_cli" && current.length > 0 && !isOllama);
   return {

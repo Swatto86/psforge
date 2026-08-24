@@ -13,10 +13,11 @@ describe("AI providers", () => {
     expect(ids).toEqual(["codex_cli", "cursor_cli", "opencode_cli"]);
     expect(isAiProviderId("opencode_cli")).toBe(true);
     expect(isAiProviderId("anthropic")).toBe(false);
-    expect(modelHintFor("opencode_cli")).toContain("ollama/");
+    expect(modelHintFor("opencode_cli")).toContain("opencode/");
+    expect(modelHintFor("opencode_cli")).toContain("opencode-go/");
   });
 
-  it("keeps ollama models when staying on OpenCode", () => {
+  it("keeps Zen, Go, and Ollama model ids on OpenCode", () => {
     const fromCursor = settingsAfterProviderChange(
       { ...DEFAULT_SETTINGS, aiProvider: "cursor_cli", aiModel: "auto" },
       "opencode_cli",
@@ -35,6 +36,26 @@ describe("AI providers", () => {
     expect(keepOllama.aiModel).toBe(
       "ollama/huihui_ai/qwen3.8-abliterated:latest",
     );
+
+    const zen = settingsAfterProviderChange(
+      {
+        ...DEFAULT_SETTINGS,
+        aiProvider: "cursor_cli",
+        aiModel: "opencode/big-pickle",
+      },
+      "opencode_cli",
+    );
+    expect(zen.aiModel).toBe("opencode/big-pickle");
+
+    const go = settingsAfterProviderChange(
+      {
+        ...DEFAULT_SETTINGS,
+        aiProvider: "cursor_cli",
+        aiModel: "opencode-go/kimi-k3",
+      },
+      "opencode_cli",
+    );
+    expect(go.aiModel).toBe("opencode-go/kimi-k3");
 
     const toCodex = settingsAfterProviderChange(
       {

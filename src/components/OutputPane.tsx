@@ -18,7 +18,7 @@ import { ShowCommandPane } from "./ShowCommandPane";
 import { HelpPane } from "./HelpPane";
 import { ReferencePane } from "./ReferencePane";
 import { AssistantPane } from "./AssistantPane";
-import { ProblemsPssaHint } from "./PssaInstallControls";
+import { ProblemsPane } from "./ProblemsPane";
 import type { ReferenceSubview } from "../types";
 
 function breakpointLabel(bp: DebugBreakpoint): string {
@@ -69,10 +69,6 @@ function problemSeverityRank(severity: PssaDiagnostic["severity"]): number {
     default:
       return 2;
   }
-}
-
-function formatProblemLocation(problem: PssaDiagnostic): string {
-  return `Ln ${problem.line}, Col ${problem.column}`;
 }
 
 type BottomTabId =
@@ -536,7 +532,21 @@ export function OutputPane({
                   }
                   pssaEnabled={pssaEnabled}
                   psPath={state.selectedPsPath}
+                  aiEnabled={aiEnabled}
+                  settings={state.settings}
+                  activeTab={
+                    activeTab?.tabType === "code" ? activeTab : undefined
+                  }
+                  workingDir={state.workingDir}
+                  lastRun={state.lastRunResult}
                   onNavigate={navigateTo}
+                  onApplyFixedScript={(tabId, code) => {
+                    dispatch({
+                      type: "UPDATE_TAB",
+                      id: tabId,
+                      changes: { content: code, isDirty: true },
+                    });
+                  }}
                   fontSize={state.settings.outputFontSize ?? 13}
                   fontFamily={
                     state.settings.outputFontFamily ??
@@ -660,108 +670,6 @@ export function OutputPane({
           />
         </form>
       )}
-    </div>
-  );
-}
-
-function ProblemsPane({
-  diagnostics,
-  activeTabName,
-  pssaEnabled,
-  psPath,
-  onNavigate,
-  fontSize,
-  fontFamily,
-}: {
-  diagnostics: PssaDiagnostic[];
-  activeTabName?: string;
-  pssaEnabled: boolean;
-  psPath: string;
-  onNavigate: (line: number, column: number) => void;
-  fontSize: number;
-  fontFamily: string;
-}) {
-  const monoStyle: React.CSSProperties = {
-    fontSize: `${fontSize}px`,
-    fontFamily,
-  };
-
-  if (!activeTabName) {
-    return (
-      <div className="bottom-pane-empty" data-testid="problems-empty">
-        <strong>No active script</strong>
-        <span>Open a PowerShell editor tab to review pre-run diagnostics.</span>
-      </div>
-    );
-  }
-
-  if (!pssaEnabled) {
-    return (
-      <div className="bottom-pane-empty" data-testid="problems-empty">
-        <strong>Problems pane is disabled</strong>
-        <span>
-          Enable editor diagnostics in Settings to populate Problems for{" "}
-          {activeTabName}.
-        </span>
-      </div>
-    );
-  }
-
-  if (diagnostics.length === 0) {
-    return (
-      <div className="flex flex-col h-full min-h-0">
-        <ProblemsPssaHint psPath={psPath} />
-        <div className="bottom-pane-empty" data-testid="problems-empty">
-          <strong>No problems</strong>
-          <span>
-            {activeTabName} has no parser or analyzer diagnostics.
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bottom-pane-problems flex flex-col h-full min-h-0" style={monoStyle}>
-      <ProblemsPssaHint psPath={psPath} />
-      <div className="flex-1 min-h-0 overflow-auto">
-        {diagnostics.map((problem, index) => {
-          const severity = problemSeverity(problem.severity);
-          const severityLabel =
-            severity === "error"
-              ? "Error"
-              : severity === "warning"
-                ? "Warning"
-                : "Info";
-          const location = formatProblemLocation(problem);
-          return (
-            <button
-              key={`${problem.ruleName}-${problem.line}-${problem.column}-${index}`}
-              type="button"
-              data-testid={`problem-item-${index}`}
-              className="bottom-pane-problem"
-              onClick={() => onNavigate(problem.line, problem.column)}
-              title={`Go to ${location}`}
-            >
-              <div className="bottom-pane-problem-header">
-                <span
-                  className={[
-                    "bottom-pane-problem-severity",
-                    `bottom-pane-problem-severity-${severity}`,
-                  ].join(" ")}
-                >
-                  {severityLabel}
-                </span>
-                <span className="bottom-pane-problem-location">{location}</span>
-                <span className="bottom-pane-problem-rule">
-                  {problem.ruleName || "Diagnostics"}
-                </span>
-              </div>
-              <div className="bottom-pane-problem-message">{problem.message}</div>
-            </button>
-          );
-        })}
-      </div>
     </div>
   );
 }

@@ -103,6 +103,10 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
         keys: "Right-click squiggle",
         description: "Fix Problem (AI) — applies the fixed script in place",
       },
+      {
+        keys: "Reference → Fix All",
+        description: "Send all Problems/Warnings to AI and replace the script",
+      },
       { keys: "Ctrl+F1", description: "Open this keyboard shortcut reference" },
       { keys: "Escape", description: "Close palette / settings / this panel" },
     ],

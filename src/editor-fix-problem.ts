@@ -2,9 +2,9 @@
 
 import type { editor as MonacoEditor } from "monaco-editor";
 import type { AppSettings } from "./types";
-import { askAi } from "./commands";
 import { showAppToast } from "./components/ToastStack";
 import {
+  applyAiFix,
   buildFixProblemQuestion,
   filterMarkersAtLine,
   markerToTarget,
@@ -63,40 +63,21 @@ export function registerFixProblemAction(
     );
     fixInFlight = true;
     showAppToast("Asking AI to fix this problem…");
-    try {
-      const response = await askAi(deps.getSettings(), {
-        mode: "fix",
-        question,
-        scriptPath: tab.filePath || tab.title,
-        script: model.getValue(),
-        terminalOutput: "",
-        diagnostics,
-      });
-      const code = response.code?.trim() ?? "";
-      if (!code) {
-        showAppToast(
-          response.answer?.trim()
-            ? `AI did not return a script: ${response.answer.trim().slice(0, 160)}`
-            : "AI did not return a fixed script.",
-        );
-        return;
-      }
-      deps.applyFixedScript(tab.id, code);
+    const result = await applyAiFix({
+      settings: deps.getSettings(),
+      question,
+      diagnostics,
+      script: model.getValue(),
+      scriptPath: tab.filePath || tab.title,
+    });
+    if (result.ok && result.code) {
+      deps.applyFixedScript(tab.id, result.code);
       if (editor.getModel() === model) {
-        model.setValue(code);
+        model.setValue(result.code);
       }
-      showAppToast(
-        `Fixed with ${response.provider} · ${response.model}`,
-      );
-    } catch (err) {
-      const message =
-        err && typeof err === "object" && "message" in err
-          ? String((err as { message: unknown }).message)
-          : String(err);
-      showAppToast(`Fix failed: ${message}`);
-    } finally {
-      fixInFlight = false;
     }
+    showAppToast(result.toast);
+    fixInFlight = false;
   };
 
   const action = editor.addAction({

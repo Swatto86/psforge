@@ -6,6 +6,7 @@ pub mod ai_codex;
 pub mod ai_cursor;
 pub mod ai_ollama;
 pub mod ai_opencode;
+pub mod ai_opencode_list;
 pub mod commands;
 pub mod errors;
 pub mod powershell;

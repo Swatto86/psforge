@@ -23,7 +23,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Font presets / status bar | `src/font-presets.ts`, `src/components/FontQuickControls.tsx` |
 | Terminal toolbar | `src/components/OutputPane.tsx` (`Clear` = restart session, `Copy` = selection, `Last run`) |
 | Diagnostics | `src-tauri/src/ps_analyze.rs` (built-in parser + optional PSSA); `src-tauri/src/ps_pssa_install.rs` (check/install for PS 5.1/7); `src/components/PssaInstallControls.tsx` |
-| Fix Problem (AI) | `src/fix-problem.ts`, `src/editor-fix-problem.ts` (editor right-click on squiggle → `ask_ai` mode fix → replace script) |
+| Fix Problem (AI) | `src/fix-problem.ts`, `src/editor-fix-problem.ts`, `src/components/ProblemsPane.tsx` (squiggle Fix + Reference **Fix All**) |
 | Welcome quick start | `src/components/WelcomePane.tsx` (paste, recent runs, re-run) |
 | Scratch / project runner | `src/scratch-utils.ts`, `src/project-config.ts`, `src/run-dir-presets.ts` |
 | Phase 3 dialogs | `src/components/ScratchRecoveryDialog.tsx`, `CloseScratchDialog.tsx`, `PssaRunGateDialog.tsx` |
@@ -46,6 +46,8 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** OpenCode lists Zen + Go + other CLI providers (**1.4.32**). Model refresh calls `opencode models` (`ai_opencode_list.rs`) instead of only Ollama. Labels mark `opencode/…` as Zen and `opencode-go/…` as Go. Connect Zen/Go/ChatGPT in the OpenCode TUI (`/connect`) so they appear after Refresh.
+- **2026-08-24:** Reference **Fix All** (**1.4.32**). Problems toolbar sends every diagnostic + debug bundle to the configured AI (`buildFixAllProblemsQuestion` / `applyAiFix`) and replaces the script in place. Shares the Fix Problem path used by squiggle right-click.
 - **2026-08-24:** PSSA install + Fix Problem AI (**1.4.31**). In-app `check_psscriptanalyzer` / `install_psscriptanalyzer` for the selected host and all discovered hosts (PS 5.1 + 7, CurrentUser, TLS1.2/NuGet for 5.1). Settings auto-install when missing; Problems pane Install CTA. Editor right-click on a diagnostic squiggle → **Fix Problem (AI)** (`editor-fix-problem.ts`) sends mode `fix` and replaces the script in place.
 - **2026-08-24:** Built-in editor diagnostics (**1.4.30**). Red squiggles no longer require `Install-Module PSScriptAnalyzer` — `analyze_script` always runs PowerShell `Parser::ParseInput` (`ps_analyze.rs`); PSSA findings are merged only when the module is present. Settings toggle relabeled “Show editor diagnostics”.
 - **2026-08-24:** Terminal Clear/Copy (**1.4.29**). Clear restarts the PowerShell session so prompt/Nerd Font chrome redraws (no blank buffer). Copy copies the **selection** only (`Ctrl+Shift+C` / right-click when selected); Last run still copies F5 output. Right-click: copy if selected, else paste.

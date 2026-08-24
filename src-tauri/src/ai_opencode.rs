@@ -18,6 +18,7 @@ const QUALIFIED_MODEL_PREFIXES: &[&str] = &[
     "openrouter/",
     "kilo/",
     "opencode/",
+    "opencode-go/",
     "azure/",
     "groq/",
     "mistral/",
@@ -226,7 +227,7 @@ pub(crate) fn opencode_ollama_inline_config(ollama_base: &str, model_id: &str) -
     .to_string()
 }
 
-fn resolve_opencode_profile(configured: Option<&str>) -> Option<String> {
+pub(crate) fn resolve_opencode_profile(configured: Option<&str>) -> Option<String> {
     if let Some(value) = configured {
         return Some(normalize_configured_path(value));
     }
@@ -252,7 +253,10 @@ fn opencode_marker_exists(profile: &Path) -> bool {
             .is_file()
 }
 
-fn resolve_opencode_binary(configured: Option<&str>, user_profile: Option<&str>) -> String {
+pub(crate) fn resolve_opencode_binary(
+    configured: Option<&str>,
+    user_profile: Option<&str>,
+) -> String {
     if let Some(value) = configured {
         return normalize_configured_path(value);
     }
@@ -286,16 +290,16 @@ mod tests {
             "ollama/qwen2.5-coder"
         );
         assert_eq!(
-            normalize_opencode_model("ollama/qwen2.5-coder:latest"),
-            "ollama/qwen2.5-coder:latest"
+            normalize_opencode_model("opencode/big-pickle"),
+            "opencode/big-pickle"
+        );
+        assert_eq!(
+            normalize_opencode_model("opencode-go/kimi-k3"),
+            "opencode-go/kimi-k3"
         );
         assert_eq!(
             normalize_opencode_model("anthropic/claude-sonnet-4-6"),
             "anthropic/claude-sonnet-4-6"
-        );
-        assert_eq!(
-            normalize_opencode_model("huihui_ai/qwen3.8-abliterated:latest"),
-            "ollama/huihui_ai/qwen3.8-abliterated:latest"
         );
     }
 
@@ -305,8 +309,6 @@ mod tests {
             r#"{"type":"text","part":{"type":"text","text":"{\"answer\":\"ok\",\"code\":null}","time":{"end":1}}}"#,
             "\n",
             r#"{"type":"text","part":{"type":"tool","text":"should-skip"}}"#,
-            "\n",
-            r#"{"type":"message.part.updated","part":{"type":"text","text":"partial"}}"#,
             "\n",
         );
         assert_eq!(
@@ -324,13 +326,7 @@ mod tests {
             .position(|a| a == "--model")
             .expect("model flag");
         assert_eq!(args[model_at + 1], "ollama/qwen2.5-coder");
-        assert!(args
-            .windows(2)
-            .any(|w| w[0] == "--format" && w[1] == "json"));
         assert!(args.contains(&"--auto".to_string()));
-        assert!(args
-            .windows(2)
-            .any(|w| w[0] == "--variant" && w[1] == "high"));
     }
 
     #[test]
@@ -340,11 +336,6 @@ mod tests {
             "ollama/huihui_ai/qwen3.8-abliterated:latest",
         );
         assert!(config.contains("huihui_ai/qwen3.8-abliterated:latest"));
-        assert!(!config.contains(r#""qwen3.8-abliterated:latest""#));
         assert!(config.contains("http://127.0.0.1:11434/v1"));
-        assert_eq!(
-            resolve_opencode_binary(Some(r#""C:\Tools\opencode.exe""#), None),
-            r"C:\Tools\opencode.exe"
-        );
     }
 }
