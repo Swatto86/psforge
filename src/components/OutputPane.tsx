@@ -537,8 +537,6 @@ export function OutputPane({
                   activeTab={
                     activeTab?.tabType === "code" ? activeTab : undefined
                   }
-                  workingDir={state.workingDir}
-                  lastRun={state.lastRunResult}
                   onNavigate={navigateTo}
                   onApplyFixedScript={(tabId, code) => {
                     dispatch({

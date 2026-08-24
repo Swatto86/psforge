@@ -4,6 +4,7 @@ import {
   buildFixProblemQuestion,
   filterMarkersAtLine,
   pickPrimaryMarker,
+  MAX_AI_QUESTION_CHARS,
   MAX_FIX_PROBLEM_CHARS,
 } from "../fix-problem";
 import type { editor as MonacoEditor } from "monaco-editor";
@@ -113,7 +114,7 @@ describe("fix-problem helpers", () => {
     expect(question.length).toBeLessThan(MAX_FIX_PROBLEM_CHARS + 800);
   });
 
-  it("buildFixAllProblemsQuestion lists every diagnostic and asks to fix all", () => {
+  it("buildFixAllProblemsQuestion lists diagnostics and asks to fix", () => {
     const { question, diagnostics } = buildFixAllProblemsQuestion([
       diag({ message: "Unexpected token", line: 2, severity: "ParseError" }),
       diag({
@@ -126,8 +127,59 @@ describe("fix-problem helpers", () => {
     expect(diagnostics).toContain("Unexpected token");
     expect(diagnostics).toContain("Avoid Write-Host");
     expect(diagnostics).toContain("PSAvoidUsingWriteHost");
-    expect(question).toContain("Fix ALL");
-    expect(question).toContain("PROBLEMS (2)");
+    expect(question).toContain("DIAGNOSTICS");
+    expect(question).toContain("errors first");
     expect(question).toContain("complete corrected script");
+    expect(question.length).toBeLessThan(MAX_AI_QUESTION_CHARS);
+  });
+
+  it("prioritizes parse/errors ahead of warnings in Fix All", () => {
+    const batch = buildFixAllProblemsQuestion([
+      diag({
+        message: "Avoid Write-Host",
+        line: 1,
+        severity: "Warning",
+        ruleName: "PSAvoidUsingWriteHost",
+      }),
+      diag({ message: "Unexpected token", line: 50, severity: "ParseError" }),
+      diag({ message: "Null ref", line: 3, severity: "Error" }),
+    ]);
+    const first = batch.diagnostics.indexOf("Unexpected token");
+    const second = batch.diagnostics.indexOf("Null ref");
+    const third = batch.diagnostics.indexOf("Avoid Write-Host");
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(second).toBeGreaterThan(first);
+    expect(third).toBeGreaterThan(second);
+  });
+
+  it("keeps Fix All question under the backend limit for huge lists", () => {
+    const many = Array.from({ length: 400 }, (_, i) =>
+      diag({
+        message: `Problem number ${i} with a moderately long explanation that would blow the question budget if inlined`,
+        line: i + 1,
+        severity: i % 5 === 0 ? "ParseError" : "Warning",
+        ruleName: i % 5 === 0 ? "Parser" : "PSAvoidUsingWriteHost",
+      }),
+    );
+    const batch = buildFixAllProblemsQuestion(many);
+    expect(batch.question.length).toBeLessThanOrEqual(MAX_AI_QUESTION_CHARS);
+    expect(batch.includedCount).toBeGreaterThan(0);
+    expect(batch.includedCount + batch.omittedCount).toBe(400);
+    expect(batch.diagnostics).toContain("ParseError");
+    // Errors first: first line should be a ParseError, not a Warning-only dump.
+    expect(batch.diagnostics.split("\n")[0]).toContain("ParseError");
+  });
+});
+
+describe("Problems pane Fix This wiring", () => {
+  it("exposes a right-click Fix This action on problem rows", async () => {
+    const { default: problemsPane } = await import(
+      "../components/ProblemsPane.tsx?raw"
+    );
+    expect(problemsPane).toContain("problems-fix-this");
+    expect(problemsPane).toContain("Fix This");
+    expect(problemsPane).toContain("onContextMenu");
+    expect(problemsPane).toContain("buildFixProblemQuestion");
+    expect(problemsPane).toContain("diagnosticToTarget");
   });
 });

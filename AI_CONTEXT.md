@@ -23,7 +23,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Font presets / status bar | `src/font-presets.ts`, `src/components/FontQuickControls.tsx` |
 | Terminal toolbar | `src/components/OutputPane.tsx` (`Clear` = restart session, `Copy` = selection, `Last run`) |
 | Diagnostics | `src-tauri/src/ps_analyze.rs` (built-in parser + optional PSSA); `src-tauri/src/ps_pssa_install.rs` (check/install for PS 5.1/7); `src/components/PssaInstallControls.tsx` |
-| Fix Problem (AI) | `src/fix-problem.ts`, `src/editor-fix-problem.ts`, `src/components/ProblemsPane.tsx` (squiggle Fix + Reference **Fix All**) |
+| Fix Problem (AI) | `src/fix-problem.ts`, `src/editor-fix-problem.ts`, `src/components/ProblemsPane.tsx` (squiggle Fix + Reference **Fix This** / **Fix All** batches) |
 | Welcome quick start | `src/components/WelcomePane.tsx` (paste, recent runs, re-run) |
 | Scratch / project runner | `src/scratch-utils.ts`, `src/project-config.ts`, `src/run-dir-presets.ts` |
 | Phase 3 dialogs | `src/components/ScratchRecoveryDialog.tsx`, `CloseScratchDialog.tsx`, `PssaRunGateDialog.tsx` |
@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** Fix All batches + Problems **Fix This** + live Reference (**1.4.34**). Large Problem lists no longer fail with “AI request is too long”: Fix All prioritizes parse/errors, keeps the question under 8k chars, attaches the list as diagnostics (not a truncated debug bundle), and toasts remaining count. Right-click a Problem → **Fix This**. Editor diagnostics follow `activeTab.content` so Reference → Problems / the badge update after typing and after AI fixes (not only on keystrokes).
 - **2026-08-24:** Editor diagnostics + short-terminal warning (**1.4.33**). Squiggles run when a tab opens / Monaco mounts (not only after typing). Analyzer JSON survives trailing Windows PowerShell CLIXML noise. PTY rows floor at 5; terminal bootstrap sets PSReadLine `InlineView` so short panes no longer print `'WindowHeight' is not less than …`.
 - **2026-08-24:** OpenCode lists Zen + Go + other CLI providers (**1.4.32**). Model refresh calls `opencode models` (`ai_opencode_list.rs`) instead of only Ollama. Labels mark `opencode/…` as Zen and `opencode-go/…` as Go. Connect Zen/Go/ChatGPT in the OpenCode TUI (`/connect`) so they appear after Refresh.
 - **2026-08-24:** Reference **Fix All** (**1.4.32**). Problems toolbar sends every diagnostic + debug bundle to the configured AI (`buildFixAllProblemsQuestion` / `applyAiFix`) and replaces the script in place. Shares the Fix Problem path used by squiggle right-click.

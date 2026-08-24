@@ -43,6 +43,8 @@ export type ScheduleDiagnosticsArgs = {
   monaco: typeof import("monaco-editor") | null;
   model: MonacoEditor.ITextModel | null;
   timerRef: { current: ReturnType<typeof setTimeout> | null };
+  /** Bumped on each schedule so a slower older analyze cannot overwrite newer results. */
+  requestIdRef?: { current: number };
   debounceMs: number;
   analyze: (psPath: string, content: string) => Promise<PssaDiagnostic[]>;
   setProblems: (tabId: string, diagnostics: PssaDiagnostic[]) => void;
@@ -57,8 +59,8 @@ function clearMarkersAndProblems(args: ScheduleDiagnosticsArgs): void {
 }
 
 /**
- * Debounced editor diagnostics. Call on content change and when a tab opens /
- * Monaco becomes ready so parse errors appear without requiring a keystroke.
+ * Debounced editor diagnostics. Drive from tab content (typing, open, AI Fix)
+ * so Reference → Problems stays in sync without requiring a keystroke.
  */
 export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
   if (args.timerRef.current !== null) {
@@ -81,10 +83,19 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
   const content = args.scriptContent;
   const setProblems = args.setProblems;
   const analyze = args.analyze;
+  const requestId = args.requestIdRef
+    ? ++args.requestIdRef.current
+    : 0;
 
   args.timerRef.current = setTimeout(() => {
     analyze(psPath, content)
       .then((diags) => {
+        if (
+          args.requestIdRef &&
+          requestId !== args.requestIdRef.current
+        ) {
+          return;
+        }
         monaco.editor.setModelMarkers(
           model,
           "pssa",
@@ -93,6 +104,12 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
         setProblems(tabId, diags);
       })
       .catch(() => {
+        if (
+          args.requestIdRef &&
+          requestId !== args.requestIdRef.current
+        ) {
+          return;
+        }
         clearMarkersAndProblems({
           ...args,
           monaco,

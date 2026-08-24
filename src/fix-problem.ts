@@ -7,8 +7,13 @@ import { fenceFor } from "./explain-selection";
 
 /** Cap problem message size inside the AI question. */
 export const MAX_FIX_PROBLEM_CHARS = 2_000;
-/** Cap combined diagnostic list for Fix All (matches backend diagnostics budget). */
+/**
+ * Cap for the Fix All diagnostics payload (under backend MAX_DIAGNOSTICS_CHARS).
+ * The question itself stays short; the model reads this attached list.
+ */
 export const MAX_FIX_ALL_DIAGNOSTICS_CHARS = 18_000;
+/** Backend ask_ai rejects questions longer than this (ai.rs MAX_QUESTION_CHARS). */
+export const MAX_AI_QUESTION_CHARS = 8_000;
 
 export interface FixProblemTarget {
   message: string;
@@ -23,6 +28,14 @@ export interface FixProblemTarget {
 export interface FixProblemQuestion {
   question: string;
   diagnostics: string;
+}
+
+export interface FixAllProblemsQuestion extends FixProblemQuestion {
+  /** How many diagnostics were included in this batch. */
+  includedCount: number;
+  /** How many were deferred (over budget / lower priority). */
+  omittedCount: number;
+  totalCount: number;
 }
 
 /** Rank markers so parse/errors win over warnings when several share a line. */
@@ -133,34 +146,84 @@ function formatDiagnosticLine(target: FixProblemTarget): string {
   return `line ${target.startLineNumber}, column ${target.startColumn} [${target.severity}/${target.source}]: ${message}`;
 }
 
-/** Builds mode-"fix" question covering every listed diagnostic. */
+function diagnosticSeverityRank(severity: string): number {
+  switch (severity) {
+    case "ParseError":
+      return 0;
+    case "Error":
+      return 1;
+    case "Warning":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+/** Errors/parse failures first, then warnings, then by line. */
+export function prioritizeDiagnostics(
+  diagnostics: PssaDiagnostic[],
+): PssaDiagnostic[] {
+  return [...diagnostics].sort((a, b) => {
+    const bySev =
+      diagnosticSeverityRank(a.severity) - diagnosticSeverityRank(b.severity);
+    if (bySev !== 0) return bySev;
+    if (a.line !== b.line) return a.line - b.line;
+    return a.column - b.column;
+  });
+}
+
+/**
+ * Builds a short mode-"fix" question for Fix All.
+ * Packs a prioritized diagnostics list into the separate diagnostics field
+ * (not the question) so large Problem lists do not hit AI_QUESTION_TOO_LONG.
+ */
 export function buildFixAllProblemsQuestion(
   diagnostics: PssaDiagnostic[],
-): FixProblemQuestion {
+): FixAllProblemsQuestion {
+  const ordered = prioritizeDiagnostics(diagnostics);
   const lines: string[] = [];
-  let omitted = 0;
-  for (const diagnostic of diagnostics) {
+  for (const diagnostic of ordered) {
     const line = formatDiagnosticLine(diagnosticToTarget(diagnostic));
-    const next = [...lines, line].join("\n");
-    if (next.length > MAX_FIX_ALL_DIAGNOSTICS_CHARS && lines.length > 0) {
-      omitted += 1;
-      continue;
+    const nextLen =
+      lines.length === 0 ? line.length : lines.join("\n").length + 1 + line.length;
+    if (nextLen > MAX_FIX_ALL_DIAGNOSTICS_CHARS && lines.length > 0) {
+      break;
     }
     lines.push(line);
   }
-  if (omitted > 0) {
-    lines.push(`(+ ${omitted} more problems omitted from this list)`);
+  const includedCount = lines.length;
+  const omittedCount = Math.max(0, ordered.length - includedCount);
+  if (omittedCount > 0) {
+    lines.push(
+      `(+ ${omittedCount} lower-priority problem(s) deferred — run Fix All again after this batch)`,
+    );
   }
   const diagnosticsText = lines.join("\n");
-  const fence = fenceFor(diagnosticsText);
   const question =
-    "Fix ALL PowerShell PROBLEMS and WARNINGS listed below in the script. " +
+    `Fix the PowerShell PROBLEMS attached as DIAGNOSTICS (${includedCount} of ${ordered.length}, errors first). ` +
     "Return the complete corrected script in the JSON code field. " +
     "Change only what is needed to resolve these diagnostics; preserve the rest of the script and its intent. " +
-    "Do not invent unrelated features.\n\n" +
-    `PROBLEMS (${diagnostics.length}):\n` +
-    `${fence}text\n${diagnosticsText}\n${fence}`;
-  return { question, diagnostics: diagnosticsText };
+    "Do not invent unrelated features." +
+    (omittedCount > 0
+      ? ` ${omittedCount} lower-priority problem(s) were deferred for a later pass.`
+      : "");
+  if (question.length > MAX_AI_QUESTION_CHARS) {
+    // Defensive: keep ask_ai from rejecting; diagnostics payload still carries detail.
+    return {
+      question: question.slice(0, MAX_AI_QUESTION_CHARS - 1),
+      diagnostics: diagnosticsText,
+      includedCount,
+      omittedCount,
+      totalCount: ordered.length,
+    };
+  }
+  return {
+    question,
+    diagnostics: diagnosticsText,
+    includedCount,
+    omittedCount,
+    totalCount: ordered.length,
+  };
 }
 
 export interface ApplyAiFixRequest {

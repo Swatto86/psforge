@@ -16,9 +16,11 @@ describe("clampPtyDims", () => {
 });
 
 describe("editor diagnostics scheduling", () => {
-  it("EditorPane schedules analysis when a tab opens, not only onChange", () => {
+  it("EditorPane schedules analysis from tab content for live Reference updates", () => {
     expect(editorPane).toContain("scheduleEditorDiagnostics");
-    expect(editorPane).toContain("Opening a broken .ps1 previously showed no squiggles");
+    expect(editorPane).toContain("Drive diagnostics from tab content");
+    expect(editorPane).toContain("activeTab?.content");
+    expect(editorPane).toContain("requestIdRef");
   });
 
   it("maps ParseError to Monaco Error severity", () => {

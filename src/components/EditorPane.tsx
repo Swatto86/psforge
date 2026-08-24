@@ -254,20 +254,20 @@ export function EditorPane() {
     psPathRef.current = state.selectedPsPath;
   }, [state.selectedPsPath]);
 
-  // Timer ref for debouncing PSScriptAnalyzer invocations on each keystroke.
+  // Timer ref for debouncing analyzer invocations.
   const pssaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pssaRequestIdRef = useRef(0);
 
-  // Clear stale PSSA debounce timer whenever the active tab changes so a
-  // pending analysis from the previous tab does not fire after the switch,
-  // wasting a PS process spawn (the captured model mitigates stale-marker
-  // application per BUG-NEW-1 fix, but skipping the spawn is still valuable).
-  // Also clear shared-model markers immediately so the previous tab's
-  // squiggles do not linger on the newly shown script.
+  // Clear stale debounce timer whenever the active tab changes so a pending
+  // analysis from the previous tab does not fire after the switch.
+  // Also clear shared-model markers so the previous tab's squiggles do not
+  // linger on the newly shown script.
   useEffect(() => {
     if (pssaTimerRef.current !== null) {
       clearTimeout(pssaTimerRef.current);
       pssaTimerRef.current = null;
     }
+    pssaRequestIdRef.current += 1;
     const mon = monacoRef.current;
     const model = editorRef.current?.getModel();
     if (mon && model) {
@@ -275,8 +275,8 @@ export function EditorPane() {
     }
   }, [activeTab?.id]);
 
-  // Analyze on open / Monaco ready / host change — not only on keystrokes.
-  // Opening a broken .ps1 previously showed no squiggles until the user typed.
+  // Drive diagnostics from tab content so Reference → Problems updates after
+  // typing, open, paste, and AI Fix This / Fix All (not only onChange).
   useEffect(() => {
     const tab = activeTabRef.current;
     if (!monacoReady || !tab || tab.tabType === "welcome") return;
@@ -291,7 +291,8 @@ export function EditorPane() {
       monaco: mon,
       model,
       timerRef: pssaTimerRef,
-      debounceMs: 200,
+      requestIdRef: pssaRequestIdRef,
+      debounceMs: 350,
       analyze: analyzeScript,
       setProblems: (tabId, diagnostics) => {
         dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
@@ -300,6 +301,7 @@ export function EditorPane() {
   }, [
     monacoReady,
     activeTab?.id,
+    activeTab?.content,
     state.settings.enablePssa,
     state.selectedPsPath,
     dispatch,
@@ -491,34 +493,32 @@ export function EditorPane() {
     // pasted content rather than the pre-insert React state.
     w.__psforge_getEditorText = () =>
       editorRef.current?.getModel()?.getValue() ?? "";
-    // E2E-only: replaces the editor buffer in one shot. Gated to dev so it
-    // never appears on production users' window object.
-    if (import.meta.env.DEV) {
-      w.__psforge_setEditorText = (text: string) => {
-        const editor = editorRef.current;
-        const model = editor?.getModel();
-        if (!editor || !model) return false;
+    // Replace the active editor buffer in one shot (AI Fix This / Fix All,
+    // paste helpers, E2E). Keep undo coalesced via executeEdits.
+    w.__psforge_setEditorText = (text: string) => {
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !model) return false;
 
-        editor.executeEdits("psforge-e2e", [
-          {
-            range: model.getFullModelRange(),
-            text,
-            forceMoveMarkers: true,
-          },
-        ]);
-        editor.pushUndoStop();
+      editor.executeEdits("psforge-set-text", [
+        {
+          range: model.getFullModelRange(),
+          text,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.pushUndoStop();
 
-        const lastLine = model.getLineCount();
-        const lastColumn = model.getLineMaxColumn(lastLine);
-        editor.setPosition({ lineNumber: lastLine, column: lastColumn });
-        editor.revealPositionInCenter({
-          lineNumber: lastLine,
-          column: lastColumn,
-        });
-        editor.focus();
-        return true;
-      };
-    }
+      const lastLine = model.getLineCount();
+      const lastColumn = model.getLineMaxColumn(lastLine);
+      editor.setPosition({ lineNumber: lastLine, column: lastColumn });
+      editor.revealPositionInCenter({
+        lineNumber: lastLine,
+        column: lastColumn,
+      });
+      editor.focus();
+      return true;
+    };
     return () => {
       delete w.__psforge_triggerFindReplace;
       delete w.__psforge_triggerGoToLine;
@@ -1029,7 +1029,7 @@ export function EditorPane() {
       });
   }, [state.settings.enableIntelliSense, monacoReady]);
 
-  // Handle content changes
+  // Handle content changes — store only; diagnostics follow activeTab.content.
   const handleChange = useCallback(
     (value: string | undefined) => {
       if (!activeTab || value === undefined) return;
@@ -1039,25 +1039,8 @@ export function EditorPane() {
         id: activeTab.id,
         changes: { content: value, isDirty },
       });
-
-      // BUG-NEW-1: capture monaco/model here so a tab switch during debounce
-      // cannot apply markers to a different tab's model.
-      scheduleEditorDiagnostics({
-        enabled: state.settings.enablePssa !== false,
-        psPath: psPathRef.current,
-        scriptContent: value,
-        tabId: activeTab.id,
-        monaco: monacoRef.current,
-        model: editorRef.current?.getModel() ?? null,
-        timerRef: pssaTimerRef,
-        debounceMs: 800,
-        analyze: analyzeScript,
-        setProblems: (tabId, diagnostics) => {
-          dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
-        },
-      });
     },
-    [activeTab, state.settings.enablePssa, dispatch],
+    [activeTab, dispatch],
   );
 
   if (!activeTab) {
