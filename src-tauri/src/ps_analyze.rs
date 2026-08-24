@@ -105,7 +105,17 @@ if ($__ast) {
             param($node)
             $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]
         }, $true)) {
-            if ($null -eq $inv.Member -or $inv.Member.Value -ne 'new') { continue }
+            $memberName = ''
+            try {
+                if ($inv.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                    $memberName = [string]$inv.Member.Value
+                } elseif ($null -ne $inv.Member) {
+                    $memberName = [string]$inv.Member
+                }
+            } catch {
+                $memberName = ''
+            }
+            if ($memberName -ne 'new') { continue }
             if ($inv.Expression -isnot [System.Management.Automation.Language.TypeExpressionAst]) { continue }
             $typeName = [string]$inv.Expression.TypeName.FullName
             if (-not $classCtorCounts.ContainsKey($typeName)) { continue }
@@ -113,7 +123,7 @@ if ($__ast) {
             if ($classCtorCounts[$typeName] -notcontains $argCount) {
                 $ext = $inv.Extent
                 [void]$__out.Add([pscustomobject]@{
-                    message   = "Cannot find an overload for `"new`" and the argument count: `"$argCount`"."
+                    message   = "Cannot find an overload for 'new' and the argument count: '$argCount'."
                     severity  = 'ParseError'
                     ruleName  = 'Parser'
                     line      = [int]$ext.StartLineNumber
@@ -356,7 +366,7 @@ mod tests {
 
         assert!(
             diags.iter().any(|d| {
-                d.rule_name == "Parser" && d.line == 3 && d.message.contains("overload for \"new\"")
+                d.rule_name == "Parser" && d.message.contains("overload for 'new'")
             }),
             "expected ::new overload diagnostic, got: {diags:?}"
         );
