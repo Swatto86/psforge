@@ -47,6 +47,25 @@ describe("Integrated terminal stability", () => {
     expect(executionActionsSource).toContain("buildDirectTerminalRunCommand");
     expect(executionActionsSource).toContain("isSavedDiskScript");
   });
+
+  it("does not write a PSForge Terminal banner into consoles", () => {
+    expect(terminalPane).toContain("startTerminal");
+    expect(terminalPane).not.toContain("PSForge Terminal");
+  });
+});
+
+describe("Status bar run directory", () => {
+  it("puts the run directory on the left without a 220px cap", () => {
+    expect(statusBar).toContain('data-testid="status-run-cwd"');
+    expect(statusBar).toContain('data-testid="status-last-run"');
+    expect(statusBar.indexOf('data-testid="status-run-cwd"')).toBeLessThan(
+      statusBar.indexOf('data-testid="status-last-run"'),
+    );
+    expect(statusBar).not.toContain('maxWidth: "220px"');
+    expect(settingsPanel).toContain("Run Directory");
+    expect(settingsPanel).toContain("bottom left");
+    expect(settingsPanel).not.toContain("bottom right");
+  });
 });
 
 describe("Script param inspection and run guard", () => {

@@ -171,76 +171,20 @@ export function StatusBar({
         paddingRight: "12px",
       }}
     >
-      <div className="flex items-center gap-4 min-w-0">
-        {activeTab?.filePath && (
-          <button
-            onClick={() =>
-              cmd.revealInExplorer(activeTab.filePath).catch(() => {})
-            }
-            className="status-link"
-            style={{
-              maxWidth: "420px",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              direction: "rtl",
-              textAlign: "left",
-            }}
-            title={`Reveal in Explorer: ${activeTab.filePath}`}
-          >
-            {activeTab.filePath}
-          </button>
-        )}
-      </div>
-
-      <div className="flex items-center gap-4 shrink-0">
-        {state.isDebugging ? (
-          <span className="flex items-center gap-1">
-            <span
-              className={`inline-block w-2 h-2 rounded-full ${
-                state.debugPaused
-                  ? "bg-yellow-300"
-                  : "bg-green-400 animate-pulse"
-              }`}
-            />
-            {state.debugPaused ? "Paused" : "Debugging"}
-            {state.debugLine ? ` (Ln ${state.debugLine})` : ""}
-          </span>
-        ) : state.isRunning ? (
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            Running
-          </span>
-        ) : (
-          lastRunLabel && (
-            <span
-              data-testid="status-last-run"
-              style={{
-                fontVariantNumeric: "tabular-nums",
-                color:
-                  lastRun?.exitCode === 0
-                    ? "var(--text-inverse)"
-                    : "var(--stream-stderr)",
-              }}
-              title="Last run result"
-            >
-              {lastRunLabel}
-            </span>
-          )
-        )}
-        {renderUpdateControl()}
+      <div className="flex items-center gap-4 min-w-0 flex-1">
         {runCwd && (
-          <div ref={runDirRef} className="relative">
+          <div ref={runDirRef} className="relative min-w-0">
             <button
               data-testid="status-run-cwd"
               onClick={() => setShowRunDirMenu((v) => !v)}
               title={`Run directory: ${runCwd}. Click to change it.`}
               className="status-link"
               style={{
-                maxWidth: "220px",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                display: "block",
+                maxWidth: "100%",
               }}
             >
               {state.settings.workingDirMode === "pinned" ? "Pinned: " : "Run: "}
@@ -253,7 +197,7 @@ export function StatusBar({
                 className="menu-pop"
                 style={{
                   bottom: "100%",
-                  right: 0,
+                  left: 0,
                   marginBottom: "4px",
                   minWidth: "260px",
                   maxWidth: "420px",
@@ -378,6 +322,64 @@ export function StatusBar({
             )}
           </div>
         )}
+        {activeTab?.filePath && (
+          <button
+            onClick={() =>
+              cmd.revealInExplorer(activeTab.filePath).catch(() => {})
+            }
+            className="status-link"
+            style={{
+              maxWidth: "420px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              direction: "rtl",
+              textAlign: "left",
+              flexShrink: 1,
+            }}
+            title={`Reveal in Explorer: ${activeTab.filePath}`}
+          >
+            {activeTab.filePath}
+          </button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-4 shrink-0">
+        {state.isDebugging ? (
+          <span className="flex items-center gap-1">
+            <span
+              className={`inline-block w-2 h-2 rounded-full ${
+                state.debugPaused
+                  ? "bg-yellow-300"
+                  : "bg-green-400 animate-pulse"
+              }`}
+            />
+            {state.debugPaused ? "Paused" : "Debugging"}
+            {state.debugLine ? ` (Ln ${state.debugLine})` : ""}
+          </span>
+        ) : state.isRunning ? (
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            Running
+          </span>
+        ) : (
+          lastRunLabel && (
+            <span
+              data-testid="status-last-run"
+              style={{
+                fontVariantNumeric: "tabular-nums",
+                color:
+                  lastRun?.exitCode === 0
+                    ? "var(--text-inverse)"
+                    : "var(--stream-stderr)",
+              }}
+              title="Last run result"
+            >
+              {lastRunLabel}
+            </span>
+          )
+        )}
+        {renderUpdateControl()}
         {activeTab && activeTab.tabType !== "welcome" && (
           <span
             style={{ fontVariantNumeric: "tabular-nums" }}

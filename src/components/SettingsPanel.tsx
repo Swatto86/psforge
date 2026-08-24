@@ -1032,7 +1032,7 @@ export function SettingsPanel() {
               <InfoBox>
                 The run directory is the current directory your script runs in
                 (F5). You can also change it quickly from the status bar — click
-                the &quot;Run:&quot; entry at the bottom right.
+                the &quot;Run:&quot; entry at the bottom left.
               </InfoBox>
 
               <SettingRow

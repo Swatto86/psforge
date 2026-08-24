@@ -291,9 +291,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
     const queueInputFnRef = useRef<
       ((data: string, allowWhenNotReady?: boolean) => void) | null
     >(null);
-    const startSessionFnRef = useRef<((showBanner: boolean) => void) | null>(
-      null,
-    );
+    const startSessionFnRef = useRef<(() => void) | null>(null);
     const focusFnRef = useRef<(() => void) | null>(null);
     const clearFnRef = useRef<(() => void) | null>(null);
     const contentFnRef = useRef<((lineCount?: number) => string) | null>(null);
@@ -312,7 +310,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           execFnRef.current?.(command) ??
           Promise.reject(new Error("Terminal session is unavailable.")),
         focus: () => focusFnRef.current?.(),
-        restart: () => startSessionFnRef.current?.(false),
+        restart: () => startSessionFnRef.current?.(),
         getContent: (lineCount?: number) =>
           contentFnRef.current?.(lineCount) ?? "",
         markRunStart: () => markRunStartFnRef.current?.(),
@@ -417,7 +415,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         syncSizeToBackend();
       };
 
-      const startSession = async (showBanner: boolean) => {
+      const startSession = async () => {
         if (startInFlightRef.current) return;
         startInFlightRef.current = true;
         isReadyRef.current = false;
@@ -466,11 +464,6 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           const initCol = term.buffer.active.cursorX + 1;
           queueInput(`\x1b[${initRow};${initCol}R`, true);
 
-          if (showBanner) {
-            term.write("\x1b[1;36mPSForge Terminal\x1b[0m\r\n");
-            term.write("\r\n");
-          }
-
           if (startupCommandRef.current.trim()) {
             if (startupSentForSessionRef.current !== sid) {
               startupSentForSessionRef.current = sid;
@@ -504,8 +497,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       };
 
       queueInputFnRef.current = queueInput;
-      startSessionFnRef.current = (showBanner: boolean) => {
-        void startSession(showBanner);
+      startSessionFnRef.current = () => {
+        void startSession();
       };
       focusFnRef.current = focusTerminal;
       clearFnRef.current = () => term.clear();
@@ -721,7 +714,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           }
           unlistenOutput = outFn;
           unlistenExit = exitFn;
-          void startSession(true);
+          void startSession();
         })
         .catch((err: unknown) => {
           term.write(

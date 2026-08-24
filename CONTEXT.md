@@ -2,7 +2,7 @@
 
 ## Operational notes
 
-- Current version: **1.4.26**. Open a `.ps1` and press F5 to run it in the integrated console (same session as typing `& '.\script.ps1'` in VS Code / Windows Terminal). Untitled buffers still use the temp `psrun` wrapper. The AI tab can pick provider/model, including OpenCode + local Ollama. Each AI question automatically includes the debug bundle (script, last run, PSSA).
+- Current version: **1.4.27**. Open a `.ps1` and press F5 to run it in the integrated console (same session as typing `& '.\script.ps1'` in VS Code / Windows Terminal). Untitled buffers still use the temp `psrun` wrapper. The AI tab can pick provider/model, including OpenCode + local Ollama. Each AI question automatically includes the debug bundle (script, last run, PSSA). The status-bar **Run:** path sits on the left so the full directory is visible. Consoles no longer print a `PSForge Terminal` banner.
 - Verification: `pwsh scripts/fastcheck.ps1`, `npm test`, `npm run build`, `cargo fmt/clippy/test` in `src-tauri`, release via tag after CI green on the release commit.
 - Local unsigned NSIS: `npx tauri build --bundles nsis --config src-tauri/tauri.local-nsis.json` (disables updater signing artifacts).
 

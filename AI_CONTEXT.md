@@ -26,7 +26,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Scratch / project runner | `src/scratch-utils.ts`, `src/project-config.ts`, `src/run-dir-presets.ts` |
 | Phase 3 dialogs | `src/components/ScratchRecoveryDialog.tsx`, `CloseScratchDialog.tsx`, `PssaRunGateDialog.tsx` |
 | Assistant / debug | `src/assistant-mode.ts`, `src/debug-bundle.ts`, `src/paste-summary.ts`, `src/components/ToastStack.tsx` |
-| Status bar | `src/components/StatusBar.tsx` (run-dir quick-pick menu, font, last run) |
+| Status bar | `src/components/StatusBar.tsx` (run-dir leftmost, last run / cursor on the right) |
 | Settings | `src/components/SettingsPanel.tsx`, `src-tauri/src/settings.rs` |
 | Types / defaults | `src/types.ts` |
 
@@ -44,6 +44,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** Console chrome (**1.4.27**). Dropped the cyan `PSForge Terminal` line on session start so the shell prompt is the first thing shown. Moved the status-bar **Run:** / **Pinned:** path to the far left (no 220px cap) so the full working directory is visible; last-run / updates / Ln Col stay on the right.
 - **2026-08-24:** Removed **Copy for AI** (**1.4.26**). Ask / Write / Fix Send attaches `collectDebugBundleMarkdown` (script, last run, PSSA, working dir, terminal output) as `debugBundle`; the backend prefers that over the separate script/diagnostics/terminal fields. Palette and status-bar last-run no longer copy a bundle for external chats. Copy Last Run / Copy Output remain.
 - **2026-08-24:** OpenCode is a first-class AI provider (**1.4.25**). Settings and the AI tab can pick provider/model. OpenCode CLI (`opencode run --format json --model … --auto`) uses local Ollama models (`ollama/<tag>`), discovered via `GET /api/tags` on a loopback URL. Provider/model changes persist through the existing settings save debounce.
 - **2026-08-24:** Open-and-run like VS Code (**1.4.24**). F5 on a saved `.ps1` invokes `& 'path'` in the current console after `Set-Location` (no temp wrapper / `-NoProfile` child). Mandatory params prompt in the terminal. Untitled/scratch still uses `psrun`. Consoles load the PowerShell profile by default. Welcome leads with Open script.
