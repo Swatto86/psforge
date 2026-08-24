@@ -16,6 +16,10 @@ import {
   resolveExecutionWorkDir,
   resolveExecutionWorkDirWithOverride,
 } from "./run-utils";
+import {
+  buildDirectTerminalRunCommand,
+  isSavedDiskScript,
+} from "./direct-run";
 import { isScratchBackedTab, scratchPathForTab } from "./scratch-utils";
 import { hasScriptLevelParamBlock } from "./script-utils";
 import type { Action, AppState } from "./store";
@@ -769,47 +773,57 @@ export function useExecutionActions({
       workDirOverride ?? undefined,
     );
 
+    const directPath = isSavedDiskScript(
+      tab,
+      recordScriptPath,
+      scratchDirRef.current,
+    )
+      ? recordScriptPath
+      : "";
+
     let scriptArgs: string[] = [];
-    try {
-      const inspect = await cmd.getScriptParameters(psPath, scriptContent);
-      const allParams = inspect.parameters ?? [];
-      const required = allParams.filter((p) => p.isMandatory && !p.hasDefault);
+    if (!directPath) {
+      try {
+        const inspect = await cmd.getScriptParameters(psPath, scriptContent);
+        const allParams = inspect.parameters ?? [];
+        const required = allParams.filter((p) => p.isMandatory && !p.hasDefault);
 
-      if (inspect.status === "error") {
-        if (scriptContent.length > 32_000) {
-          void writeTerminalNotice(
-            "[PSForge] Script is too large to inspect parameters before running. " +
-              "Mandatory parameters will not be prompted for; supply them in the script or via splatting.",
-            { reveal: false },
-          );
-        } else if (hasScriptLevelParamBlock(scriptContent)) {
-          runGuardRef.current = false;
-          await writeTerminalNotice(
-            "[PSForge] Run blocked: the script declares a param() block but PSForge could not read its parameters. " +
-              "Fix any param-block syntax errors or supply defaults before running.",
-            { reveal: true },
-          );
-          return;
-        }
-      }
-
-      if (required.length > 0) {
-        const paramValues = await new Promise<Record<string, string> | null>(
-          (resolve) => {
-            setParamPrompt({ params: required, resolve });
-          },
-        );
-        setParamPrompt(null);
-
-        if (paramValues === null) {
-          runGuardRef.current = false;
-          return;
+        if (inspect.status === "error") {
+          if (scriptContent.length > 32_000) {
+            void writeTerminalNotice(
+              "[PSForge] Script is too large to inspect parameters before running. " +
+                "Mandatory parameters will not be prompted for; supply them in the script or via splatting.",
+              { reveal: false },
+            );
+          } else if (hasScriptLevelParamBlock(scriptContent)) {
+            runGuardRef.current = false;
+            await writeTerminalNotice(
+              "[PSForge] Run blocked: the script declares a param() block but PSForge could not read its parameters. " +
+                "Fix any param-block syntax errors or supply defaults before running.",
+              { reveal: true },
+            );
+            return;
+          }
         }
 
-        scriptArgs = buildScriptArgs(required, paramValues);
+        if (required.length > 0) {
+          const paramValues = await new Promise<Record<string, string> | null>(
+            (resolve) => {
+              setParamPrompt({ params: required, resolve });
+            },
+          );
+          setParamPrompt(null);
+
+          if (paramValues === null) {
+            runGuardRef.current = false;
+            return;
+          }
+
+          scriptArgs = buildScriptArgs(required, paramValues);
+        }
+      } catch {
+        // Parameter detection failed; run the script as-is.
       }
-    } catch {
-      // Parameter detection failed; run the script as-is.
     }
 
     const pssaErrors = (current.problems[tab.id] ?? []).filter((d) =>
@@ -849,14 +863,21 @@ export function useExecutionActions({
     dispatch({ type: "SET_RUNNING", running: true });
 
     const executeInTerminal = async (workingDir: string) => {
-      const command = await cmd.prepareTerminalScriptCommand(
-        psPath,
-        scriptContent,
-        workingDir,
-        current.settings.executionPolicy,
-        scriptArgs,
-        tab.title,
-      );
+      const command = directPath
+        ? buildDirectTerminalRunCommand({
+            scriptPath: directPath,
+            workingDir,
+            executionPolicy: current.settings.executionPolicy,
+            scriptArgs,
+          })
+        : await cmd.prepareTerminalScriptCommand(
+            psPath,
+            scriptContent,
+            workingDir,
+            current.settings.executionPolicy,
+            scriptArgs,
+            tab.title,
+          );
       return runCommandInTerminal(command, {
         clearBeforeRun: current.settings.clearOutputOnRun !== false,
         reveal: true,

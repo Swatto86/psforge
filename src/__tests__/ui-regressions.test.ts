@@ -37,6 +37,11 @@ describe("Integrated terminal stability", () => {
     expect(terminalPane).toContain("resolveConsoleFontFamily");
     expect(xtermSetup).toContain("customGlyphs: true");
   });
+
+  it("runs saved scripts in the current console session", () => {
+    expect(executionActionsSource).toContain("buildDirectTerminalRunCommand");
+    expect(executionActionsSource).toContain("isSavedDiskScript");
+  });
 });
 
 describe("Script param inspection and run guard", () => {

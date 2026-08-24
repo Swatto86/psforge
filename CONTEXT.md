@@ -2,7 +2,7 @@
 
 ## Operational notes
 
-- Current version: **1.4.23**. Consoles sync colour scheme + font from Windows Terminal `settings.json` when present; enable Settings → Terminal Profile Loading for Oh My Posh prompt scripts.
+- Current version: **1.4.24**. Open a `.ps1` and press F5 to run it in the integrated console (same session as typing `& '.\script.ps1'` in VS Code / Windows Terminal). Untitled buffers still use the temp `psrun` wrapper.
 - Verification: `pwsh scripts/fastcheck.ps1`, `npm test`, `npm run build`, `cargo fmt/clippy/test` in `src-tauri`, release via tag after CI green on the release commit.
 - Local unsigned NSIS: `npx tauri build --bundles nsis --config src-tauri/tauri.local-nsis.json` (disables updater signing artifacts).
 

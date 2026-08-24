@@ -354,7 +354,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   runDirPresets: [],
   showPs7InstallReminder: true,
   checkForUpdatesOnStartup: true,
-  terminalLoadProfile: false,
+  terminalLoadProfile: true,
   showTimestamps: false,
   outputFontSize: 13,
   outputFontFamily: "'JetBrainsMono Nerd Font', 'CaskaydiaCove Nerd Font', 'CaskaydiaCove NF', 'Cascadia Code NF', Cascadia Code, Consolas, 'Segoe UI Emoji', 'Segoe UI Symbol', 'Apple Color Emoji', 'Noto Color Emoji', monospace",

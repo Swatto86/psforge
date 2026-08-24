@@ -875,7 +875,7 @@ export function TerminalPane() {
       id: "console-1",
       title: "Console 1",
       shellPath: state.selectedPsPath || "",
-      loadProfile: state.settings.terminalLoadProfile === true,
+      loadProfile: state.settings.terminalLoadProfile !== false,
     },
   ]);
   const [activeTabId, setActiveTabId] = useState("console-1");
@@ -932,7 +932,7 @@ export function TerminalPane() {
       id,
       title: `Console ${tabCounterRef.current}`,
       shellPath: state.selectedPsPath || "",
-      loadProfile: state.settings.terminalLoadProfile === true,
+      loadProfile: state.settings.terminalLoadProfile !== false,
     };
     dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
     setTabs((prev) => [...prev, tab]);
@@ -946,7 +946,7 @@ export function TerminalPane() {
       id,
       title: `Remote: ${target}`,
       shellPath: state.selectedPsPath || "",
-      loadProfile: state.settings.terminalLoadProfile === true,
+      loadProfile: state.settings.terminalLoadProfile !== false,
       startupCommand: `Enter-PSSession -ComputerName ${quotePs(target)}`,
     };
     setTabs((prev) => [...prev, tab]);
@@ -1031,7 +1031,7 @@ export function TerminalPane() {
       id,
       title: `Console ${tabCounterRef.current}`,
       shellPath: state.selectedPsPath || "",
-      loadProfile: state.settings.terminalLoadProfile === true,
+      loadProfile: state.settings.terminalLoadProfile !== false,
     };
     setTabs((prev) => [...prev, tab]);
     return id;

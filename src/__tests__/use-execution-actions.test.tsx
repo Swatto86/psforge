@@ -214,18 +214,15 @@ describe("useExecutionActions", () => {
       await flushPromises();
     });
 
-    expect(commands.prepareTerminalScriptCommand).toHaveBeenCalledWith(
-      "pwsh",
-      tab.content,
-      "C:\\Scripts",
-      "Default",
-      [],
-      tab.title,
+    expect(commands.getScriptParameters).not.toHaveBeenCalled();
+    expect(commands.prepareTerminalScriptCommand).not.toHaveBeenCalled();
+    expect(runCommandInTerminal).toHaveBeenCalledWith(
+      "Set-Location -LiteralPath 'C:\\Scripts'; & 'C:\\Scripts\\script.ps1'",
+      {
+        clearBeforeRun: false,
+        reveal: true,
+      },
     );
-    expect(runCommandInTerminal).toHaveBeenCalledWith("prepared-command", {
-      clearBeforeRun: false,
-      reveal: true,
-    });
   });
 
   it("guards rapid duplicate run calls before React state updates", async () => {
@@ -247,7 +244,8 @@ describe("useExecutionActions", () => {
       await flushPromises();
     });
 
-    expect(commands.prepareTerminalScriptCommand).toHaveBeenCalledTimes(1);
+    expect(commands.prepareTerminalScriptCommand).not.toHaveBeenCalled();
+    expect(runCommandInTerminal).toHaveBeenCalledTimes(1);
 
     finishRun?.(0);
     await act(async () => {
@@ -405,6 +403,22 @@ describe("useExecutionActions", () => {
     resolveDebug?.(0);
     await act(async () => {
       await flushPromises();
+    });
+  });
+
+  it("keeps untitled scripts on the temp wrapper path", async () => {
+    const tab = codeTab();
+    tab.filePath = "";
+    tab.title = "Untitled-1";
+    await renderHarness(appState([tab], tab.id), tab);
+    await act(async () => {
+      await getActions().runScript();
+      await flushPromises();
+    });
+    expect(commands.prepareTerminalScriptCommand).toHaveBeenCalledTimes(1);
+    expect(runCommandInTerminal).toHaveBeenCalledWith("prepared-command", {
+      clearBeforeRun: false,
+      reveal: true,
     });
   });
 });

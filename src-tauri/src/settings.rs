@@ -225,7 +225,7 @@ pub struct AppSettings {
     pub check_for_updates_on_startup: bool,
 
     /// Whether the integrated terminal loads user/system PowerShell profiles.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub terminal_load_profile: bool,
 
     /// Whether timestamps are shown on captured script output.
@@ -452,7 +452,7 @@ impl Default for AppSettings {
             run_dir_presets: Vec::new(),
             show_ps7_install_reminder: true,
             check_for_updates_on_startup: true,
-            terminal_load_profile: false,
+            terminal_load_profile: true,
             show_timestamps: false,
             output_font_size: default_output_font_size(),
             output_font_family: default_output_font_family(),

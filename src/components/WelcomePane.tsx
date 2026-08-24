@@ -1,4 +1,4 @@
-/** PSForge Welcome Pane — paste-and-run focused quick start. */
+/** PSForge Welcome Pane — open-and-run, with paste as a secondary path. */
 
 import React, { useMemo } from "react";
 import { useAppState, newTabId, untitledCounter } from "../store";
@@ -90,7 +90,7 @@ export function WelcomePane() {
               lineHeight: 1.3,
             }}
           >
-            Paste a script. Run it.
+            Open a script. Run it.
           </h1>
           <p
             className="mb-5"
@@ -100,10 +100,20 @@ export function WelcomePane() {
               maxWidth: "36rem",
             }}
           >
-            Clean pasted PowerShell, run it in the terminal below, then copy
-            results back to your AI assistant when something needs fixing.
+            Open a saved .ps1, press F5 — it runs in the terminal below, in
+            the current PowerShell session (same idea as VS Code). Paste
+            remains available when you are iterating with an AI.
           </p>
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              data-testid="welcome-open"
+              onClick={handleOpenFile}
+              className="btn btn-primary"
+              style={{ padding: "10px 18px", fontSize: "var(--ui-font-size-lg)" }}
+              title="Ctrl+O"
+            >
+              Open script…
+            </button>
             <button
               data-testid="welcome-paste"
               onClick={() => {
@@ -111,11 +121,11 @@ export function WelcomePane() {
                   window as unknown as Record<string, (() => void) | undefined>
                 ).__psforge_pasteFromClipboardAsNewScript?.();
               }}
-              className="btn btn-primary"
-              style={{ padding: "10px 18px", fontSize: "var(--ui-font-size-lg)" }}
+              className="btn btn-ghost"
+              style={{ padding: "8px 12px" }}
               title="Ctrl+Shift+Alt+V — cleans smart quotes and code fences, formats, then runs"
             >
-              {pasteRuns ? "Paste from clipboard + run" : "Paste from clipboard"}
+              {pasteRuns ? "Paste + run" : "Paste from clipboard"}
             </button>
             <button
               onClick={createNewFile}
@@ -124,14 +134,6 @@ export function WelcomePane() {
               title="Ctrl+N"
             >
               New
-            </button>
-            <button
-              onClick={handleOpenFile}
-              className="btn btn-ghost"
-              style={{ padding: "8px 12px" }}
-              title="Ctrl+O"
-            >
-              Open…
             </button>
           </div>
         </div>
