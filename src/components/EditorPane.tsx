@@ -29,7 +29,7 @@ import { getPsMonarchGrammar } from "../ps-grammar";
 import type { DebugBreakpoint, PsCompletion, ThemeName } from "../types";
 import { WelcomePane } from "./WelcomePane";
 import { analyzeScript, askAi, getCompletions } from "../commands";
-import { scheduleEditorDiagnostics } from "../editor-diagnostics";
+import { applyDiagnosticsMarkers, scheduleEditorDiagnostics } from "../editor-diagnostics";
 import {
   buildExplainQuestion,
   setExplainHandoff,
@@ -257,6 +257,11 @@ export function EditorPane() {
     psPathRef.current = state.selectedPsPath;
   }, [state.selectedPsPath]);
 
+  const problemsRef = useRef(state.problems);
+  useEffect(() => {
+    problemsRef.current = state.problems;
+  }, [state.problems]);
+
   // Timer ref for debouncing analyzer invocations.
   const pssaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pssaRequestIdRef = useRef(0);
@@ -328,8 +333,24 @@ export function EditorPane() {
     editorMountGen,
     activeTab?.id,
     state.settings.enablePssa,
+    state.settingsLoaded,
     state.selectedPsPath,
     dispatch,
+  ]);
+
+  // Paint squiggles when problems arrive or the editor model remounts.
+  useEffect(() => {
+    const tab = activeTabRef.current;
+    if (!monacoReady || !tab || tab.tabType === "welcome") return;
+    const mon = monacoRef.current;
+    const model = editorRef.current?.getModel() ?? null;
+    if (!mon || !model) return;
+    applyDiagnosticsMarkers(mon, model, state.problems[tab.id] ?? []);
+  }, [
+    monacoReady,
+    editorMountGen,
+    activeTab?.id,
+    state.problems,
   ]);
 
   // Disposable for the registered completion provider (kept so we can clean
@@ -658,13 +679,19 @@ export function EditorPane() {
       // Analyze the open script immediately — do not wait for a keystroke.
       const tab = activeTabRef.current;
       if (tab && tab.tabType !== "welcome") {
+        const model = editor.getModel();
+        applyDiagnosticsMarkers(
+          monaco,
+          model,
+          problemsRef.current[tab.id] ?? [],
+        );
         scheduleEditorDiagnostics({
           enabled: settingsRef.current.enablePssa !== false,
           psPath: psPathRef.current,
           scriptContent: tab.content,
           tabId: tab.id,
           monaco,
-          model: editor.getModel(),
+          model,
           timerRef: pssaTimerRef,
           requestIdRef: pssaRequestIdRef,
           debounceMs: 0,

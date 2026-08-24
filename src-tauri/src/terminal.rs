@@ -34,6 +34,10 @@ const MIN_PTY_COLS: u16 = 1;
 ///    exit-status/command metadata without using fake command sentinels.
 const TERMINAL_BOOTSTRAP_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Continue'
+# PTY panes are short at first paint; suppress PSReadLine/profile resize noise.
+if ($env:PSFORGE_PTY_HOST -eq '1') {
+    $WarningPreference = 'SilentlyContinue'
+}
 
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = $utf8NoBom
@@ -187,6 +191,27 @@ try {
     # Shell integration is best-effort and must never break the terminal.
 }
 
+# Load the user profile *after* PSReadLine is configured for short PTY hosts.
+# Without -NoProfile on the process, profile init runs before this script and
+# can trigger ListView / WindowHeight warnings before we can fix them.
+if ($env:PSFORGE_LOAD_PROFILE -eq '1') {
+    try {
+        if (Test-Path -LiteralPath $PROFILE) {
+            . $PROFILE
+        }
+    } catch {
+        Write-Warning "PSForge: failed to load PowerShell profile: $($_.Exception.Message)"
+    }
+    try {
+        if (Get-Module -ListAvailable -Name PSReadLine) {
+            Import-Module PSReadLine -ErrorAction SilentlyContinue | Out-Null
+            Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
+        }
+    } catch {
+        # Profile may have reset PSReadLine; re-apply InlineView quietly.
+    }
+}
+
 function global:prompt {
     $esc = [char]27
     $cwd = (Get-Location).Path
@@ -326,9 +351,9 @@ pub async fn start_terminal(
 
     let mut cmd = CommandBuilder::new(program.clone());
     cmd.arg("-NoLogo");
-    if !load_profile {
-        cmd.arg("-NoProfile");
-    }
+    // Always skip automatic profile load; bootstrap loads it after PSReadLine
+    // is configured for short integrated-terminal panes.
+    cmd.arg("-NoProfile");
     cmd.arg("-ExecutionPolicy");
     cmd.arg("Bypass");
     cmd.arg("-NoExit");
@@ -337,6 +362,9 @@ pub async fn start_terminal(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("PSFORGE_PTY_HOST", "1");
+    if load_profile {
+        cmd.env("PSFORGE_LOAD_PROFILE", "1");
+    }
     // Where prepare_terminal_script_command stages the run wrapper; the
     // bootstrap's `psrun` executes it so runs echo as `psrun 'Name.ps1'`.
     if let Ok(run_file) = crate::utils::pending_terminal_run_path() {

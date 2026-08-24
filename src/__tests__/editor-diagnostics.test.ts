@@ -23,6 +23,47 @@ describe("editor diagnostics scheduling", () => {
     expect(editorPane).toContain("debounceMs: 0");
   });
 
+  it("runs analyze when only the PS host is ready (Monaco model optional)", async () => {
+    vi.useFakeTimers();
+    const setProblems = vi.fn();
+    const analyze = vi.fn().mockResolvedValue([
+      {
+        message: "Unexpected token",
+        severity: "ParseError",
+        ruleName: "Parser",
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 2,
+      },
+    ]);
+    const timerRef = { current: null as ReturnType<typeof setTimeout> | null };
+
+    scheduleEditorDiagnostics({
+      enabled: true,
+      psPath: "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      scriptContent: "$($$(",
+      tabId: "tab-1",
+      monaco: null,
+      model: null,
+      timerRef,
+      debounceMs: 0,
+      analyze,
+      setProblems,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    expect(analyze).toHaveBeenCalledOnce();
+    expect(setProblems).toHaveBeenCalledWith(
+      "tab-1",
+      expect.arrayContaining([
+        expect.objectContaining({ ruleName: "Parser" }),
+      ]),
+    );
+    vi.useRealTimers();
+  });
+
   it("does not clear Problems while Monaco or the PS host are not ready", () => {
     const setProblems = vi.fn();
     scheduleEditorDiagnostics({
@@ -118,10 +159,12 @@ describe("editor diagnostics scheduling", () => {
 });
 
 describe("terminal WindowHeight warning mitigations", () => {
-  it("bootstrap forces PSReadLine InlineView", () => {
+  it("bootstrap forces PSReadLine InlineView and deferred profile load", () => {
     expect(terminalBootstrap).toContain(
       "Set-PSReadLineOption -PredictionViewStyle InlineView",
     );
+    expect(terminalBootstrap).toContain("PSFORGE_LOAD_PROFILE");
     expect(terminalBootstrap).toContain("MIN_PTY_ROWS");
+    expect(terminalBootstrap).toContain("SilentlyContinue");
   });
 });

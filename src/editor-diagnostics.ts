@@ -35,6 +35,19 @@ export function diagnosticsToMarkers(
   }));
 }
 
+export function applyDiagnosticsMarkers(
+  monaco: typeof import("monaco-editor") | null,
+  model: MonacoEditor.ITextModel | null,
+  diags: PssaDiagnostic[],
+): void {
+  if (!monaco || !model) return;
+  monaco.editor.setModelMarkers(
+    model,
+    "pssa",
+    diagnosticsToMarkers(monaco, diags),
+  );
+}
+
 export type ScheduleDiagnosticsArgs = {
   enabled: boolean;
   psPath: string;
@@ -52,18 +65,14 @@ export type ScheduleDiagnosticsArgs = {
 
 function clearMarkersAndProblems(args: ScheduleDiagnosticsArgs): void {
   const { monaco, model, tabId, setProblems } = args;
-  if (monaco && model) {
-    monaco.editor.setModelMarkers(model, "pssa", []);
-  }
+  applyDiagnosticsMarkers(monaco, model, []);
   setProblems(tabId, []);
 }
 
 /**
- * Debounced editor diagnostics. Drive from tab content (typing, open, AI Fix)
- * so Reference → Problems stays in sync without requiring a keystroke.
- *
- * When Monaco/model/PowerShell path are not ready yet, wait — do not clear
- * Problems (that race left the Reference tab empty until the user typed).
+ * Debounced editor diagnostics. Runs analyze when script + PS host are ready
+ * (Monaco optional). Reference → Problems updates even before the editor model
+ * exists; squiggles apply when the model is available.
  */
 export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
   if (args.timerRef.current !== null) {
@@ -76,8 +85,8 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
     return;
   }
 
-  const { monaco, model, psPath } = args;
-  if (!monaco || !model || !psPath) {
+  const psPath = args.psPath.trim();
+  if (!psPath) {
     return;
   }
 
@@ -85,6 +94,7 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
   const content = args.scriptContent;
   const setProblems = args.setProblems;
   const analyze = args.analyze;
+  const { monaco, model } = args;
   const requestId = args.requestIdRef
     ? ++args.requestIdRef.current
     : 0;
@@ -98,12 +108,8 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
         ) {
           return;
         }
-        monaco.editor.setModelMarkers(
-          model,
-          "pssa",
-          diagnosticsToMarkers(monaco, diags),
-        );
         setProblems(tabId, diags);
+        applyDiagnosticsMarkers(monaco, model, diags);
       })
       .catch(() => {
         if (
@@ -112,13 +118,8 @@ export function scheduleEditorDiagnostics(args: ScheduleDiagnosticsArgs): void {
         ) {
           return;
         }
-        clearMarkersAndProblems({
-          ...args,
-          monaco,
-          model,
-          tabId,
-          setProblems,
-        });
+        setProblems(tabId, []);
+        applyDiagnosticsMarkers(monaco, model, []);
       });
   }, args.debounceMs);
 }
