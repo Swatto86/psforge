@@ -17,12 +17,10 @@ describe("clampPtyDims", () => {
 });
 
 describe("editor diagnostics scheduling", () => {
-  it("EditorPane schedules analysis on mount and from tab content", () => {
-    expect(editorPane).toContain("scheduleEditorDiagnostics");
-    expect(editorPane).toContain("Analyze the open script immediately");
+  it("EditorPane paints diagnostics markers from app-level analysis", () => {
+    expect(editorPane).toContain("applyDiagnosticsMarkers");
     expect(editorPane).toContain("editorMountGen");
-    expect(editorPane).toContain("activeTabIdRef");
-    expect(editorPane).toContain("contentChanged ? 300 : 0");
+    expect(editorPane).not.toContain("scheduleEditorDiagnostics");
   });
 
   it("runs analyze when only the PS host is ready (Monaco model optional)", async () => {

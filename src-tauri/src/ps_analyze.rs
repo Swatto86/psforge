@@ -35,9 +35,10 @@ $ErrorActionPreference = 'SilentlyContinue'
 $path = $env:PSFORGE_ANALYZE_PATH
 if (-not $path -or -not (Test-Path -LiteralPath $path)) { '[]'; exit 0 }
 $__s = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+$__tokens = $null
 $__errs = $null
-[void][System.Management.Automation.Language.Parser]::ParseInput(
-    $__s, [ref]$null, [ref]$__errs)
+$__ast = [System.Management.Automation.Language.Parser]::ParseInput(
+    $__s, [ref]$__tokens, [ref]$__errs)
 $__out = New-Object System.Collections.ArrayList
 foreach ($e in @($__errs)) {
     if ($null -eq $e) { continue }
@@ -51,6 +52,49 @@ foreach ($e in @($__errs)) {
         endLine   = [int]$ext.EndLineNumber
         endColumn = [int]$ext.EndColumnNumber
     })
+}
+if ($__ast) {
+    $typeAsts = $null
+    try {
+        $typeAsts = @($__ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.TypeDefinitionAst]
+        }, $true))
+    } catch {
+        $typeAsts = @()
+    }
+    if ($typeAsts.Count -gt 0) {
+        $classInfo = @{}
+        foreach ($t in $typeAsts) {
+            $ctors = @($t.Members | Where-Object {
+                $_ -is [System.Management.Automation.Language.FunctionMemberAst] -and
+                $_.Name -eq $t.Name
+            })
+            $hasParamless = @($ctors | Where-Object { $_.Parameters.Count -eq 0 }).Count -gt 0
+            $classInfo[[string]$t.Name] = @{ HasParamlessCtor = $hasParamless }
+        }
+        foreach ($t in $typeAsts) {
+            if ($t.BaseTypes.Count -eq 0) { continue }
+            $baseName = [string]$t.BaseTypes[0].TypeName.FullName
+            if (-not $classInfo.ContainsKey($baseName)) { continue }
+            if ($classInfo[$baseName].HasParamlessCtor) { continue }
+            $derivedCtors = @($t.Members | Where-Object {
+                $_ -is [System.Management.Automation.Language.FunctionMemberAst] -and
+                $_.Name -eq $t.Name
+            })
+            if ($derivedCtors.Count -gt 0) { continue }
+            $ext = $t.Extent
+            [void]$__out.Add([pscustomobject]@{
+                message   = "Base class '$baseName' does not contain a parameterless constructor."
+                severity  = 'ParseError'
+                ruleName  = 'Parser'
+                line      = [int]$ext.StartLineNumber
+                column    = [int]$ext.StartColumnNumber
+                endLine   = [int]$ext.EndLineNumber
+                endColumn = [int]$ext.EndColumnNumber
+            })
+        }
+    }
 }
 if (Get-Module -ListAvailable -Name PSScriptAnalyzer) {
     Import-Module PSScriptAnalyzer -ErrorAction SilentlyContinue
@@ -261,6 +305,33 @@ mod tests {
         assert!(
             ANALYZE_SCRIPT_PS.contains("ruleName  = 'Parser'"),
             "parse errors must be tagged ruleName Parser"
+        );
+        assert!(
+            ANALYZE_SCRIPT_PS.contains("TypeDefinitionAst"),
+            "analyze path must validate class inheritance"
+        );
+    }
+
+    /// Live gate: implicit derived ctor with non-parameterless base is reported.
+    #[tokio::test]
+    async fn analyze_script_reports_class_inheritance_errors() {
+        let Some(pwsh) = find_pwsh() else {
+            eprintln!("skip: pwsh not on PATH");
+            return;
+        };
+
+        let broken = "class Pet { Pet([string]$n) { } }\nclass Dog : Pet { [string] Speak() { 'x' } }\n";
+        let diags = analyze_script(pwsh.to_string_lossy().into_owned(), broken.to_string())
+            .await
+            .expect("analyze_script must not error");
+
+        assert!(
+            diags.iter().any(|d| {
+                d.rule_name == "Parser"
+                    && d.line == 2
+                    && d.message.contains("parameterless constructor")
+            }),
+            "expected class inheritance diagnostic, got: {diags:?}"
         );
     }
 

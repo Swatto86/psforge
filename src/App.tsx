@@ -52,6 +52,7 @@ import { findProjectConfig } from "./project-config";
 import { useExecutionActions } from "./use-execution-actions";
 import { PssaRunGateDialog } from "./components/PssaRunGateDialog";
 import { usePssaAutoInstall } from "./components/PssaInstallControls";
+import { useEditorDiagnostics } from "./use-editor-diagnostics";
 import {
   ScratchRecoveryDialog,
   type ScratchRecoveryCandidate,
@@ -242,6 +243,13 @@ function AppInner() {
     enabled: state.settingsLoaded && state.settings.enablePssa !== false,
     autoInstall: state.settings.autoInstallPssa !== false,
     selectedPsPath: state.selectedPsPath,
+  });
+
+  useEditorDiagnostics({
+    enabled: state.settingsLoaded && state.settings.enablePssa !== false,
+    selectedPsPath: state.selectedPsPath,
+    activeTab,
+    dispatch,
   });
 
   const openPs7InstallPage = useCallback(() => {

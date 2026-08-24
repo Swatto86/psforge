@@ -28,8 +28,8 @@ import { getMonacoThemeData, monacoThemeName } from "../themes";
 import { getPsMonarchGrammar } from "../ps-grammar";
 import type { DebugBreakpoint, PsCompletion, ThemeName } from "../types";
 import { WelcomePane } from "./WelcomePane";
-import { analyzeScript, askAi, getCompletions } from "../commands";
-import { applyDiagnosticsMarkers, scheduleEditorDiagnostics } from "../editor-diagnostics";
+import { askAi, getCompletions } from "../commands";
+import { applyDiagnosticsMarkers } from "../editor-diagnostics";
 import {
   buildExplainQuestion,
   setExplainHandoff,
@@ -262,71 +262,14 @@ export function EditorPane() {
     problemsRef.current = state.problems;
   }, [state.problems]);
 
-  // Timer ref for debouncing analyzer invocations.
-  const pssaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pssaRequestIdRef = useRef(0);
-  const activeTabIdRef = useRef<string | undefined>(activeTab?.id);
-  const diagContentRef = useRef<string | null>(null);
-
+  // Drop squiggles from the previous tab when switching scripts.
   useEffect(() => {
-    activeTabIdRef.current = activeTab?.id;
-  }, [activeTab?.id]);
-
-  // Clear stale debounce timer whenever the active tab changes so a pending
-  // analysis from the previous tab does not fire after the switch.
-  // Also clear shared-model markers so the previous tab's squiggles do not
-  // linger on the newly shown script.
-  useEffect(() => {
-    diagContentRef.current = null;
-    if (pssaTimerRef.current !== null) {
-      clearTimeout(pssaTimerRef.current);
-      pssaTimerRef.current = null;
-    }
     const mon = monacoRef.current;
     const model = editorRef.current?.getModel();
     if (mon && model) {
       mon.editor.setModelMarkers(model, "pssa", []);
     }
   }, [activeTab?.id]);
-
-  // Open / remount / host / typing: one scheduler (immediate on open, debounced on edit).
-  useEffect(() => {
-    const tab = activeTabRef.current;
-    if (!tab || tab.tabType === "welcome") return;
-    if (state.settings.enablePssa === false) return;
-    const psPath = psPathRef.current.trim();
-    if (!psPath) return;
-
-    const contentChanged =
-      diagContentRef.current !== null &&
-      diagContentRef.current !== tab.content;
-    diagContentRef.current = tab.content;
-
-    scheduleEditorDiagnostics({
-      enabled: true,
-      psPath,
-      scriptContent: tab.content,
-      tabId: tab.id,
-      monaco: monacoRef.current,
-      model: editorRef.current?.getModel() ?? null,
-      timerRef: pssaTimerRef,
-      requestIdRef: pssaRequestIdRef,
-      activeTabIdRef,
-      debounceMs: contentChanged ? 300 : 0,
-      analyze: analyzeScript,
-      setProblems: (tabId, diagnostics) => {
-        dispatch({ type: "SET_PROBLEMS", tabId, diagnostics });
-      },
-    });
-  }, [
-    activeTab?.id,
-    activeTab?.content,
-    state.settings.enablePssa,
-    state.settingsLoaded,
-    state.selectedPsPath,
-    editorMountGen,
-    dispatch,
-  ]);
 
   // Paint squiggles when problems arrive or the editor model remounts.
   useEffect(() => {
@@ -396,7 +339,6 @@ export function EditorPane() {
       completionDisposableRef.current?.dispose();
       fixProblemApiRef.current?.dispose();
       fixProblemApiRef.current = null;
-      if (pssaTimerRef.current !== null) clearTimeout(pssaTimerRef.current);
       if (editorRef.current) {
         breakpointDecorationsRef.current = editorRef.current.deltaDecorations(
           breakpointDecorationsRef.current,
