@@ -31,6 +31,8 @@ interface ToolbarProps {
   /** Paste from clipboard, clean, format, and (per settings) run.
    *  Works from the Welcome tab too (opens a new script tab). */
   onPasteScript: () => void;
+  /** Paste the editor selection (or current line) into the integrated terminal. */
+  onCopySelectionToTerminal: () => void;
   /** Trigger Monaco's built-in Find & Replace widget. */
   onFindReplace: () => void;
   /** Open the current user's $PROFILE for editing. */
@@ -60,6 +62,7 @@ export function Toolbar({
   onStop,
   onFormat,
   onPasteScript,
+  onCopySelectionToTerminal,
   onFindReplace,
   onOpenProfile,
   onPrint,
@@ -288,6 +291,12 @@ export function Toolbar({
                 shortcut="Ctrl+Shift+Alt+V"
                 disabled={!state.selectedPsPath}
                 onClick={menuAction(onPasteScript)}
+              />
+              <MenuItem
+                label="Copy Selection to Terminal"
+                shortcut="Ctrl+Shift+Enter"
+                disabled={!hasCodeTab}
+                onClick={menuAction(onCopySelectionToTerminal)}
               />
               <MenuItem
                 label="Format Document"

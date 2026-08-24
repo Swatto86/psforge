@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDirectTerminalRunCommand,
+  formatDirectRunArg,
   isSavedDiskScript,
   psSingleQuote,
 } from "../direct-run";
@@ -22,14 +23,18 @@ describe("isSavedDiskScript", () => {
     expect(isSavedDiskScript(tab, tab.filePath, "")).toBe(true);
   });
 
-  it("rejects scratch-backed paths", () => {
+  it("treats scratch-backed paths as direct-runnable", () => {
     expect(
       isSavedDiskScript(
         tab,
         "C:\\Temp\\scratch\\tab-1.ps1",
         "C:\\Temp\\scratch",
       ),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("rejects an empty path", () => {
+    expect(isSavedDiskScript(tab, "", "C:\\Temp\\scratch")).toBe(false);
   });
 });
 
@@ -39,6 +44,19 @@ describe("psSingleQuote", () => {
       "'C:\\Scripts\\script.ps1'",
     );
     expect(psSingleQuote("O'Brien's.ps1")).toBe("'O''Brien''s.ps1'");
+  });
+});
+
+describe("formatDirectRunArg", () => {
+  it("keeps named-parameter tokens bare", () => {
+    expect(formatDirectRunArg("-Name")).toBe("-Name");
+    expect(formatDirectRunArg("-Switch:$true")).toBe("-Switch:$true");
+    expect(formatDirectRunArg("-Flag:$false")).toBe("-Flag:$false");
+  });
+
+  it("quotes plain values", () => {
+    expect(formatDirectRunArg("Alice")).toBe("'Alice'");
+    expect(formatDirectRunArg("O'Brien")).toBe("'O''Brien'");
   });
 });
 
@@ -67,7 +85,7 @@ describe("buildDirectTerminalRunCommand", () => {
     );
   });
 
-  it("appends already-tokenized script arguments", () => {
+  it("appends named args without quoting the -Param token", () => {
     expect(
       buildDirectTerminalRunCommand({
         scriptPath: "C:\\a.ps1",
@@ -75,8 +93,6 @@ describe("buildDirectTerminalRunCommand", () => {
         executionPolicy: "Default",
         scriptArgs: ["-Name", "x"],
       }),
-    ).toBe(
-      "Set-Location -LiteralPath 'C:\\'; & 'C:\\a.ps1' '-Name' 'x'",
-    );
+    ).toBe("Set-Location -LiteralPath 'C:\\'; & 'C:\\a.ps1' -Name 'x'");
   });
 });

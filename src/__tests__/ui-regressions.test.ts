@@ -261,8 +261,10 @@ describe("Dialog and icon-button accessibility", () => {
 
 describe("AI provider surfaces", () => {
   it("exposes OpenCode in Settings and provider/model pickers on the AI tab", () => {
-    expect(aiProviders).toContain('id: "anthropic"');
+    expect(aiProviders).toContain('id: "codex_cli"');
+    expect(aiProviders).toContain('id: "cursor_cli"');
     expect(aiProviders).toContain('id: "opencode_cli"');
+    expect(aiProviders).not.toContain('id: "anthropic"');
     expect(settingsPanel).toContain("AI_PROVIDERS.map");
     expect(settingsPanel).toContain('data-testid="settings-ai-provider"');
     expect(assistantPane).toContain("<AiProviderBar");

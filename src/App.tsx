@@ -506,6 +506,37 @@ function AppInner() {
     [],
   );
 
+  const copySelectionToTerminal = useCallback(async () => {
+    const text =
+      (
+        (window as unknown as Record<string, unknown>).__psforge_getRunText as
+          | (() => string)
+          | undefined
+      )?.() ?? "";
+    if (!text.trim()) {
+      await writeTerminalNotice(
+        "[PSForge] Nothing selected to copy to the terminal.",
+        { reveal: true },
+      );
+      return;
+    }
+    const pasteFn = (window as unknown as Record<string, unknown>)
+      .__psforge_terminal_paste as
+      | ((
+          terminalText: string,
+          pasteOptions?: { reveal?: boolean },
+        ) => Promise<void>)
+      | undefined;
+    if (!pasteFn) {
+      await writeTerminalNotice(
+        "[PSForge] Integrated terminal is not ready.",
+        { reveal: true },
+      );
+      return;
+    }
+    await pasteFn(text, { reveal: true });
+  }, [writeTerminalNotice]);
+
   const interruptTerminalCommand = useCallback(() => {
     const interruptFn = (window as unknown as Record<string, unknown>)
       .__psforge_terminal_interrupt as (() => void) | undefined;
@@ -1172,10 +1203,14 @@ function AppInner() {
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__psforge_pasteCleanAndFormat = pasteScriptFromClipboard;
+    w.__psforge_copySelectionToTerminal = () => {
+      void copySelectionToTerminal();
+    };
     return () => {
       delete w.__psforge_pasteCleanAndFormat;
+      delete w.__psforge_copySelectionToTerminal;
     };
-  }, [pasteScriptFromClipboard]);
+  }, [pasteScriptFromClipboard, copySelectionToTerminal]);
 
   useEffect(() => {
     void cmd.getScratchDir().then((dir) => {
@@ -1493,6 +1528,12 @@ function AppInner() {
         runSelection();
       }
 
+      // Ctrl+Shift+Enter: paste editor selection into the integrated terminal
+      if (e.ctrlKey && e.shiftKey && e.key === "Enter") {
+        e.preventDefault();
+        void copySelectionToTerminal();
+      }
+
       // F9: Toggle line breakpoint at the current cursor location.
       if (e.key === "F9" && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         e.preventDefault();
@@ -1670,6 +1711,7 @@ function AppInner() {
     debugStepOut,
     stopExecution,
     runSelection,
+    copySelectionToTerminal,
     formatCurrentScript,
     pasteScriptFromClipboard,
     toggleBookmarkAtCursor,
@@ -1921,6 +1963,7 @@ function AppInner() {
         onStop={stopExecution}
         onFormat={formatCurrentScript}
         onPasteScript={pasteScriptFromClipboard}
+        onCopySelectionToTerminal={() => void copySelectionToTerminal()}
         onFindReplace={() => {
           const trigger = (window as unknown as Record<string, unknown>)
             .__psforge_triggerFindReplace as (() => void) | undefined;

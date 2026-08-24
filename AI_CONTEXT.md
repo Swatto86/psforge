@@ -16,7 +16,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 |------|------|
 | Shell / shortcuts | `src/App.tsx` |
 | Menu bar + workflow toolbar | `src/components/Toolbar.tsx` (File/Edit/View/Help menus; Paste + Run / Run / Stop) |
-| AI assistant pane / providers | `src/components/AssistantPane.tsx`, `src/components/AiProviderBar.tsx`, `src-tauri/src/ai.rs`, `src-tauri/src/ai_opencode.rs` (`disableAi` hides the in-app assistant; OpenCode CLI can use local Ollama models; Send attaches `collectDebugBundleMarkdown` as `debugBundle`) |
+| AI assistant pane / providers | `src/components/AssistantPane.tsx`, `src/components/AiProviderBar.tsx`, `src-tauri/src/ai.rs`, `src-tauri/src/ai_cursor.rs`, `src-tauri/src/ai_codex.rs`, `src-tauri/src/ai_opencode.rs` (`disableAi` hides the in-app assistant; providers are Codex CLI / Cursor CLI / OpenCode CLI; OpenCode can use local Ollama models; Send attaches `collectDebugBundleMarkdown` as `debugBundle`) |
 | Editor + paste sanitize | `src/components/EditorPane.tsx`, `src/sanitize-paste.ts` |
 | Run helpers | `src/run-utils.ts`, `src/terminal-utils.ts`, `src/direct-run.ts` (saved-file F5) |
 | Terminal theme / WT sync | `src/terminal/windows-terminal-theme.ts`, `src/terminal/xterm-theme.ts`, `src-tauri/src/windows_terminal.rs` |
@@ -34,7 +34,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 
 1. **Paste:** Ctrl+V sanitize; Ctrl+Shift+Alt+V or Welcome **Paste from clipboard** → clean → format → optional F5.
 2. **Scratch:** Untitled tabs auto-save to `%APPDATA%/PSForge/scratch/{tabId}.ps1`; orphans offered via `list_scratch_files` + `ScratchRecoveryDialog`; close via `CloseScratchDialog`.
-3. **Run:** Saved files: `& 'path'` in the current console after `Set-Location` (`direct-run.ts`). Untitled/scratch: `psrun` temp wrapper. `resolveExecutionWorkDir()` + optional override; `.psforge.json` via `findProjectConfig`; presets in `settings.runDirPresets`; PSSA gate uses `PssaRunGateDialog` when warn.
+3. **Run:** Saved and scratch-backed tabs: `& 'path'` in the current console after `Set-Location` (`direct-run.ts`). Truly pathless buffers: `psrun` temp wrapper. `resolveExecutionWorkDir()` + optional override; `.psforge.json` via `findProjectConfig`; presets in `settings.runDirPresets`; PSSA gate uses `PssaRunGateDialog` when warn.
 4. **Output:** `__psforge_copy_terminal_output` (full scrollback); `__psforge_copy_last_run_output` (from `lastRunOutputStartLineRef` + line count).
 5. **Fonts:** `fontFamily` / `outputFontFamily` + sizes persist in Rust settings; `linkEditorOutputFonts` syncs family; status bar `FontQuickControls` + Settings presets.
 
@@ -44,6 +44,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-24:** Runner + AI providers (**1.4.28**). Untitled/scratch F5 now `&`s the on-disk scratch file in the live console (same path as saved scripts) instead of a `-NoProfile` child wrapper, so classes/profile/modules behave like interactive PowerShell; named `-Param` tokens are no longer single-quoted (that broke binder matching). Temp-wrapper fallback still uses the call operator (`&`) rather than dot-source. Edit → **Copy Selection to Terminal** (`Ctrl+Shift+Enter`, palette) pastes the editor selection into the PTY. AI providers trimmed to **Codex CLI**, **Cursor CLI**, and **OpenCode CLI** (local Ollama retained for OpenCode); Anthropic/OpenRouter/Claude/Kilo removed.
 - **2026-08-24:** Console chrome (**1.4.27**). Dropped the cyan `PSForge Terminal` line on session start so the shell prompt is the first thing shown. Moved the status-bar **Run:** / **Pinned:** path to the far left (no 220px cap) so the full working directory is visible; last-run / updates / Ln Col stay on the right.
 - **2026-08-24:** Removed **Copy for AI** (**1.4.26**). Ask / Write / Fix Send attaches `collectDebugBundleMarkdown` (script, last run, PSSA, working dir, terminal output) as `debugBundle`; the backend prefers that over the separate script/diagnostics/terminal fields. Palette and status-bar last-run no longer copy a bundle for external chats. Copy Last Run / Copy Output remain.
 - **2026-08-24:** OpenCode is a first-class AI provider (**1.4.25**). Settings and the AI tab can pick provider/model. OpenCode CLI (`opencode run --format json --model … --auto`) uses local Ollama models (`ollama/<tag>`), discovered via `GET /api/tags` on a loopback URL. Provider/model changes persist through the existing settings save debounce.

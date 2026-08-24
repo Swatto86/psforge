@@ -8,22 +8,21 @@ import {
 import { DEFAULT_SETTINGS } from "../types";
 
 describe("AI providers", () => {
-  it("includes Anthropic and OpenCode as first-class choices", () => {
+  it("exposes only Codex, Cursor, and OpenCode CLIs", () => {
     const ids = AI_PROVIDERS.map((provider) => provider.id);
-    expect(ids).toContain("anthropic");
-    expect(ids).toContain("opencode_cli");
+    expect(ids).toEqual(["codex_cli", "cursor_cli", "opencode_cli"]);
     expect(isAiProviderId("opencode_cli")).toBe(true);
-    expect(isAiProviderId("unknown")).toBe(false);
+    expect(isAiProviderId("anthropic")).toBe(false);
     expect(modelHintFor("opencode_cli")).toContain("ollama/");
   });
 
-  it("clears a cloud model when switching to OpenCode on the AI tab", () => {
-    const fromAnthropic = settingsAfterProviderChange(
-      { ...DEFAULT_SETTINGS, aiProvider: "anthropic", aiModel: "sonnet" },
+  it("keeps ollama models when staying on OpenCode", () => {
+    const fromCursor = settingsAfterProviderChange(
+      { ...DEFAULT_SETTINGS, aiProvider: "cursor_cli", aiModel: "auto" },
       "opencode_cli",
     );
-    expect(fromAnthropic.aiProvider).toBe("opencode_cli");
-    expect(fromAnthropic.aiModel).toBe("");
+    expect(fromCursor.aiProvider).toBe("opencode_cli");
+    expect(fromCursor.aiModel).toBe("");
 
     const keepOllama = settingsAfterProviderChange(
       {
@@ -37,15 +36,15 @@ describe("AI providers", () => {
       "ollama/huihui_ai/qwen3.8-abliterated:latest",
     );
 
-    const toAnthropic = settingsAfterProviderChange(
+    const toCodex = settingsAfterProviderChange(
       {
         ...DEFAULT_SETTINGS,
         aiProvider: "opencode_cli",
         aiModel: "ollama/qwen2.5-coder",
       },
-      "anthropic",
+      "codex_cli",
     );
-    expect(toAnthropic.aiProvider).toBe("anthropic");
-    expect(toAnthropic.aiModel).toBe("haiku");
+    expect(toCodex.aiProvider).toBe("codex_cli");
+    expect(toCodex.aiModel).toBe("gpt-5.3-codex");
   });
 });

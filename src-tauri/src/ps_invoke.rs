@@ -136,7 +136,9 @@ function __psforge_invoke_user_script {
         $__psforge_i++
     }
 
-    . $__psforge_script_path @__psforge_named @__psforge_positional
+    # Call operator (not dot-source): same param binding, script scope isolation
+    # closer to `pwsh -File` / interactive `& path.ps1` runs.
+    & $__psforge_script_path @__psforge_named @__psforge_positional
 }
 "#;
 
@@ -171,6 +173,10 @@ mod tests {
         assert!(script.contains("__psforge_invoke_user_script"));
         assert!(script.contains("__psforge_invoke_user_script @args"));
         assert!(script.contains("$__psforge_script_path = 'C:\\temp\\run.ps1'"));
+        assert!(
+            script.contains("& $__psforge_script_path @__psforge_named @__psforge_positional"),
+            "user script must use the call operator, not dot-source"
+        );
         assert!(
             script.contains("NetworkCredential"),
             "PS 5.1 SecureString path must be present"

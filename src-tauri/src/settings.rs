@@ -146,29 +146,21 @@ pub struct AppSettings {
     #[serde(default)]
     pub ai_effort: String,
 
-    /// Anthropic API key for provider = "anthropic".
+    /// Optional path to the Cursor Agent CLI (`agent`) binary.
     #[serde(default)]
-    pub ai_anthropic_api_key: String,
+    pub ai_cursor_cli_path: String,
 
-    /// OpenRouter API key for provider = "openrouter".
+    /// Optional Windows user profile whose Cursor CLI login should be used.
     #[serde(default)]
-    pub ai_openrouter_api_key: String,
+    pub ai_cursor_user_profile: String,
 
-    /// Optional path to the Claude CLI binary.
+    /// Optional path to the Codex CLI (`codex`) binary.
     #[serde(default)]
-    pub ai_claude_cli_path: String,
+    pub ai_codex_cli_path: String,
 
-    /// Optional Windows user profile whose Claude CLI login should be used.
+    /// Optional Windows user profile whose Codex CLI login should be used.
     #[serde(default)]
-    pub ai_claude_user_profile: String,
-
-    /// Optional path to the Kilo CLI binary.
-    #[serde(default)]
-    pub ai_kilo_cli_path: String,
-
-    /// Optional Windows user profile whose Kilo CLI login should be used.
-    #[serde(default)]
-    pub ai_kilo_cli_user_profile: String,
+    pub ai_codex_user_profile: String,
 
     /// Optional path to the OpenCode CLI binary.
     #[serde(default)]
@@ -391,7 +383,7 @@ fn default_split_position() -> f64 {
 }
 
 fn default_ai_provider() -> String {
-    "anthropic".to_string()
+    "cursor_cli".to_string()
 }
 
 fn normalize_ai_effort(value: &str) -> String {
@@ -403,10 +395,12 @@ fn normalize_ai_effort(value: &str) -> String {
 
 fn normalize_ai_provider(value: &str) -> String {
     match value.trim().to_lowercase().as_str() {
-        "claude_cli" => "claude_cli".to_string(),
-        "openrouter" | "open_router" => "openrouter".to_string(),
-        "kilo_cli" | "kilocode" | "kilo" => "kilo_cli".to_string(),
+        "codex_cli" | "codex" | "codex-cli" => "codex_cli".to_string(),
         "opencode_cli" | "opencode" | "opencode-cli" => "opencode_cli".to_string(),
+        "cursor_cli" | "cursor" | "cursor-cli" | "agent" => "cursor_cli".to_string(),
+        // Retired providers map to Cursor CLI so existing settings keep working.
+        "anthropic" | "claude_cli" | "openrouter" | "open_router" | "kilo_cli" | "kilocode"
+        | "kilo" => "cursor_cli".to_string(),
         _ => default_ai_provider(),
     }
 }
@@ -446,12 +440,10 @@ impl Default for AppSettings {
             ai_provider: default_ai_provider(),
             ai_model: String::new(),
             ai_effort: String::new(),
-            ai_anthropic_api_key: String::new(),
-            ai_openrouter_api_key: String::new(),
-            ai_claude_cli_path: String::new(),
-            ai_claude_user_profile: String::new(),
-            ai_kilo_cli_path: String::new(),
-            ai_kilo_cli_user_profile: String::new(),
+            ai_cursor_cli_path: String::new(),
+            ai_cursor_user_profile: String::new(),
+            ai_codex_cli_path: String::new(),
+            ai_codex_user_profile: String::new(),
             ai_opencode_cli_path: String::new(),
             ai_opencode_user_profile: String::new(),
             ai_ollama_base_url: String::new(),
@@ -841,20 +833,25 @@ mod tests {
     fn ai_settings_default_and_sanitize() {
         let defaulted: AppSettings =
             serde_json::from_str("{}").expect("empty document must parse to defaults");
-        assert_eq!(defaulted.ai_provider, "anthropic");
+        assert_eq!(defaulted.ai_provider, "cursor_cli");
         assert!(defaulted.ai_model.is_empty());
 
         let mut settings: AppSettings =
-            serde_json::from_str(r#"{"aiProvider":"open_router","aiEffort":"HIGH"}"#)
+            serde_json::from_str(r#"{"aiProvider":"anthropic","aiEffort":"HIGH"}"#)
                 .expect("settings parse");
         settings.sanitize();
-        assert_eq!(settings.ai_provider, "openrouter");
+        assert_eq!(settings.ai_provider, "cursor_cli");
         assert_eq!(settings.ai_effort, "high");
 
         let mut opencode: AppSettings =
             serde_json::from_str(r#"{"aiProvider":"opencode"}"#).expect("opencode alias");
         opencode.sanitize();
         assert_eq!(opencode.ai_provider, "opencode_cli");
+
+        let mut codex: AppSettings =
+            serde_json::from_str(r#"{"aiProvider":"codex"}"#).expect("codex alias");
+        codex.sanitize();
+        assert_eq!(codex.ai_provider, "codex_cli");
     }
 
     #[test]

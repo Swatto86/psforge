@@ -53,6 +53,10 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "F2", description: "Go to next bookmark" },
       { keys: "Shift+F2", description: "Go to previous bookmark" },
       { keys: "F8", description: "Run selection (or current line)" },
+      {
+        keys: "Ctrl+Shift+Enter",
+        description: "Copy selection (or current line) to the terminal",
+      },
       { keys: "F10", description: "Debugger step over (when paused)" },
       { keys: "F11", description: "Debugger step into (when paused)" },
       { keys: "Shift+F11", description: "Debugger step out (when paused)" },

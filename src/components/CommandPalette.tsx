@@ -238,6 +238,20 @@ export function CommandPalette() {
           ).__psforge_pasteCleanAndFormat?.();
         },
       });
+
+      result.push({
+        id: "cmd-copy-selection-to-terminal",
+        label: "Copy Selection to Terminal",
+        category: "Editor",
+        description:
+          "Paste the editor selection (or current line) into the integrated terminal",
+        action: () => {
+          close();
+          (
+            window as unknown as Record<string, (() => void) | undefined>
+          ).__psforge_copySelectionToTerminal?.();
+        },
+      });
     }
 
     return result;

@@ -2,6 +2,8 @@
 /// Main library module that registers all Tauri commands and plugins.
 pub mod ai;
 pub mod ai_cli;
+pub mod ai_codex;
+pub mod ai_cursor;
 pub mod ai_ollama;
 pub mod ai_opencode;
 pub mod commands;

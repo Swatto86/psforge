@@ -1489,14 +1489,13 @@ export function SettingsPanel() {
               <SectionHeading>AI Assistant</SectionHeading>
 
               <InfoBox warn>
-                API keys are stored in PSForge settings on this Windows account.
-                Claude CLI, Kilo CLI, and OpenCode CLI reuse your local logged-in
-                CLI session. OpenCode can use local Ollama models.
+                Cursor CLI, Codex CLI, and OpenCode CLI reuse your local
+                logged-in CLI session. OpenCode can also use local Ollama models.
               </InfoBox>
 
               <SettingRow
                 label="Provider"
-                tooltip="Anthropic API, Claude CLI, OpenRouter, Kilo CLI, or OpenCode CLI (including local Ollama models)."
+                tooltip="Codex CLI, Cursor CLI, or OpenCode CLI (including local Ollama models)."
               >
                 <select
                   data-testid="settings-ai-provider"
@@ -1519,7 +1518,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Model"
-                tooltip="Blank uses the provider default where supported. Kilo CLI requires a model. OpenCode lists local Ollama models on the AI tab."
+                tooltip="Blank uses the provider default where supported. OpenCode lists local Ollama models on the AI tab; Cursor CLI can Refresh models."
               >
                 <TextInput
                   value={state.settings.aiModel}
@@ -1552,75 +1551,51 @@ export function SettingsPanel() {
                 </select>
               </SettingRow>
 
-              <SectionHeading>API Providers</SectionHeading>
-
-              <SettingRow
-                label="Anthropic API Key"
-                tooltip="Used when Provider is Anthropic API."
-              >
-                <SecretInput
-                  value={state.settings.aiAnthropicApiKey}
-                  onChange={(v) => updateSetting("aiAnthropicApiKey", v)}
-                  placeholder="sk-ant-..."
-                />
-              </SettingRow>
-
-              <SettingRow
-                label="OpenRouter API Key"
-                tooltip="Used when Provider is OpenRouter. If blank, PSForge also checks ~/.openrouter/config.json."
-              >
-                <SecretInput
-                  value={state.settings.aiOpenrouterApiKey}
-                  onChange={(v) => updateSetting("aiOpenrouterApiKey", v)}
-                  placeholder="sk-or-..."
-                />
-              </SettingRow>
-
               <SectionHeading>CLI Providers</SectionHeading>
 
               <SettingRow
-                label="Claude CLI Path"
-                tooltip="Optional. Blank auto-detects the standard Claude CLI path, then PATH."
+                label="Cursor CLI Path"
+                tooltip="Optional. Blank auto-detects the Cursor Agent (`agent`) binary, then PATH."
               >
                 <TextInput
-                  value={state.settings.aiClaudeCliPath}
-                  onChange={(v) => updateSetting("aiClaudeCliPath", v)}
-                  placeholder="C:\\Users\\You\\.local\\bin\\claude.exe"
+                  value={state.settings.aiCursorCliPath}
+                  onChange={(v) => updateSetting("aiCursorCliPath", v)}
+                  placeholder="C:\\Users\\You\\.local\\bin\\agent.cmd"
                   width="w-96"
                 />
               </SettingRow>
 
               <SettingRow
-                label="Claude User Profile"
-                tooltip="Optional Windows profile root whose Claude CLI login should be used."
+                label="Cursor User Profile"
+                tooltip="Optional Windows profile root whose Cursor CLI login should be used."
               >
                 <TextInput
-                  value={state.settings.aiClaudeUserProfile}
-                  onChange={(v) => updateSetting("aiClaudeUserProfile", v)}
+                  value={state.settings.aiCursorUserProfile}
+                  onChange={(v) => updateSetting("aiCursorUserProfile", v)}
                   placeholder="C:\\Users\\You"
                   width="w-96"
                 />
               </SettingRow>
 
               <SettingRow
-                label="Kilo CLI Path"
-                tooltip="Optional. Blank auto-detects the Kilo CLI install path, then PATH."
+                label="Codex CLI Path"
+                tooltip="Optional. Blank auto-detects the Codex CLI install path, then PATH."
               >
                 <TextInput
-                  value={state.settings.aiKiloCliPath}
-                  onChange={(v) => updateSetting("aiKiloCliPath", v)}
-                  placeholder="C:\\Users\\You\\AppData\\Roaming\\npm\\kilo.cmd"
+                  value={state.settings.aiCodexCliPath}
+                  onChange={(v) => updateSetting("aiCodexCliPath", v)}
+                  placeholder="C:\\Users\\You\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe"
                   width="w-96"
                 />
               </SettingRow>
 
               <SettingRow
-                label="Kilo User Profile"
-                tooltip="Optional Windows profile root whose Kilo CLI login should be used."
+                label="Codex User Profile"
+                tooltip="Optional Windows profile root whose Codex CLI login should be used."
               >
                 <TextInput
-                  value={state.settings.aiKiloCliUserProfile}
-                  onChange={(v) => updateSetting("aiKiloCliUserProfile", v)}
+                  value={state.settings.aiCodexUserProfile}
+                  onChange={(v) => updateSetting("aiCodexUserProfile", v)}
                   placeholder="C:\\Users\\You"
                   width="w-96"
                 />
@@ -1988,26 +1963,6 @@ function TextInput({
         </p>
       )}
     </div>
-  );
-}
-
-function SecretInput({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-}) {
-  return (
-    <input
-      type="password"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="w-96 text-sm"
-    />
   );
 }
 

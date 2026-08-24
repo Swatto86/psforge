@@ -4,22 +4,35 @@
  */
 
 import type { EditorTab } from "./types";
-import { isScratchBackedTab } from "./scratch-utils";
 
-/** True when F5 should `&` the file in the open console (not a temp wrapper). */
+/**
+ * True when F5 should `&` the file in the open console (not a temp wrapper).
+ * Scratch-backed paths count: they are real files on disk, so running them
+ * in the live console matches saved-script behaviour (profile, modules, classes).
+ */
 export function isSavedDiskScript(
-  tab: EditorTab,
+  _tab: EditorTab,
   scriptPath: string,
-  scratchDir: string,
+  _scratchDir: string,
 ): boolean {
-  if (!scriptPath.trim()) return false;
-  if (!scratchDir) return true;
-  return !isScratchBackedTab({ ...tab, filePath: scriptPath }, scratchDir);
+  return scriptPath.trim().length > 0;
 }
 
 /** PowerShell single-quoted literal, with `'` doubled. */
 export function psSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Format one token for `& path.ps1 …`. Named-parameter tokens (`-Name`,
+ * `-Switch:$true`) must stay bare; quoting them turns them into strings and
+ * breaks binder matching.
+ */
+export function formatDirectRunArg(arg: string): string {
+  if (/^-[A-Za-z_][\w]*(?::\S*)?$/.test(arg)) {
+    return arg;
+  }
+  return psSingleQuote(arg);
 }
 
 export function buildDirectTerminalRunCommand(options: {
@@ -42,7 +55,7 @@ export function buildDirectTerminalRunCommand(options: {
   let invoke = `& ${psSingleQuote(options.scriptPath)}`;
   const args = options.scriptArgs ?? [];
   if (args.length > 0) {
-    invoke += ` ${args.map(psSingleQuote).join(" ")}`;
+    invoke += ` ${args.map(formatDirectRunArg).join(" ")}`;
   }
   parts.push(invoke);
   return parts.join("; ");

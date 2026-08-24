@@ -229,23 +229,19 @@ export interface AppSettings {
   /** Master switch: when true, every AI feature is hidden and AI requests are refused. */
   disableAi: boolean;
   /** AI provider used by the Assistant pane. */
-  aiProvider: "anthropic" | "claude_cli" | "openrouter" | "kilo_cli" | "opencode_cli";
+  aiProvider: "codex_cli" | "cursor_cli" | "opencode_cli";
   /** AI model name; blank uses the provider default where supported. */
   aiModel: string;
   /** Provider reasoning effort. */
   aiEffort: "" | "low" | "medium" | "high" | "xhigh" | "max";
-  /** Anthropic API key for provider = "anthropic". */
-  aiAnthropicApiKey: string;
-  /** OpenRouter API key for provider = "openrouter". */
-  aiOpenrouterApiKey: string;
-  /** Optional Claude CLI binary path. */
-  aiClaudeCliPath: string;
-  /** Optional Windows profile root for Claude CLI login reuse. */
-  aiClaudeUserProfile: string;
-  /** Optional Kilo CLI binary path. */
-  aiKiloCliPath: string;
-  /** Optional Windows profile root for Kilo CLI login reuse. */
-  aiKiloCliUserProfile: string;
+  /** Optional Cursor Agent CLI (`agent`) binary path. */
+  aiCursorCliPath: string;
+  /** Optional Windows profile root for Cursor CLI login reuse. */
+  aiCursorUserProfile: string;
+  /** Optional Codex CLI (`codex`) binary path. */
+  aiCodexCliPath: string;
+  /** Optional Windows profile root for Codex CLI login reuse. */
+  aiCodexUserProfile: string;
   /** Optional OpenCode CLI binary path. */
   aiOpencodeCliPath: string;
   /** Optional Windows profile root for OpenCode config/login reuse. */
@@ -338,15 +334,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   runAfterSanitizedPaste: false,
   assistantMode: false,
   disableAi: false,
-  aiProvider: "anthropic",
+  aiProvider: "cursor_cli",
   aiModel: "",
   aiEffort: "",
-  aiAnthropicApiKey: "",
-  aiOpenrouterApiKey: "",
-  aiClaudeCliPath: "",
-  aiClaudeUserProfile: "",
-  aiKiloCliPath: "",
-  aiKiloCliUserProfile: "",
+  aiCursorCliPath: "",
+  aiCursorUserProfile: "",
+  aiCodexCliPath: "",
+  aiCodexUserProfile: "",
   aiOpencodeCliPath: "",
   aiOpencodeUserProfile: "",
   aiOllamaBaseUrl: "",

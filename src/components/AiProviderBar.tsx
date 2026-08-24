@@ -19,9 +19,13 @@ export function AiProviderBar() {
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (provider !== "opencode_cli") {
+    if (provider !== "opencode_cli" && provider !== "cursor_cli") {
       setLiveModels([]);
-      setWarning(null);
+      setWarning(
+        provider === "codex_cli"
+          ? "Set a Codex model in Settings, or leave blank for the CLI default."
+          : null,
+      );
       return;
     }
     setLoading(true);
@@ -40,6 +44,8 @@ export function AiProviderBar() {
     settings.aiOpencodeCliPath,
     settings.aiOpencodeUserProfile,
     settings.aiOllamaBaseUrl,
+    settings.aiCursorCliPath,
+    settings.aiCursorUserProfile,
     settings.disableAi,
   ]);
 
@@ -137,7 +143,7 @@ export function AiProviderBar() {
             ))}
           </datalist>
         </label>
-        {provider === "opencode_cli" && (
+        {(provider === "opencode_cli" || provider === "cursor_cli") && (
           <button
             type="button"
             className="bottom-pane-action self-end"

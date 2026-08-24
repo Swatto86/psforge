@@ -712,7 +712,14 @@ export function useExecutionActions({
     let recordScriptPath = tab.filePath;
     const recordTabTitle = tab.title;
 
-    if (current.settings.autoSaveOnRun && tab.isDirty) {
+    // Flush dirty buffer before a live-console `& path` run (including scratch).
+    // Untitled tabs pick up a scratch path when auto-scratch is on.
+    const shouldFlushForRun =
+      tab.isDirty &&
+      (current.settings.autoSaveOnRun ||
+        !!tab.filePath ||
+        current.settings.autoSaveScratchScripts !== false);
+    if (shouldFlushForRun) {
       let savePath = tab.filePath;
       if (!savePath && current.settings.autoSaveScratchScripts !== false) {
         const scratchDir = scratchDirRef.current;
@@ -758,7 +765,7 @@ export function useExecutionActions({
           });
           recordScriptPath = savePath;
         } catch {
-          // Save failed; continue running with unsaved content.
+          // Save failed; continue running with unsaved content via temp wrapper.
         }
       }
     }

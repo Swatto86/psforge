@@ -223,6 +223,8 @@ interface TerminalSessionHandle {
   submitCurrentInput: () => void;
   resetInput: () => void;
   writeLocal: (text: string) => void;
+  /** Paste text into the PTY (same path as terminal right-click paste). */
+  pasteText: (text: string) => void;
 }
 
 interface TerminalSessionProps {
@@ -301,6 +303,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       ((command: string) => Promise<number | null>) | null
     >(null);
     const writeLocalFnRef = useRef<((text: string) => void) | null>(null);
+    const pasteTextFnRef = useRef<((text: string) => void) | null>(null);
 
     useImperativeHandle(
       ref,
@@ -319,6 +322,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         submitCurrentInput: () => queueInputFnRef.current?.("\r", true),
         resetInput: () => queueInputFnRef.current?.("\u0003", true),
         writeLocal: (text: string) => writeLocalFnRef.current?.(text),
+        pasteText: (text: string) => pasteTextFnRef.current?.(text),
       }),
       [],
     );
@@ -505,6 +509,10 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       writeLocalFnRef.current = (text: string) => {
         if (!text) return;
         term.write(text.replace(/\r?\n/g, "\r\n"));
+      };
+      pasteTextFnRef.current = (text: string) => {
+        if (!text) return;
+        term.paste(text);
       };
       contentFnRef.current = (lineCount?: number) => {
         const buf = term.buffer.active;
@@ -767,6 +775,7 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         runOutputLineCountFnRef.current = null;
         execFnRef.current = null;
         writeLocalFnRef.current = null;
+        pasteTextFnRef.current = null;
         rejectPendingCommands("Terminal session was disposed.");
 
         const sid = sessionIdRef.current;
@@ -1103,6 +1112,25 @@ export function TerminalPane() {
     [dispatch, ensureLocalExecutionTab, waitForReadyHandle],
   );
 
+  const pasteToLocalTerminal = useCallback(
+    async (text: string, options?: { reveal?: boolean }) => {
+      if (!text) return;
+      const tabId = ensureLocalExecutionTab();
+      const reveal = options?.reveal !== false;
+      if (reveal) {
+        dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
+        setActiveTabId(tabId);
+      }
+      await sleep(0);
+      const handle = await waitForReadyHandle(tabId);
+      handle.pasteText(text);
+      if (reveal) {
+        handle.focus();
+      }
+    },
+    [dispatch, ensureLocalExecutionTab, waitForReadyHandle],
+  );
+
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__psforge_terminal_clear = () => getActiveHandle()?.clear();
@@ -1140,6 +1168,10 @@ export function TerminalPane() {
       text: string,
       options?: { reveal?: boolean },
     ) => writeNoticeToLocalTerminal(text, options);
+    w.__psforge_terminal_paste = (
+      text: string,
+      options?: { reveal?: boolean },
+    ) => pasteToLocalTerminal(text, options);
     // Stop (Shift+F5) must hit the console that is executing the F5 run, not
     // whichever console sub-tab is currently visible (same class as S6-20).
     w.__psforge_terminal_interrupt = () => {
@@ -1163,11 +1195,17 @@ export function TerminalPane() {
       delete w.__psforge_terminal_is_ready;
       delete w.__psforge_terminal_submit_current_input;
       delete w.__psforge_terminal_write_notice;
+      delete w.__psforge_terminal_paste;
       delete w.__psforge_terminal_interrupt;
       delete w.__psforge_terminal_reset_input;
       delete w.__psforge_highlight_ps;
     };
-  }, [activeTabId, runCommandInLocalTerminal, writeNoticeToLocalTerminal]);
+  }, [
+    activeTabId,
+    runCommandInLocalTerminal,
+    writeNoticeToLocalTerminal,
+    pasteToLocalTerminal,
+  ]);
 
   useEffect(() => {
     if (state.bottomPanelTab !== "terminal") return;
