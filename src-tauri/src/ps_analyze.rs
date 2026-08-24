@@ -320,7 +320,8 @@ mod tests {
             return;
         };
 
-        let broken = "class Pet { Pet([string]$n) { } }\nclass Dog : Pet { [string] Speak() { 'x' } }\n";
+        let broken =
+            "class Pet { Pet([string]$n) { } }\nclass Dog : Pet { [string] Speak() { 'x' } }\n";
         let diags = analyze_script(pwsh.to_string_lossy().into_owned(), broken.to_string())
             .await
             .expect("analyze_script must not error");
