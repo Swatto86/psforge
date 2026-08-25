@@ -162,6 +162,7 @@ pub fn run() {
             terminal::start_terminal,
             terminal::terminal_write,
             terminal::terminal_exec,
+            terminal::stage_terminal_run_prep,
             terminal::terminal_resize,
             terminal::stop_terminal,
             windows_terminal::read_windows_terminal_settings,

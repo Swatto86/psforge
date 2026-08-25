@@ -36,7 +36,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 
 1. **Paste:** Ctrl+V sanitize; Ctrl+Shift+Alt+V or Welcome **Paste from clipboard** → clean → format → optional F5.
 2. **Scratch:** Untitled tabs auto-save to `%APPDATA%/PSForge/scratch/{tabId}.ps1`; orphans offered via `list_scratch_files` + `ScratchRecoveryDialog`; close via `CloseScratchDialog`.
-3. **Run:** Saved and scratch-backed tabs: `& 'path'` in the current console after `Set-Location` (`direct-run.ts`). Truly pathless buffers: `psrun` temp wrapper. `resolveExecutionWorkDir()` + optional override; `.psforge.json` via `findProjectConfig`; presets in `settings.runDirPresets`; PSSA gate uses `PssaRunGateDialog` when warn.
+3. **Run:** Saved and scratch-backed tabs: `& 'path'` in the current console; working dir / execution policy staged via `stage_terminal_run_prep` and applied silently by the terminal bootstrap PSReadLine hook (`direct-run.ts`, `terminal.rs`). Truly pathless buffers: `psrun` temp wrapper. `resolveExecutionWorkDir()` + optional override; `.psforge.json` via `findProjectConfig`; presets in `settings.runDirPresets`; PSSA gate uses `PssaRunGateDialog` when warn.
 4. **Output:** `__psforge_copy_terminal_output` (full scrollback); `__psforge_copy_last_run_output` / **Script output** button copies stdout+stderr via OSC 633 capture in `src/run-output-capture.ts` (marker scrollback fallback).
 5. **Fonts:** `fontFamily` / `outputFontFamily` + sizes persist in Rust settings; `linkEditorOutputFonts` syncs family; status bar `FontQuickControls` + Settings presets.
 
@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-25:** Terminal run echo + menu hover (**1.4.41**). F5 on saved/scratch scripts no longer echoes `Set-Location` (or execution-policy setup) — prep is staged to `%APPDATA%/PSForge/pending-run-prep.json` and applied silently by the terminal bootstrap PSReadLine hook; the terminal shows only `& 'path.ps1'`. Menu dropdown items use accent-tinted hover so File/Edit/View/Help entries are visible when mousing over them.
 - **2026-08-24:** Terminal **Script output** copy (**1.4.40**). Toolbar button (was "Last run") copies last F5 stdout/stderr only: `run-output-capture.ts` parses OSC 633 markers to drop prompts and strips echoed command line; debug bundle uses same path.
 - **2026-08-24:** Runner + class `::new` diagnostics (**1.4.39**). F5 no longer runs stale disk when auto-save fails or is skipped (falls back to psrun with editor buffer). Analyzer flags invalid `[Type]::new(argCount)` for script-defined classes (e.g. `[Dog]::new('Rex', 7)` when Dog only has a parameterless ctor).
 - **2026-08-24:** Diagnostics launch + class inheritance (**1.4.38**). `useEditorDiagnostics` in `App.tsx` runs `analyze_script` independent of Monaco mount (fixes Reference/squiggles never starting). Analyzer AST-walks `TypeDefinitionAst` for implicit derived ctor vs non-parameterless base (e.g. `class Dog : Pet` at line 67). EditorPane only paints markers.

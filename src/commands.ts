@@ -362,6 +362,14 @@ export async function terminalExec(
   return invoke("terminal_exec", { sessionId, command });
 }
 
+/** Stage working-directory / execution-policy prep for the next terminal run. */
+export async function stageTerminalRunPrep(
+  workingDir: string,
+  executionPolicy: string,
+): Promise<void> {
+  return invoke("stage_terminal_run_prep", { workingDir, executionPolicy });
+}
+
 /** Resize the active PTY terminal using xterm.js cols/rows. */
 export async function terminalResize(
   sessionId: number,

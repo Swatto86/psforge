@@ -471,8 +471,9 @@ textarea:focus {
     color 0.15s ease;
 }
 
-.menu-item:hover:not(:disabled) {
-  background: var(--bg-hover);
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg-tertiary));
 }
 
 .menu-item:disabled {

@@ -873,21 +873,32 @@ export function useExecutionActions({
     dispatch({ type: "SET_RUNNING", running: true });
 
     const executeInTerminal = async (workingDir: string) => {
-      const command = directPath
-        ? buildDirectTerminalRunCommand({
-            scriptPath: directPath,
-            workingDir,
-            executionPolicy: current.settings.executionPolicy,
-            scriptArgs,
-          })
-        : await cmd.prepareTerminalScriptCommand(
-            psPath,
-            scriptContent,
-            workingDir,
-            current.settings.executionPolicy,
-            scriptArgs,
-            tab.title,
+      if (directPath) {
+        const runCmd = buildDirectTerminalRunCommand({
+          scriptPath: directPath,
+          workingDir,
+          executionPolicy: current.settings.executionPolicy,
+          scriptArgs,
+        });
+        if (runCmd.workingDir || runCmd.executionPolicy) {
+          await cmd.stageTerminalRunPrep(
+            runCmd.workingDir ?? "",
+            runCmd.executionPolicy ?? "Default",
           );
+        }
+        return runCommandInTerminal(runCmd.command, {
+          clearBeforeRun: current.settings.clearOutputOnRun !== false,
+          reveal: true,
+        });
+      }
+      const command = await cmd.prepareTerminalScriptCommand(
+        psPath,
+        scriptContent,
+        workingDir,
+        current.settings.executionPolicy,
+        scriptArgs,
+        tab.title,
+      );
       return runCommandInTerminal(command, {
         clearBeforeRun: current.settings.clearOutputOnRun !== false,
         reveal: true,

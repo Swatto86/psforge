@@ -61,28 +61,32 @@ describe("formatDirectRunArg", () => {
 });
 
 describe("buildDirectTerminalRunCommand", () => {
-  it("cds then invokes the saved script in the current session", () => {
+  it("invokes the saved script with silent run prep metadata", () => {
     expect(
       buildDirectTerminalRunCommand({
         scriptPath: "C:\\Scripts\\script.ps1",
         workingDir: "C:\\Scripts",
         executionPolicy: "Default",
       }),
-    ).toBe(
-      "Set-Location -LiteralPath 'C:\\Scripts'; & 'C:\\Scripts\\script.ps1'",
-    );
+    ).toEqual({
+      command: "& 'C:\\Scripts\\script.ps1'",
+      workingDir: "C:\\Scripts",
+      executionPolicy: null,
+    });
   });
 
-  it("applies a process-scoped execution policy when set", () => {
+  it("includes a non-default execution policy in run prep metadata", () => {
     expect(
       buildDirectTerminalRunCommand({
         scriptPath: "/tmp/a.ps1",
         workingDir: "/tmp",
         executionPolicy: "Bypass",
       }),
-    ).toBe(
-      "Set-ExecutionPolicy -Scope Process -ExecutionPolicy 'Bypass' -Force; Set-Location -LiteralPath '/tmp'; & '/tmp/a.ps1'",
-    );
+    ).toEqual({
+      command: "& '/tmp/a.ps1'",
+      workingDir: "/tmp",
+      executionPolicy: "Bypass",
+    });
   });
 
   it("appends named args without quoting the -Param token", () => {
@@ -93,6 +97,10 @@ describe("buildDirectTerminalRunCommand", () => {
         executionPolicy: "Default",
         scriptArgs: ["-Name", "x"],
       }),
-    ).toBe("Set-Location -LiteralPath 'C:\\'; & 'C:\\a.ps1' -Name 'x'");
+    ).toEqual({
+      command: "& 'C:\\a.ps1' -Name 'x'",
+      workingDir: "C:\\",
+      executionPolicy: null,
+    });
   });
 });

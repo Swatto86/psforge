@@ -1,7 +1,18 @@
 /**
  * VS Code-style terminal run: invoke a saved script in the current session
- * (`Set-Location`; `& 'path.ps1'`), not a fresh -NoProfile child.
+ * (`& 'path.ps1'`), not a fresh -NoProfile child. Working-directory and
+ * execution-policy setup run as a silent prelude so the echoed command line
+ * shows only the script invocation.
  */
+
+export interface DirectTerminalRunCommand {
+  /** Echoed command line — script invocation only. */
+  command: string;
+  /** Working directory applied silently before the command runs. */
+  workingDir: string | null;
+  /** Process-scoped execution policy applied silently (when not Default). */
+  executionPolicy: string | null;
+}
 
 import type { EditorTab } from "./types";
 
@@ -40,23 +51,17 @@ export function buildDirectTerminalRunCommand(options: {
   workingDir: string;
   executionPolicy: string;
   scriptArgs?: readonly string[];
-}): string {
-  const parts: string[] = [];
-  const policy = options.executionPolicy.trim();
-  if (policy && policy !== "Default") {
-    parts.push(
-      `Set-ExecutionPolicy -Scope Process -ExecutionPolicy ${psSingleQuote(policy)} -Force`,
-    );
-  }
+}): DirectTerminalRunCommand {
   const workDir = options.workingDir.trim();
-  if (workDir) {
-    parts.push(`Set-Location -LiteralPath ${psSingleQuote(workDir)}`);
-  }
+  const policy = options.executionPolicy.trim();
   let invoke = `& ${psSingleQuote(options.scriptPath)}`;
   const args = options.scriptArgs ?? [];
   if (args.length > 0) {
     invoke += ` ${args.map(formatDirectRunArg).join(" ")}`;
   }
-  parts.push(invoke);
-  return parts.join("; ");
+  return {
+    command: invoke,
+    workingDir: workDir || null,
+    executionPolicy: policy && policy !== "Default" ? policy : null,
+  };
 }

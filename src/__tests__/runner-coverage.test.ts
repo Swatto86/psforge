@@ -26,12 +26,13 @@ describe("runner coverage fixture", () => {
   });
 
   it("builds a live-console & invoke for the fixture path", () => {
-    const command = buildDirectTerminalRunCommand({
+    const { command, workingDir } = buildDirectTerminalRunCommand({
       scriptPath: fixturePath,
       workingDir: dirname(fixturePath),
       executionPolicy: "Default",
       scriptArgs: ["-Name", "Alice", "-Switch:$true"],
     });
+    expect(workingDir).toBe(dirname(fixturePath));
     expect(command).toContain(`& '${fixturePath.replace(/'/g, "''")}'`);
     expect(command).toContain(" -Name 'Alice' ");
     expect(command).toContain(" -Switch:$true");

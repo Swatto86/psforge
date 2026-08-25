@@ -640,6 +640,13 @@ pub fn scratch_dir() -> Result<PathBuf, AppError> {
     Ok(settings_dir()?.join("scratch"))
 }
 
+/// Staged working directory / execution policy for the next terminal run.
+/// Read by the terminal bootstrap's PSReadLine hook so F5 can show only
+/// `& 'script.ps1'` without echoing Set-Location on the command line.
+pub fn pending_run_prep_path() -> Result<PathBuf, AppError> {
+    Ok(settings_dir()?.join("pending-run-prep.json"))
+}
+
 /// Returns the full path to settings.json.
 pub fn settings_path() -> Result<PathBuf, AppError> {
     Ok(settings_dir()?.join("settings.json"))

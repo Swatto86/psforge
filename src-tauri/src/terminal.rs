@@ -166,17 +166,38 @@ $global:PSForgePromptInitialised = $false
 try {
     if (Get-Module -ListAvailable -Name PSReadLine) {
         Import-Module PSReadLine -ErrorAction SilentlyContinue | Out-Null
-        # ListView needs a tall console; short bottom panes otherwise print
-        # "'WindowHeight' is not less than ..." warnings. InlineView is fine
-        # in an IDE-sized terminal.
-        Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
-        Set-PSReadLineOption -AddToHistoryHandler {
-            param([string]$line)
-            $esc = [char]27
-            $encodedLine = $line -replace ';', '%3B'
-            [Console]::Out.Write("$esc]633;E;$encodedLine`a")
-            return $true
+        function global:Install-PSForgeReadLineHooks {
+            try {
+                Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
+                Set-PSReadLineOption -AddToHistoryHandler {
+                    param([string]$line)
+                    $esc = [char]27
+                    $encodedLine = $line -replace ';', '%3B'
+                    [Console]::Out.Write("$esc]633;E;$encodedLine`a")
+                    $prepPath = Join-Path $env:APPDATA 'PSForge\pending-run-prep.json'
+                    if (Test-Path -LiteralPath $prepPath) {
+                        try {
+                            $prep = Get-Content -LiteralPath $prepPath -Raw | ConvertFrom-Json
+                            Remove-Item -LiteralPath $prepPath -Force -ErrorAction SilentlyContinue
+                            $wd = [string]$prep.workingDir
+                            if ($wd) {
+                                Set-Location -LiteralPath $wd
+                            }
+                            $policy = [string]$prep.executionPolicy
+                            if ($policy -and $policy -ne 'Default') {
+                                Set-ExecutionPolicy -Scope Process -ExecutionPolicy $policy -Force
+                            }
+                        } catch {
+                            # Run prep is best-effort and must never block execution.
+                        }
+                    }
+                    return $true
+                }
+            } catch {
+                # Shell integration is best-effort and must never break the terminal.
+            }
         }
+        Install-PSForgeReadLineHooks
     }
 } catch {
     # Shell integration is best-effort and must never break the terminal.
@@ -196,10 +217,14 @@ if ($env:PSFORGE_LOAD_PROFILE -eq '1') {
     try {
         if (Get-Module -ListAvailable -Name PSReadLine) {
             Import-Module PSReadLine -ErrorAction SilentlyContinue | Out-Null
-            Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
+            if (Get-Command -Name Install-PSForgeReadLineHooks -ErrorAction SilentlyContinue) {
+                Install-PSForgeReadLineHooks
+            } else {
+                Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
+            }
         }
     } catch {
-        # Profile may have reset PSReadLine; re-apply InlineView quietly.
+        # Profile may have reset PSReadLine; re-apply hooks quietly.
     }
 }
 
@@ -606,6 +631,39 @@ async fn terminal_write_for_session(session_id: Option<u64>, data: String) -> Re
 #[cfg_attr(not(test), tauri::command)]
 pub async fn terminal_exec(session_id: Option<u64>, command: String) -> Result<(), AppError> {
     terminal_write_for_session(session_id, format!("{}\r", command)).await
+}
+
+/// Stage working-directory / execution-policy prep for the next terminal run.
+/// The bootstrap PSReadLine hook applies this silently before the echoed command.
+#[cfg_attr(not(test), tauri::command)]
+pub async fn stage_terminal_run_prep(
+    working_dir: String,
+    execution_policy: String,
+) -> Result<(), AppError> {
+    let path = crate::settings::pending_run_prep_path()?;
+    let wd = working_dir.trim();
+    let policy = execution_policy.trim();
+    if wd.is_empty() && (policy.is_empty() || policy == "Default") {
+        let _ = std::fs::remove_file(&path);
+        return Ok(());
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError {
+            code: "RUN_PREP_WRITE_FAILED".to_string(),
+            message: format!("Failed to create PSForge config directory: {}", e),
+        })?;
+    }
+
+    let json = serde_json::json!({
+        "workingDir": wd,
+        "executionPolicy": policy,
+    });
+    crate::utils::atomic_write(&path, json.to_string().as_bytes()).map_err(|e| AppError {
+        code: "RUN_PREP_WRITE_FAILED".to_string(),
+        message: format!("Failed to stage terminal run prep: {}", e),
+    })?;
+    Ok(())
 }
 
 /// Resizes the active PTY to match the xterm.js viewport.

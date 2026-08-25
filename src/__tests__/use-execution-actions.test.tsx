@@ -34,6 +34,7 @@ vi.mock("../commands", () => ({
   executeScriptDebug: vi.fn(async () => 0),
   getScriptParameters: vi.fn(async () => ({ status: "none", parameters: [] })),
   prepareTerminalScriptCommand: vi.fn(async () => "prepared-command"),
+  stageTerminalRunPrep: vi.fn(async () => {}),
   readFileContent: vi.fn(async (path: string) => ({
     content: "",
     encoding: "utf8",
@@ -216,8 +217,12 @@ describe("useExecutionActions", () => {
 
     expect(commands.getScriptParameters).not.toHaveBeenCalled();
     expect(commands.prepareTerminalScriptCommand).not.toHaveBeenCalled();
+    expect(commands.stageTerminalRunPrep).toHaveBeenCalledWith(
+      "C:\\Scripts",
+      "Default",
+    );
     expect(runCommandInTerminal).toHaveBeenCalledWith(
-      "Set-Location -LiteralPath 'C:\\Scripts'; & 'C:\\Scripts\\script.ps1'",
+      "& 'C:\\Scripts\\script.ps1'",
       {
         clearBeforeRun: false,
         reveal: true,
