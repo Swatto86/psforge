@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-25:** Terminal cwd restore after F5 (**1.4.41**). After a direct-run script finishes, the integrated terminal returns to the cwd it had before the run (saved when run prep applies `Set-Location`; restored in the bootstrap `prompt` hook before the next prompt renders).
 - **2026-08-25:** Terminal run echo + menu hover (**1.4.41**). F5 on saved/scratch scripts no longer echoes `Set-Location` (or execution-policy setup) — prep is staged to `%APPDATA%/PSForge/pending-run-prep.json` and applied silently by the terminal bootstrap PSReadLine hook; the terminal shows only `& 'path.ps1'`. Menu dropdown items use accent-tinted hover so File/Edit/View/Help entries are visible when mousing over them.
 - **2026-08-24:** Terminal **Script output** copy (**1.4.40**). Toolbar button (was "Last run") copies last F5 stdout/stderr only: `run-output-capture.ts` parses OSC 633 markers to drop prompts and strips echoed command line; debug bundle uses same path.
 - **2026-08-24:** Runner + class `::new` diagnostics (**1.4.39**). F5 no longer runs stale disk when auto-save fails or is skipped (falls back to psrun with editor buffer). Analyzer flags invalid `[Type]::new(argCount)` for script-defined classes (e.g. `[Dog]::new('Rex', 7)` when Dog only has a parameterless ctor).

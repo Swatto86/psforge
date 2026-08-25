@@ -162,6 +162,7 @@ function global:psrun {
 # A = prompt start, B = prompt end, D = command finished with exit code,
 # E = command line submitted, P;Cwd=... = current working directory.
 $global:PSForgePromptInitialised = $false
+$script:PSForgeRestoreRunDir = $null
 
 try {
     if (Get-Module -ListAvailable -Name PSReadLine) {
@@ -181,6 +182,7 @@ try {
                             Remove-Item -LiteralPath $prepPath -Force -ErrorAction SilentlyContinue
                             $wd = [string]$prep.workingDir
                             if ($wd) {
+                                $script:PSForgeRestoreRunDir = (Get-Location).Path
                                 Set-Location -LiteralPath $wd
                             }
                             $policy = [string]$prep.executionPolicy
@@ -243,10 +245,17 @@ try {
 
 function global:prompt {
     $esc = [char]27
-    $cwd = (Get-Location).Path
-    $encodedCwd = $cwd -replace ';', '%3B'
 
     if ($global:PSForgePromptInitialised) {
+        if ($script:PSForgeRestoreRunDir) {
+            try {
+                Set-Location -LiteralPath $script:PSForgeRestoreRunDir
+            } catch {
+                # Best-effort restore after a PSForge-staged script run.
+            }
+            $script:PSForgeRestoreRunDir = $null
+        }
+
         $exitCode = 0
         if ($LASTEXITCODE -is [int]) {
             $exitCode = [int]$LASTEXITCODE
@@ -260,6 +269,9 @@ function global:prompt {
     } else {
         $global:PSForgePromptInitialised = $true
     }
+
+    $cwd = (Get-Location).Path
+    $encodedCwd = $cwd -replace ';', '%3B'
 
     [Console]::Out.Write("$esc]633;A`a")
     [Console]::Out.Write("$esc]633;P;Cwd=$encodedCwd`a")
