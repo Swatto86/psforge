@@ -21,7 +21,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Run helpers | `src/run-utils.ts`, `src/terminal-utils.ts`, `src/direct-run.ts` (saved-file F5) |
 | Terminal theme / WT sync | `src/terminal/windows-terminal-theme.ts`, `src/terminal/xterm-theme.ts`, `src-tauri/src/windows_terminal.rs` |
 | Font presets / status bar | `src/font-presets.ts`, `src/components/FontQuickControls.tsx` |
-| Terminal toolbar | `src/components/OutputPane.tsx` (`Clear` = restart session, `Copy` = selection, `Script output` = last F5 stdout/stderr) |
+| Terminal toolbar | `src/components/OutputPane.tsx` (`Clear` = wipe display then restart session, `Copy` = selection, `Script output` = last F5 stdout/stderr) |
 | Diagnostics | `src-tauri/src/ps_analyze.rs` (built-in parser + optional PSSA); `src-tauri/src/ps_pssa_install.rs` (check/install for PS 5.1/7); `src/components/PssaInstallControls.tsx` |
 | Fix Problem (AI) | `src/fix-problem.ts`, `src/editor-fix-problem.ts`, `src/components/ProblemsPane.tsx` (squiggle Fix + Reference **Fix This** / **Fix All** batches) |
 | Welcome quick start | `src/components/WelcomePane.tsx` (paste, recent runs, re-run) |
@@ -37,7 +37,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 1. **Paste:** Ctrl+V sanitize; Ctrl+Shift+Alt+V or Welcome **Paste from clipboard** → clean → format → optional F5.
 2. **Scratch:** Untitled tabs auto-save to `%APPDATA%/PSForge/scratch/{tabId}.ps1`; orphans offered via `list_scratch_files` + `ScratchRecoveryDialog`; close via `CloseScratchDialog`.
 3. **Run:** Saved and scratch-backed tabs: `& 'path'` in the current console; working dir / execution policy staged via `stage_terminal_run_prep` and applied silently by the terminal bootstrap PSReadLine hook (`direct-run.ts`, `terminal.rs`). Truly pathless buffers: `psrun` temp wrapper. `resolveExecutionWorkDir()` + optional override; `.psforge.json` via `findProjectConfig`; presets in `settings.runDirPresets`; PSSA gate uses `PssaRunGateDialog` when warn.
-4. **Output:** `__psforge_copy_terminal_output` (full scrollback); `__psforge_copy_last_run_output` / **Script output** button copies stdout+stderr via OSC 633 capture in `src/run-output-capture.ts` (marker scrollback fallback).
+4. **Output:** `__psforge_copy_terminal_output` (full scrollback); `__psforge_copy_last_run_output` / **Script output** button copies stdout+stderr via OSC 633 capture in `src/run-output-capture.ts` (marker scrollback fallback). Clear / `clearOutputOnRun` wipe via `src/terminal/wipe-display.ts` then restart the PTY.
 5. **Fonts:** `fontFamily` / `outputFontFamily` + sizes persist in Rust settings; `linkEditorOutputFonts` syncs family; status bar `FontQuickControls` + Settings presets.
 
 ## Primary user workflow
@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-26:** Terminal Clear + clear-on-run (**1.4.42**). Clear (toolbar / palette) wipes the xterm display (`term.reset` via `wipeTerminalDisplay`) before restarting PowerShell so the old prompt is not left above the new session. When `clearOutputOnRun` is on (Paste + Run / F5), the runner uses that same Clear path and waits for the new session before sending the script command — no more buffer-only clear that left leftover scrollback.
 - **2026-08-25:** Terminal cwd restore after F5 (**1.4.41**). After a direct-run script finishes, the integrated terminal returns to the cwd it had before the run (saved when run prep applies `Set-Location`; restored in the bootstrap `prompt` hook before the next prompt renders).
 - **2026-08-25:** Terminal run echo + menu hover (**1.4.41**). F5 on saved/scratch scripts no longer echoes `Set-Location` (or execution-policy setup) — prep is staged to `%APPDATA%/PSForge/pending-run-prep.json` and applied silently by the terminal bootstrap PSReadLine hook; the terminal shows only `& 'path.ps1'`. Menu dropdown items use accent-tinted hover so File/Edit/View/Help entries are visible when mousing over them.
 - **2026-08-24:** Terminal **Script output** copy (**1.4.40**). Toolbar button (was "Last run") copies last F5 stdout/stderr only: `run-output-capture.ts` parses OSC 633 markers to drop prompts and strips echoed command line; debug bundle uses same path.

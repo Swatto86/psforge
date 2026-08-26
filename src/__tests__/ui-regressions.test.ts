@@ -52,6 +52,29 @@ describe("Integrated terminal stability", () => {
     expect(terminalPane).toContain("startTerminal");
     expect(terminalPane).not.toContain("PSForge Terminal");
   });
+
+  it("wipes the display before restarting so Clear does not leave the old prompt", () => {
+    expect(terminalPane).toContain("wipeTerminalDisplay");
+    const startSessionIdx = terminalPane.indexOf("const startSession = async");
+    expect(startSessionIdx).toBeGreaterThan(-1);
+    const wipeIdx = terminalPane.indexOf(
+      "wipeTerminalDisplay(term)",
+      startSessionIdx,
+    );
+    expect(wipeIdx).toBeGreaterThan(startSessionIdx);
+    const stopIdx = terminalPane.indexOf("stopTerminal", wipeIdx);
+    expect(stopIdx).toBeGreaterThan(wipeIdx);
+  });
+
+  it("restarts the session on clear-before-run (Paste + Run / F5), not buffer-only clear", () => {
+    expect(terminalPane).toContain("options?.clearBeforeRun");
+    const clearBeforeIdx = terminalPane.indexOf("if (options?.clearBeforeRun)");
+    expect(clearBeforeIdx).toBeGreaterThan(-1);
+    const block = terminalPane.slice(clearBeforeIdx, clearBeforeIdx + 320);
+    expect(block).toContain("handle.clear()");
+    expect(block).toContain("waitForReadyHandle(tabId)");
+    expect(block).not.toContain("clearBuffer()");
+  });
 });
 
 describe("Status bar run directory", () => {

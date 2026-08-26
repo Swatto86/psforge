@@ -26,6 +26,7 @@ import {
   createTerminalWithAddons,
   type TerminalPerformanceAddons,
 } from "../terminal/xterm-setup";
+import { wipeTerminalDisplay } from "../terminal/wipe-display";
 import { terminalThemeFromCss } from "../terminal/xterm-theme";
 import {
   parseWindowsTerminalAppearance,
@@ -442,6 +443,9 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
       const startSession = async () => {
         if (startInFlightRef.current) return;
         startInFlightRef.current = true;
+        // Wipe first so the new prompt is not painted under leftover scrollback
+        // (Clear used to restart alone and leave the old prompt above).
+        wipeTerminalDisplay(term);
         isReadyRef.current = false;
         writeQueueRef.current = "";
         writeInFlightRef.current = false;
@@ -524,8 +528,8 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
         void startSession();
       };
       focusFnRef.current = focusTerminal;
-      // Clear means a fresh shell so prompt / Nerd Font chrome redraws.
-      // term.clear() alone wipes the buffer and leaves a blank prompt-less pane.
+      // Clear = wipe display, then restart so prompt / Nerd Font chrome redraws.
+      // term.clear() alone keeps the current prompt line; wipe uses reset().
       clearFnRef.current = () => {
         void startSession();
       };
@@ -1109,9 +1113,12 @@ export function TerminalPane() {
       }
 
       await sleep(0);
-      const handle = await waitForReadyHandle(tabId);
+      let handle = await waitForReadyHandle(tabId);
       if (options?.clearBeforeRun) {
-        handle.clearBuffer();
+        // Full Clear (wipe + restart) so Paste + Run / F5 start on a blank
+        // console with a fresh PowerShell session, not leftover scrollback.
+        handle.clear();
+        handle = await waitForReadyHandle(tabId);
       }
       // Mark the run-start baseline AFTER any clear, right before the command
       // starts, via a reflow/eviction-safe xterm marker (S3-13).
@@ -1338,7 +1345,7 @@ export function TerminalPane() {
             backgroundColor: "transparent",
             color: "var(--text-secondary)",
           }}
-          title="Restart the active console (fresh prompt)"
+          title="Clear the console, then restart PowerShell (fresh prompt)"
         >
           Clear
         </button>

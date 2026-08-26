@@ -846,7 +846,7 @@ export function SettingsPanel() {
 
               <SettingRow
                 label="Clear Output on Run"
-                tooltip="Clears previous output before each script run."
+                tooltip="Clears the console and restarts PowerShell before each script run (same as the Terminal Clear button)."
               >
                 <Toggle
                   checked={state.settings.clearOutputOnRun !== false}

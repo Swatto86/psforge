@@ -14,7 +14,7 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.4.41](https://github.com/Swatto86/psforge/releases/tag/v1.4.41)
+**Current version:** [1.4.42](https://github.com/Swatto86/psforge/releases/tag/v1.4.42)
 
 ## AI-assisted workflow (paste → run → debug)
 

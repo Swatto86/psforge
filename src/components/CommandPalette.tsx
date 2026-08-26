@@ -177,7 +177,7 @@ export function CommandPalette() {
         id: "cmd-clear-output",
         label: "Clear Terminal",
         category: "Command",
-        description: "Restart the integrated terminal (fresh PowerShell prompt)",
+        description: "Clear the console, then restart PowerShell (fresh prompt)",
         action: () => {
           (
             window as unknown as Record<string, (() => void) | undefined>

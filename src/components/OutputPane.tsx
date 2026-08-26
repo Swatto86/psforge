@@ -367,7 +367,7 @@ export function OutputPane({
                   ).__psforge_terminal_clear?.()
                 }
                 className={actionButtonClassName()}
-                title="Restart the PowerShell session (fresh prompt)"
+                title="Clear the console, then restart PowerShell (fresh prompt)"
               >
                 Clear
               </button>
