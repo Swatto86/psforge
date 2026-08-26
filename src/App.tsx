@@ -487,6 +487,7 @@ function AppInner() {
       options?: {
         clearBeforeRun?: boolean;
         reveal?: boolean;
+        newConsole?: boolean;
       },
     ) => {
       const runFn = (window as unknown as Record<string, unknown>)
@@ -496,6 +497,7 @@ function AppInner() {
             runOptions?: {
               clearBeforeRun?: boolean;
               reveal?: boolean;
+              newConsole?: boolean;
             },
           ) => Promise<number | null>)
         | undefined;
@@ -1146,75 +1148,90 @@ function AppInner() {
     runOrDebugScript,
   ]);
 
-  const pasteFromClipboardAsNewScript = useCallback(async () => {
-    if (!state.selectedPsPath) return;
-    let clip = "";
-    try {
-      clip = await navigator.clipboard.readText();
-    } catch {
-      void writeTerminalNotice(
-        "[PSForge] Could not read the clipboard. Allow clipboard access and try again.",
-        { reveal: true },
+  const pasteFromClipboardAsNewScript = useCallback(
+    async (options?: { runInNewConsole?: boolean }) => {
+      if (!state.selectedPsPath) return;
+      let clip = "";
+      try {
+        clip = await navigator.clipboard.readText();
+      } catch {
+        void writeTerminalNotice(
+          "[PSForge] Could not read the clipboard. Allow clipboard access and try again.",
+          { reveal: true },
+        );
+        return;
+      }
+      if (!clip.trim()) return;
+
+      const { text: cleaned, summary } = sanitizePastedTextWithSummary(
+        clip,
+        FULL_PASTE_SANITIZE_OPTIONS,
       );
-      return;
-    }
-    if (!clip.trim()) return;
+      showAppToast(formatPasteSummaryMessage(summary));
+      let formatted = cleaned;
+      try {
+        formatted = await cmd.formatScript(state.selectedPsPath, cleaned);
+      } catch {
+        // Formatting is optional; cleaned paste is still usable.
+      }
 
-    const { text: cleaned, summary } = sanitizePastedTextWithSummary(
-      clip,
-      FULL_PASTE_SANITIZE_OPTIONS,
-    );
-    showAppToast(formatPasteSummaryMessage(summary));
-    let formatted = cleaned;
-    try {
-      formatted = await cmd.formatScript(state.selectedPsPath, cleaned);
-    } catch {
-      // Formatting is optional; cleaned paste is still usable.
-    }
+      const id = newTabId();
+      const tab: EditorTab = {
+        id,
+        title: `Untitled-${untitledCounter()}`,
+        filePath: "",
+        content: formatted,
+        savedContent: "",
+        encoding: "utf8",
+        language: "powershell",
+        isDirty: true,
+        tabType: "code",
+      };
+      dispatch({ type: "ADD_TAB", tab });
+      const welcomeTab = state.tabs.find((t) => t.tabType === "welcome");
+      if (welcomeTab) {
+        dispatch({ type: "CLOSE_TAB", id: welcomeTab.id });
+      }
 
-    const id = newTabId();
-    const tab: EditorTab = {
-      id,
-      title: `Untitled-${untitledCounter()}`,
-      filePath: "",
-      content: formatted,
-      savedContent: "",
-      encoding: "utf8",
-      language: "powershell",
-      isDirty: true,
-      tabType: "code",
-    };
-    dispatch({ type: "ADD_TAB", tab });
-    const welcomeTab = state.tabs.find((t) => t.tabType === "welcome");
-    if (welcomeTab) {
-      dispatch({ type: "CLOSE_TAB", id: welcomeTab.id });
-    }
-
-    if (state.settings.runAfterPasteCleanFormat !== false) {
-      window.setTimeout(() => runOrDebugScript(), 50);
-    }
-  }, [
-    state.selectedPsPath,
-    state.tabs,
-    state.settings.runAfterPasteCleanFormat,
-    dispatch,
-    writeTerminalNotice,
-    runOrDebugScript,
-  ]);
+      if (state.settings.runAfterPasteCleanFormat !== false) {
+        const newConsole = options?.runInNewConsole !== false;
+        window.setTimeout(
+          () => runOrDebugScript({ newConsole }),
+          50,
+        );
+      }
+    },
+    [
+      state.selectedPsPath,
+      state.tabs,
+      state.settings.runAfterPasteCleanFormat,
+      dispatch,
+      writeTerminalNotice,
+      runOrDebugScript,
+    ],
+  );
 
   /** Shared Paste Clean + Format entry point (toolbar, Ctrl+Shift+Alt+V, and
-   *  command palette): from the Welcome tab (or with no tab) the paste lands
-   *  in a fresh script tab; with a code tab open it pastes into the current
-   *  selection. Keeping the branch here means every trigger behaves the same —
-   *  the palette used to call pasteCleanAndFormat directly and silently no-op
-   *  on the Welcome tab. */
+   *  command palette). Paste + Run always opens a new script tab and a new
+   *  local console so prior editor/console work stays intact. Paste-clean
+   *  alone still inserts into the active code tab when one is open. */
   const pasteScriptFromClipboard = useCallback(() => {
+    const pasteRuns = state.settings.runAfterPasteCleanFormat !== false;
+    if (pasteRuns) {
+      void pasteFromClipboardAsNewScript({ runInNewConsole: true });
+      return;
+    }
     if (!activeTab || activeTab.tabType === "welcome") {
-      void pasteFromClipboardAsNewScript();
+      void pasteFromClipboardAsNewScript({ runInNewConsole: false });
     } else {
       void pasteCleanAndFormat();
     }
-  }, [activeTab, pasteCleanAndFormat, pasteFromClipboardAsNewScript]);
+  }, [
+    activeTab,
+    pasteCleanAndFormat,
+    pasteFromClipboardAsNewScript,
+    state.settings.runAfterPasteCleanFormat,
+  ]);
 
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
@@ -1321,7 +1338,9 @@ function AppInner() {
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__psforge_pasteFromClipboardAsNewScript = () => {
-      void pasteFromClipboardAsNewScript();
+      void pasteFromClipboardAsNewScript({
+        runInNewConsole: state.settings.runAfterPasteCleanFormat !== false,
+      });
     };
     w.__psforge_copy_terminal_output = async () => {
       // Legacy alias: prefer selection; fall back to last-run, never full
@@ -1378,6 +1397,7 @@ function AppInner() {
     requestCloseTab,
     rerunFromRecord,
     clearRecentRuns,
+    state.settings.runAfterPasteCleanFormat,
   ]);
 
   useEffect(() => {

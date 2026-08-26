@@ -51,6 +51,8 @@ const DEBUG_STACK_COMMAND =
 type TerminalRunOptions = {
   clearBeforeRun?: boolean;
   reveal?: boolean;
+  /** Open a fresh local console for this run (Paste + Run). */
+  newConsole?: boolean;
 };
 
 type ParamPromptState = {
@@ -71,9 +73,9 @@ export type ExecutionActions = {
   ) => Promise<{ saved: boolean; cancelled: boolean; path?: string }>;
   saveCurrentFile: () => Promise<void>;
   saveAllFiles: () => Promise<void>;
-  runScript: () => Promise<void>;
+  runScript: (options?: { newConsole?: boolean }) => Promise<void>;
   startDebugSession: () => Promise<void>;
-  runOrDebugScript: () => void;
+  runOrDebugScript: (options?: { newConsole?: boolean }) => void;
   runSelection: () => Promise<void>;
   stopExecution: () => void;
   debugContinue: () => Promise<void>;
@@ -673,12 +675,13 @@ export function useExecutionActions({
     };
   }, [dispatch, refreshDebugInspector, writeTerminalNotice]);
 
-  const runScript = useCallback(async () => {
+  const runScript = useCallback(async (options?: { newConsole?: boolean }) => {
     // One-shot re-run override: consume it before any guard can return early,
     // so a blocked run (already running, no shell selected) can never leak a
     // historic working directory into a later unrelated run.
     const workDirOverride = runWorkingDirOverrideRef.current;
     runWorkingDirOverrideRef.current = null;
+    const newConsole = options?.newConsole === true;
 
     const current = stateRef.current;
     const tab = activeTabRef.current;
@@ -887,8 +890,10 @@ export function useExecutionActions({
           );
         }
         return runCommandInTerminal(runCmd.command, {
-          clearBeforeRun: current.settings.clearOutputOnRun !== false,
+          clearBeforeRun:
+            !newConsole && current.settings.clearOutputOnRun !== false,
           reveal: true,
+          newConsole,
         });
       }
       const command = await cmd.prepareTerminalScriptCommand(
@@ -900,8 +905,10 @@ export function useExecutionActions({
         tab.title,
       );
       return runCommandInTerminal(command, {
-        clearBeforeRun: current.settings.clearOutputOnRun !== false,
+        clearBeforeRun:
+          !newConsole && current.settings.clearOutputOnRun !== false,
         reveal: true,
+        newConsole,
       });
     };
 
@@ -1229,7 +1236,7 @@ export function useExecutionActions({
     [sendDebugCommand],
   );
 
-  const runOrDebugScript = useCallback(() => {
+  const runOrDebugScript = useCallback((options?: { newConsole?: boolean }) => {
     if (isDebuggingRef.current && debugPausedRef.current) {
       void debugContinue();
       return;
@@ -1239,10 +1246,11 @@ export function useExecutionActions({
     if (!tab || tab.tabType === "welcome") return;
     const breakpoints = breakpointsRef.current[tab.id] ?? [];
     if (breakpoints.length > 0) {
+      // Debug still uses the active console; Paste + Run with breakpoints is rare.
       void startDebugSession();
       return;
     }
-    void runScript();
+    void runScript(options);
   }, [activeTabRef, debugContinue, runScript, startDebugSession]);
 
   const selectDebugFrame = useCallback(

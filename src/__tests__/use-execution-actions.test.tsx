@@ -226,6 +226,7 @@ describe("useExecutionActions", () => {
       {
         clearBeforeRun: false,
         reveal: true,
+        newConsole: false,
       },
     );
   });
@@ -424,6 +425,7 @@ describe("useExecutionActions", () => {
     expect(runCommandInTerminal).toHaveBeenCalledWith("prepared-command", {
       clearBeforeRun: false,
       reveal: true,
+      newConsole: false,
     });
   });
 
@@ -451,6 +453,7 @@ describe("useExecutionActions", () => {
     expect(runCommandInTerminal).toHaveBeenCalledWith("prepared-command", {
       clearBeforeRun: false,
       reveal: true,
+      newConsole: false,
     });
   });
 });

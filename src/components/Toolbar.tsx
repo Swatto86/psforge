@@ -287,7 +287,7 @@ export function Toolbar({
               style={{ top: "100%", left: 0, minWidth: "280px" }}
             >
               <MenuItem
-                label="Paste Clean + Format"
+                label={pasteRuns ? "Paste + Run" : "Paste Clean + Format"}
                 shortcut="Ctrl+Shift+Alt+V"
                 disabled={!state.selectedPsPath}
                 onClick={menuAction(onPasteScript)}
@@ -406,7 +406,7 @@ export function Toolbar({
         data-testid="toolbar-paste-run"
         title={
           pasteRuns
-            ? "Paste from clipboard, clean smart quotes/code fences, format, and run (Ctrl+Shift+Alt+V)"
+            ? "New script tab + new console: paste, clean, format, and run (Ctrl+Shift+Alt+V)"
             : "Paste from clipboard, clean smart quotes/code fences, and format (Ctrl+Shift+Alt+V)"
         }
         onClick={onPasteScript}

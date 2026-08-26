@@ -34,7 +34,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 
 ## Data Flow — script runner
 
-1. **Paste:** Ctrl+V sanitize; Ctrl+Shift+Alt+V or Welcome **Paste from clipboard** → clean → format → optional F5.
+1. **Paste:** Ctrl+V sanitize; **Paste + Run** (`Ctrl+Shift+Alt+V`) → new script tab + new local console → clean → format → F5. Welcome paste uses the same path when run-after-paste is on.
 2. **Scratch:** Untitled tabs auto-save to `%APPDATA%/PSForge/scratch/{tabId}.ps1`; orphans offered via `list_scratch_files` + `ScratchRecoveryDialog`; close via `CloseScratchDialog`.
 3. **Run:** Saved and scratch-backed tabs: `& 'path'` in the current console; working dir / execution policy staged via `stage_terminal_run_prep` and applied silently by the terminal bootstrap PSReadLine hook (`direct-run.ts`, `terminal.rs`). Truly pathless buffers: `psrun` temp wrapper. `resolveExecutionWorkDir()` + optional override; `.psforge.json` via `findProjectConfig`; presets in `settings.runDirPresets`; PSSA gate uses `PssaRunGateDialog` when warn.
 4. **Output:** `__psforge_copy_terminal_output` (full scrollback); `__psforge_copy_last_run_output` / **Script output** button copies stdout+stderr via OSC 633 capture in `src/run-output-capture.ts` (marker scrollback fallback). Clear / `clearOutputOnRun` wipe via `src/terminal/wipe-display.ts` then restart the PTY.
@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-26:** Paste + Run isolation (**1.4.44**). Toolbar / shortcut / Welcome Paste + Run always opens a new editor tab and a new local console (`newConsole` on `runCommandInTerminal`), so prior script tabs and console scrollback stay intact. Plain F5 still reuses (and optionally clears) the active local console.
 - **2026-08-26:** Sequential Fix All (**1.4.43**). Reference **Fix All** and AI-tab blank **Fix** walk diagnostics one at a time (`fix-all-sequential.ts`): highest-priority problem → single Fix This AI call → apply → re-analyze → next. Skips stubborn items, caps at 25 passes, Stop cancels after the current call. Avoids the old bulk request that timed out or overflowed on large Problem lists.
 - **2026-08-26:** Terminal Clear + clear-on-run (**1.4.42**). Clear (toolbar / palette) wipes the xterm display (`term.reset` via `wipeTerminalDisplay`) before restarting PowerShell so the old prompt is not left above the new session. When `clearOutputOnRun` is on (Paste + Run / F5), the runner uses that same Clear path and waits for the new session before sending the script command — no more buffer-only clear that left leftover scrollback.
 - **2026-08-25:** Terminal cwd restore after F5 (**1.4.41**). After a direct-run script finishes, the integrated terminal returns to the cwd it had before the run (saved when run prep applies `Set-Location`; restored in the bootstrap `prompt` hook before the next prompt renders).

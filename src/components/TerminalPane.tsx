@@ -965,7 +965,7 @@ export function TerminalPane() {
       ? (sessionRefs.current[lastRunTabIdRef.current] ?? null)
       : null;
 
-  const addLocalTab = () => {
+  const createLocalTab = useCallback(() => {
     tabCounterRef.current += 1;
     const id = `console-${tabCounterRef.current}`;
     const tab: ConsoleTabModel = {
@@ -977,6 +977,11 @@ export function TerminalPane() {
     dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(id);
+    return id;
+  }, [dispatch, state.selectedPsPath, state.settings.terminalLoadProfile]);
+
+  const addLocalTab = () => {
+    createLocalTab();
   };
 
   const createRemoteTab = (target: string) => {
@@ -1102,9 +1107,12 @@ export function TerminalPane() {
       options?: {
         clearBeforeRun?: boolean;
         reveal?: boolean;
+        newConsole?: boolean;
       },
     ) => {
-      const tabId = ensureLocalExecutionTab();
+      const tabId = options?.newConsole
+        ? createLocalTab()
+        : ensureLocalExecutionTab();
       const reveal = options?.reveal !== false;
 
       if (reveal) {
@@ -1114,9 +1122,10 @@ export function TerminalPane() {
 
       await sleep(0);
       let handle = await waitForReadyHandle(tabId);
-      if (options?.clearBeforeRun) {
-        // Full Clear (wipe + restart) so Paste + Run / F5 start on a blank
-        // console with a fresh PowerShell session, not leftover scrollback.
+      // New consoles already start blank; only wipe+restart when reusing a tab.
+      if (options?.clearBeforeRun && !options?.newConsole) {
+        // Full Clear (wipe + restart) so F5 starts on a blank console with a
+        // fresh PowerShell session, not leftover scrollback.
         handle.clear();
         handle = await waitForReadyHandle(tabId);
       }
@@ -1129,7 +1138,7 @@ export function TerminalPane() {
       }
       return handle.exec(command);
     },
-    [dispatch, ensureLocalExecutionTab, waitForReadyHandle],
+    [createLocalTab, dispatch, ensureLocalExecutionTab, waitForReadyHandle],
   );
 
   const writeNoticeToLocalTerminal = useCallback(
@@ -1181,6 +1190,7 @@ export function TerminalPane() {
       options?: {
         clearBeforeRun?: boolean;
         reveal?: boolean;
+        newConsole?: boolean;
       },
     ) => runCommandInLocalTerminal(command, options);
     w.__psforge_terminal_restart = () => getActiveHandle()?.restart();

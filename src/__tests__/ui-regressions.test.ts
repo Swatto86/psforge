@@ -66,9 +66,11 @@ describe("Integrated terminal stability", () => {
     expect(stopIdx).toBeGreaterThan(wipeIdx);
   });
 
-  it("restarts the session on clear-before-run (Paste + Run / F5), not buffer-only clear", () => {
+  it("restarts the session on clear-before-run (F5 reuse), not buffer-only clear", () => {
     expect(terminalPane).toContain("options?.clearBeforeRun");
-    const clearBeforeIdx = terminalPane.indexOf("if (options?.clearBeforeRun)");
+    const clearBeforeIdx = terminalPane.indexOf(
+      "if (options?.clearBeforeRun && !options?.newConsole)",
+    );
     expect(clearBeforeIdx).toBeGreaterThan(-1);
     const block = terminalPane.slice(clearBeforeIdx, clearBeforeIdx + 320);
     expect(block).toContain("handle.clear()");
@@ -227,16 +229,17 @@ describe("Paste Clean + Format entry point (S11-1)", () => {
     expect(app).toContain("onPasteScript={pasteScriptFromClipboard}");
     const shared = app.indexOf("const pasteScriptFromClipboard = useCallback");
     expect(shared).toBeGreaterThan(-1);
-    const welcomeBranch = app.indexOf(
-      'activeTab.tabType === "welcome"',
-      shared,
-    );
-    const newScriptCall = app.indexOf(
-      "void pasteFromClipboardAsNewScript()",
-      shared,
-    );
-    expect(welcomeBranch).toBeGreaterThan(shared);
-    expect(newScriptCall).toBeGreaterThan(welcomeBranch);
+    // Paste + Run always opens a new script tab (preserves the previous editor).
+    expect(app).toContain("runAfterPasteCleanFormat !== false");
+    expect(app).toContain("pasteFromClipboardAsNewScript({");
+    expect(app).toContain("runInNewConsole:");
+  });
+
+  it("runs Paste + Run in a newly created local console", () => {
+    expect(terminalPane).toContain("options?.newConsole");
+    expect(terminalPane).toContain("createLocalTab");
+    expect(app).toContain("runOrDebugScript({ newConsole })");
+    expect(executionActions).toContain("newConsole?: boolean");
   });
 });
 
