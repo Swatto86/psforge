@@ -1,8 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { askAi } from "../commands";
 import { AiProviderBar } from "./AiProviderBar";
 import { takeExplainHandoff, EXPLAIN_HANDOFF_EVENT } from "../explain-selection";
-import { collectDebugBundleMarkdown } from "../debug-bundle";
+import { collectDebugBundleMarkdown, captureLastRunOutput } from "../debug-bundle";
+import {
+  fixAllProblemsSequentially,
+  formatFixAllSequentialSummary,
+} from "../fix-all-sequential";
 import type { AiMode } from "../types";
 import { useAppState, newTabId, untitledCounter } from "../store";
 
@@ -26,6 +30,7 @@ export function AssistantPane() {
   const [meta, setMeta] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const cancelFixAllRef = useRef(false);
 
   const codeTab =
     activeTab && activeTab.tabType !== "welcome" ? activeTab : undefined;
@@ -57,6 +62,26 @@ export function AssistantPane() {
       window.removeEventListener(EXPLAIN_HANDOFF_EVENT, applyExplainHandoff);
   }, [applyExplainHandoff]);
 
+  const applyFixedScript = useCallback(
+    (tabId: string, nextCode: string) => {
+      dispatch({
+        type: "UPDATE_TAB",
+        id: tabId,
+        changes: {
+          content: nextCode,
+          isDirty: true,
+        },
+      });
+      const setEditor = (
+        window as unknown as {
+          __psforge_setEditorText?: (text: string) => void;
+        }
+      ).__psforge_setEditorText;
+      setEditor?.(nextCode);
+    },
+    [dispatch],
+  );
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (mode === "fix" && !hasCodeTab) {
@@ -74,6 +99,54 @@ export function AssistantPane() {
     setCode("");
     setCodeTabId(null);
     setMeta("");
+    cancelFixAllRef.current = false;
+
+    // Blank Fix with known problems: one diagnostic per AI call (avoids timeout).
+    const blankFix =
+      mode === "fix" && !question.trim() && codeTab && activeProblems.length > 0;
+    if (blankFix) {
+      try {
+        setAnswer(
+          `Fixing ${activeProblems.length} problem${activeProblems.length === 1 ? "" : "s"} one at a time…`,
+        );
+        const result = await fixAllProblemsSequentially({
+          diagnostics: activeProblems,
+          script: codeTab.content,
+          scriptPath: codeTab.filePath || codeTab.title,
+          psPath: state.selectedPsPath,
+          settings: state.settings,
+          terminalOutput: captureLastRunOutput(),
+          shouldCancel: () => cancelFixAllRef.current,
+          onProgress: (progress) => {
+            setAnswer(
+              `Fix ${progress.pass}/${progress.maxPasses}: ${progress.problemLabel}\n` +
+                `Fixed ${progress.fixedSoFar} · skipped ${progress.skippedSoFar} · ~${progress.remainingEstimate} open`,
+            );
+          },
+          onScriptUpdated: (script) => {
+            applyFixedScript(codeTab.id, script);
+            setCode(script);
+            setCodeTabId(codeTab.id);
+          },
+        });
+        const summary = formatFixAllSequentialSummary(result);
+        setAnswer(summary);
+        setMeta(summary);
+        setCode(result.script);
+        setCodeTabId(codeTab.id);
+      } catch (err) {
+        const message =
+          err && typeof err === "object" && "message" in err
+            ? String((err as { message: unknown }).message)
+            : String(err);
+        setError(message);
+      } finally {
+        setBusy(false);
+        cancelFixAllRef.current = false;
+      }
+      return;
+    }
+
     try {
       const bundle = collectDebugBundleMarkdown({
         tab: codeTab,
@@ -202,9 +275,24 @@ export function AssistantPane() {
           >
             {busy ? "Asking..." : "Send"}
           </button>
+          {busy && mode === "fix" && !question.trim() && (
+            <button
+              type="button"
+              className="bottom-pane-action"
+              data-testid="assistant-fix-all-stop"
+              onClick={() => {
+                cancelFixAllRef.current = true;
+              }}
+              title="Stop after the current AI fix finishes"
+            >
+              Stop
+            </button>
+          )}
         </div>
         <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-          Each question includes the debug bundle: script, last run, and PSSA findings.
+          {mode === "fix" && !question.trim()
+            ? "Blank Fix walks Problems one at a time (errors first) so large lists do not time out."
+            : "Each question includes the debug bundle: script, last run, and PSSA findings."}
         </div>
       </form>
 

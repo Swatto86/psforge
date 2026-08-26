@@ -4,10 +4,13 @@ import React, { useEffect, useRef, useState } from "react";
 import type { AppSettings, EditorTab, PssaDiagnostic } from "../types";
 import {
   applyAiFix,
-  buildFixAllProblemsQuestion,
   buildFixProblemQuestion,
   diagnosticToTarget,
 } from "../fix-problem";
+import {
+  fixAllProblemsSequentially,
+  formatFixAllSequentialSummary,
+} from "../fix-all-sequential";
 import { captureLastRunOutput } from "../debug-bundle";
 import { showAppToast } from "./ToastStack";
 import { ProblemsPssaHint } from "./PssaInstallControls";
@@ -73,6 +76,9 @@ export function ProblemsPane({
   fontFamily: string;
 }) {
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("");
+  const [fixAllActive, setFixAllActive] = useState(false);
+  const cancelFixAllRef = useRef(false);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -104,45 +110,44 @@ export function ProblemsPane({
 
   const runFixAll = async () => {
     if (!aiEnabled || busy || !activeTab || diagnostics.length === 0) return;
+    cancelFixAllRef.current = false;
     setBusy(true);
+    setFixAllActive(true);
+    setBusyLabel("Fixing…");
     setMenu(null);
+    showAppToast(
+      `Fixing ${diagnostics.length} problem${diagnostics.length === 1 ? "" : "s"} one at a time…`,
+    );
     try {
-      const batch = buildFixAllProblemsQuestion(diagnostics);
-      const scope =
-        batch.omittedCount > 0
-          ? `${batch.includedCount} of ${batch.totalCount} (errors first)`
-          : `${batch.totalCount}`;
-      showAppToast(
-        `Asking AI to fix ${scope} problem${batch.includedCount === 1 ? "" : "s"}…`,
-      );
-      // Skip debug bundle: when present, backend ignores the diagnostics field
-      // and only keeps ~8 errors from the bundle.
-      const result = await applyAiFix({
-        settings,
-        question: batch.question,
-        diagnostics: batch.diagnostics,
+      const result = await fixAllProblemsSequentially({
+        diagnostics,
         script: activeTab.content,
         scriptPath: activeTab.filePath || activeTab.title,
+        psPath,
+        settings,
         terminalOutput: captureLastRunOutput(),
+        shouldCancel: () => cancelFixAllRef.current,
+        onProgress: (progress) => {
+          setBusyLabel(`Fixing ${progress.pass}…`);
+          showAppToast(`Fix ${progress.pass}: ${progress.problemLabel}`);
+        },
+        onScriptUpdated: (script) => {
+          applyFixedCode(activeTab.id, script, onApplyFixedScript);
+        },
       });
-      if (result.ok && result.code) {
-        applyFixedCode(activeTab.id, result.code, onApplyFixedScript);
-        showAppToast(
-          batch.omittedCount > 0
-            ? `${result.toast} · ${batch.omittedCount} left — run Fix All again`
-            : result.toast,
-        );
-      } else {
-        showAppToast(result.toast);
-      }
+      showAppToast(formatFixAllSequentialSummary(result));
     } finally {
       setBusy(false);
+      setBusyLabel("");
+      setFixAllActive(false);
+      cancelFixAllRef.current = false;
     }
   };
 
   const runFixThis = async (problem: PssaDiagnostic) => {
     if (!aiEnabled || busy || !activeTab) return;
     setBusy(true);
+    setBusyLabel("Fixing…");
     setMenu(null);
     showAppToast("Asking AI to fix this problem…");
     try {
@@ -162,6 +167,7 @@ export function ProblemsPane({
       showAppToast(result.toast);
     } finally {
       setBusy(false);
+      setBusyLabel("");
     }
   };
 
@@ -213,20 +219,35 @@ export function ProblemsPane({
         <span className="text-xs" style={{ color: "var(--text-muted)" }}>
           {diagnostics.length} issue{diagnostics.length === 1 ? "" : "s"}
         </span>
-        <button
-          type="button"
-          className="btn btn-secondary text-sm"
-          data-testid="problems-fix-all"
-          disabled={!aiEnabled || busy}
-          title={
-            aiEnabled
-              ? "Fix errors first in batches that fit the AI request limit; run again for the rest"
-              : "Enable AI in Settings to use Fix All"
-          }
-          onClick={() => void runFixAll()}
-        >
-          {busy ? "Fixing…" : "Fix All"}
-        </button>
+        <div className="flex items-center gap-2">
+          {fixAllActive && (
+            <button
+              type="button"
+              className="btn btn-secondary text-sm"
+              data-testid="problems-fix-all-cancel"
+              onClick={() => {
+                cancelFixAllRef.current = true;
+              }}
+              title="Stop after the current AI fix finishes"
+            >
+              Stop
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn-secondary text-sm"
+            data-testid="problems-fix-all"
+            disabled={!aiEnabled || busy}
+            title={
+              aiEnabled
+                ? "Fix one problem at a time (errors first), re-check after each fix"
+                : "Enable AI in Settings to use Fix All"
+            }
+            onClick={() => void runFixAll()}
+          >
+            {busy ? busyLabel || "Fixing…" : "Fix All"}
+          </button>
+        </div>
       </div>
       <div className="flex-1 min-h-0 overflow-auto">
         {diagnostics.map((problem, index) => {

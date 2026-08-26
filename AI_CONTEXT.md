@@ -23,7 +23,7 @@ PSForge is a Tauri 2 + React desktop PowerShell IDE (ISE-style) for editing, run
 | Font presets / status bar | `src/font-presets.ts`, `src/components/FontQuickControls.tsx` |
 | Terminal toolbar | `src/components/OutputPane.tsx` (`Clear` = wipe display then restart session, `Copy` = selection, `Script output` = last F5 stdout/stderr) |
 | Diagnostics | `src-tauri/src/ps_analyze.rs` (built-in parser + optional PSSA); `src-tauri/src/ps_pssa_install.rs` (check/install for PS 5.1/7); `src/components/PssaInstallControls.tsx` |
-| Fix Problem (AI) | `src/fix-problem.ts`, `src/editor-fix-problem.ts`, `src/components/ProblemsPane.tsx` (squiggle Fix + Reference **Fix This** / **Fix All** batches) |
+| Fix Problem (AI) | `src/fix-problem.ts`, `src/fix-all-sequential.ts`, `src/editor-fix-problem.ts`, `src/components/ProblemsPane.tsx` (squiggle Fix + Reference **Fix This** / **Fix All** one-at-a-time loop; AI tab blank Fix uses the same path) |
 | Welcome quick start | `src/components/WelcomePane.tsx` (paste, recent runs, re-run) |
 | Scratch / project runner | `src/scratch-utils.ts`, `src/project-config.ts`, `src/run-dir-presets.ts` |
 | Phase 3 dialogs | `src/components/ScratchRecoveryDialog.tsx`, `CloseScratchDialog.tsx`, `PssaRunGateDialog.tsx` |
@@ -46,6 +46,7 @@ Human + AI loop: script generated externally → **Paste Clean + Format** (`Ctrl
 
 ## Recent Context & Decisions
 
+- **2026-08-26:** Sequential Fix All (**1.4.43**). Reference **Fix All** and AI-tab blank **Fix** walk diagnostics one at a time (`fix-all-sequential.ts`): highest-priority problem → single Fix This AI call → apply → re-analyze → next. Skips stubborn items, caps at 25 passes, Stop cancels after the current call. Avoids the old bulk request that timed out or overflowed on large Problem lists.
 - **2026-08-26:** Terminal Clear + clear-on-run (**1.4.42**). Clear (toolbar / palette) wipes the xterm display (`term.reset` via `wipeTerminalDisplay`) before restarting PowerShell so the old prompt is not left above the new session. When `clearOutputOnRun` is on (Paste + Run / F5), the runner uses that same Clear path and waits for the new session before sending the script command — no more buffer-only clear that left leftover scrollback.
 - **2026-08-25:** Terminal cwd restore after F5 (**1.4.41**). After a direct-run script finishes, the integrated terminal returns to the cwd it had before the run (saved when run prep applies `Set-Location`; restored in the bootstrap `prompt` hook before the next prompt renders).
 - **2026-08-25:** Terminal run echo + menu hover (**1.4.41**). F5 on saved/scratch scripts no longer echoes `Set-Location` (or execution-policy setup) — prep is staged to `%APPDATA%/PSForge/pending-run-prep.json` and applied silently by the terminal bootstrap PSReadLine hook; the terminal shows only `& 'path.ps1'`. Menu dropdown items use accent-tinted hover so File/Edit/View/Help entries are visible when mousing over them.

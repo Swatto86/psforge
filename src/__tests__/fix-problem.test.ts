@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildFixAllProblemsQuestion,
   buildFixProblemQuestion,
@@ -169,6 +169,115 @@ describe("fix-problem helpers", () => {
     // Errors first: first line should be a ParseError, not a Warning-only dump.
     expect(batch.diagnostics.split("\n")[0]).toContain("ParseError");
   });
+
+  it("fixAllProblemsSequentially fixes one diagnostic per AI call and re-analyzes", async () => {
+    const { fixAllProblemsSequentially } = await import("../fix-all-sequential");
+    const calls: string[] = [];
+    const applyFix = vi.fn(async (req: { diagnostics: string; script: string }) => {
+      calls.push(req.diagnostics);
+      let next = req.script;
+      if (req.diagnostics.includes("Unexpected token")) {
+        next = next.replace("BAD(", "OK(");
+      }
+      if (req.diagnostics.includes("Avoid Write-Host")) {
+        next = next.replace("Write-Host", "Write-Output");
+      }
+      return {
+        ok: true,
+        code: next,
+        toast: "Fixed with test · model",
+      };
+    });
+    const analyze = vi.fn(async (_ps: string, script: string) => {
+      if (script.includes("BAD(")) {
+        return [diag({ message: "Unexpected token", line: 1, severity: "ParseError" })];
+      }
+      if (script.includes("Write-Host")) {
+        return [
+          diag({
+            message: "Avoid Write-Host",
+            line: 2,
+            severity: "Warning",
+            ruleName: "PSAvoidUsingWriteHost",
+          }),
+        ];
+      }
+      return [];
+    });
+
+    const result = await fixAllProblemsSequentially({
+      diagnostics: [
+        diag({
+          message: "Avoid Write-Host",
+          line: 2,
+          severity: "Warning",
+          ruleName: "PSAvoidUsingWriteHost",
+        }),
+        diag({ message: "Unexpected token", line: 1, severity: "ParseError" }),
+      ],
+      script: "BAD()\nWrite-Host 1\n",
+      scriptPath: "t.ps1",
+      psPath: "pwsh",
+      settings: {} as never,
+      deps: { applyFix, analyze },
+    });
+
+    expect(applyFix).toHaveBeenCalledTimes(2);
+    expect(calls[0]).toContain("Unexpected token");
+    expect(calls[1]).toContain("Avoid Write-Host");
+    expect(result.fixedCount).toBe(2);
+    expect(result.remainingCount).toBe(0);
+    expect(result.script).not.toContain("BAD(");
+    expect(result.script).not.toContain("Write-Host");
+  });
+
+  it("fixAllProblemsSequentially skips a stubborn problem and continues", async () => {
+    const { fixAllProblemsSequentially } = await import("../fix-all-sequential");
+    const applyFix = vi.fn(async (req: { diagnostics: string; script: string }) => {
+      if (req.diagnostics.includes("stubborn")) {
+        return { ok: true, code: req.script, toast: "no-op" };
+      }
+      return {
+        ok: true,
+        code: req.script.replace("Write-Host", "Write-Output"),
+        toast: "ok",
+      };
+    });
+    const analyze = vi.fn(async (_ps: string, script: string) => {
+      const out = [
+        diag({
+          message: "stubborn",
+          line: 1,
+          severity: "Error",
+          ruleName: "Stubborn",
+        }),
+      ];
+      if (script.includes("Write-Host")) {
+        out.push(
+          diag({
+            message: "Avoid Write-Host",
+            line: 2,
+            severity: "Warning",
+            ruleName: "PSAvoidUsingWriteHost",
+          }),
+        );
+      }
+      return out;
+    });
+
+    const result = await fixAllProblemsSequentially({
+      diagnostics: await analyze("pwsh", "x\nWrite-Host 1\n"),
+      script: "x\nWrite-Host 1\n",
+      scriptPath: "t.ps1",
+      psPath: "pwsh",
+      settings: {} as never,
+      deps: { applyFix, analyze },
+    });
+
+    expect(result.fixedCount).toBe(1);
+    expect(result.skippedCount).toBeGreaterThanOrEqual(1);
+    expect(result.script).toContain("Write-Output");
+  });
 });
 
 describe("Problems pane Fix This wiring", () => {
@@ -181,5 +290,24 @@ describe("Problems pane Fix This wiring", () => {
     expect(problemsPane).toContain("onContextMenu");
     expect(problemsPane).toContain("buildFixProblemQuestion");
     expect(problemsPane).toContain("diagnosticToTarget");
+  });
+
+  it("Fix All runs problems one at a time instead of one bulk request", async () => {
+    const { default: problemsPane } = await import(
+      "../components/ProblemsPane.tsx?raw"
+    );
+    expect(problemsPane).toContain("fixAllProblemsSequentially");
+    expect(problemsPane).not.toMatch(
+      /runFixAll[\s\S]*buildFixAllProblemsQuestion/,
+    );
+  });
+});
+
+describe("Assistant blank Fix uses sequential Fix All", () => {
+  it("routes empty Fix prompts through fixAllProblemsSequentially when problems exist", async () => {
+    const { default: assistantPane } = await import(
+      "../components/AssistantPane.tsx?raw"
+    );
+    expect(assistantPane).toContain("fixAllProblemsSequentially");
   });
 });
