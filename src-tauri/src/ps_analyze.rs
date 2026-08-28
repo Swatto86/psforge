@@ -227,8 +227,20 @@ fn dedupe_diagnostics(diags: Vec<PssaDiagnostic>) -> Vec<PssaDiagnostic> {
 /// Runs built-in PowerShell parse diagnostics (and optional PSSA) on `script_content`.
 ///
 /// Always reports AST/`Parser::ParseInput` errors when PowerShell is available.
-/// When PSScriptAnalyzer is installed, its findings are merged in. Failures and
-/// timeouts return an empty list (editor must not crash).
+/// When PSScriptAnalyzer is installed, its findings are merged in. Host/timeout
+/// failures return a single Warning so Problems is not silently empty.
+fn analysis_unavailable(message: &str) -> Vec<PssaDiagnostic> {
+    vec![PssaDiagnostic {
+        message: message.to_string(),
+        severity: "Warning".to_string(),
+        rule_name: "PSForge".to_string(),
+        line: 1,
+        column: 1,
+        end_line: 1,
+        end_column: 2,
+    }]
+}
+
 #[cfg_attr(not(test), tauri::command)]
 pub async fn analyze_script(
     ps_path: String,
@@ -241,7 +253,10 @@ pub async fn analyze_script(
     }
     if let Err(err) = powershell::validate_ps_path(ps_path) {
         debug!("analyze_script: invalid PowerShell path: {}", err);
-        return Ok(Vec::new());
+        return Ok(analysis_unavailable(&format!(
+            "Editor diagnostics unavailable: {}",
+            err.message
+        )));
     }
 
     let temp_path = write_secure_temp_file("psforge_analyze", ".ps1", script_content.as_bytes())
@@ -275,11 +290,15 @@ pub async fn analyze_script(
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
             debug!("analyze_script: process error: {}", e);
-            return Ok(Vec::new());
+            return Ok(analysis_unavailable(&format!(
+                "Editor diagnostics failed to start: {e}"
+            )));
         }
         Err(_) => {
             debug!("analyze_script: timed out after {}s", ANALYSIS_TIMEOUT_SECS);
-            return Ok(Vec::new());
+            return Ok(analysis_unavailable(
+                "Editor diagnostics timed out. The Problems list may be incomplete.",
+            ));
         }
     };
 
@@ -333,6 +352,15 @@ mod tests {
         };
         let out = dedupe_diagnostics(vec![d.clone(), d]);
         assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn analysis_unavailable_is_a_non_blocking_warning() {
+        let diags = analysis_unavailable("Editor diagnostics timed out.");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, "Warning");
+        assert_eq!(diags[0].rule_name, "PSForge");
+        assert_eq!(diags[0].line, 1);
     }
 
     #[test]

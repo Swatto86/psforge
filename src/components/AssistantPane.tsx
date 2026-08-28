@@ -8,6 +8,7 @@ import {
   formatFixAllSequentialSummary,
 } from "../fix-all-sequential";
 import type { AiMode } from "../types";
+import { applyEditorTextForTab } from "../editor-fix-problem";
 import { useAppState, newTabId, untitledCounter } from "../store";
 
 function modeQuestion(mode: AiMode, current: string): string {
@@ -72,12 +73,7 @@ export function AssistantPane() {
           isDirty: true,
         },
       });
-      const setEditor = (
-        window as unknown as {
-          __psforge_setEditorText?: (text: string) => void;
-        }
-      ).__psforge_setEditorText;
-      setEditor?.(nextCode);
+      applyEditorTextForTab(tabId, nextCode);
     },
     [dispatch],
   );

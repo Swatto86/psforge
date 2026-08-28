@@ -142,6 +142,29 @@ function global:Connect-ExchangeOnline {
     & $cmdlet @RemainingArgs
 }
 
+# Applies staged working-directory / execution-policy prep for the next F5
+# run. Path comes from the host (PSFORGE_PREP_PATH) so Linux/macOS match
+# dirs::config_dir() rather than the Windows-only $env:APPDATA location.
+function global:PSForge-ApplyPendingRunPrep {
+    $prepPath = $env:PSFORGE_PREP_PATH
+    if (-not $prepPath -or -not (Test-Path -LiteralPath $prepPath)) { return }
+    try {
+        $prep = Get-Content -LiteralPath $prepPath -Raw | ConvertFrom-Json
+        Remove-Item -LiteralPath $prepPath -Force -ErrorAction SilentlyContinue
+        $wd = [string]$prep.workingDir
+        if ($wd) {
+            $script:PSForgeRestoreRunDir = (Get-Location).Path
+            Set-Location -LiteralPath $wd
+        }
+        $policy = [string]$prep.executionPolicy
+        if ($policy -and $policy -ne 'Default') {
+            Set-ExecutionPolicy -Scope Process -ExecutionPolicy $policy -Force
+        }
+    } catch {
+        # Run prep is best-effort and must never block execution.
+    }
+}
+
 # Runs the script staged by PSForge (F5 / Run). The optional argument is
 # purely cosmetic: PSForge submits `psrun 'ScriptName.ps1'` so the echoed
 # command line shows the script's name instead of the wrapper plumbing.
@@ -155,6 +178,7 @@ function global:psrun {
         Write-Warning 'No PSForge run is staged. Use Run (F5) in PSForge.'
         return
     }
+    PSForge-ApplyPendingRunPrep
     & $runFile
 }
 
@@ -175,24 +199,7 @@ try {
                     $esc = [char]27
                     $encodedLine = $line -replace ';', '%3B'
                     [Console]::Out.Write("$esc]633;E;$encodedLine`a")
-                    $prepPath = Join-Path $env:APPDATA 'PSForge\pending-run-prep.json'
-                    if (Test-Path -LiteralPath $prepPath) {
-                        try {
-                            $prep = Get-Content -LiteralPath $prepPath -Raw | ConvertFrom-Json
-                            Remove-Item -LiteralPath $prepPath -Force -ErrorAction SilentlyContinue
-                            $wd = [string]$prep.workingDir
-                            if ($wd) {
-                                $script:PSForgeRestoreRunDir = (Get-Location).Path
-                                Set-Location -LiteralPath $wd
-                            }
-                            $policy = [string]$prep.executionPolicy
-                            if ($policy -and $policy -ne 'Default') {
-                                Set-ExecutionPolicy -Scope Process -ExecutionPolicy $policy -Force
-                            }
-                        } catch {
-                            # Run prep is best-effort and must never block execution.
-                        }
-                    }
+                    PSForge-ApplyPendingRunPrep
                     return $true
                 }
             } catch {
@@ -410,6 +417,9 @@ pub async fn start_terminal(
     // bootstrap's `psrun` executes it so runs echo as `psrun 'Name.ps1'`.
     if let Ok(run_file) = crate::utils::pending_terminal_run_path() {
         cmd.env("PSFORGE_RUN_FILE", run_file.as_os_str());
+    }
+    if let Ok(prep_path) = crate::settings::pending_run_prep_path() {
+        cmd.env("PSFORGE_PREP_PATH", prep_path.as_os_str());
     }
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| AppError {
@@ -809,5 +819,35 @@ fn find_powershell() -> String {
         "powershell.exe".to_string()
     } else {
         "pwsh".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_reads_prep_from_host_env_not_appdata() {
+        assert!(
+            TERMINAL_BOOTSTRAP_SCRIPT.contains("PSForge-ApplyPendingRunPrep"),
+            "prep must be a shared function"
+        );
+        assert!(
+            TERMINAL_BOOTSTRAP_SCRIPT.contains("$env:PSFORGE_PREP_PATH"),
+            "prep path must come from the host so Linux/macOS match settings_dir()"
+        );
+        assert!(
+            !TERMINAL_BOOTSTRAP_SCRIPT
+                .contains("Join-Path $env:APPDATA 'PSForge\\pending-run-prep.json'"),
+            "Windows APPDATA hard-code breaks silent cwd/policy prep on Linux/macOS"
+        );
+        assert!(
+            TERMINAL_BOOTSTRAP_SCRIPT.contains("PSForge-ApplyPendingRunPrep")
+                && TERMINAL_BOOTSTRAP_SCRIPT
+                    .matches("PSForge-ApplyPendingRunPrep")
+                    .count()
+                    >= 3,
+            "history handler, psrun, and the function definition must all exist"
+        );
     }
 }

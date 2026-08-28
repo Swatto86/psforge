@@ -20,7 +20,11 @@ import {
   buildDirectTerminalRunCommand,
   isSavedDiskScript,
 } from "./direct-run";
-import { isScratchBackedTab, scratchPathForTab } from "./scratch-utils";
+import {
+  diskWriteTabChanges,
+  isScratchBackedTab,
+  scratchPathForTab,
+} from "./scratch-utils";
 import { hasScriptLevelParamBlock } from "./script-utils";
 import type { Action, AppState } from "./store";
 import type {
@@ -402,14 +406,20 @@ export function useExecutionActions({
           }
         }
         const fileName = basename(filePath);
+        const live = stateRef.current.tabs.find((t) => t.id === tab.id);
+        const writeChanges = diskWriteTabChanges(
+          filePath,
+          savedBaseline,
+          live?.content ?? tab.content,
+        );
         dispatch({
           type: "UPDATE_TAB",
           id: tab.id,
           changes: {
             filePath,
             title: fileName,
-            savedContent: savedBaseline,
-            isDirty: false,
+            savedContent: writeChanges?.savedContent ?? savedBaseline,
+            isDirty: writeChanges?.isDirty ?? false,
           },
         });
 
@@ -759,13 +769,19 @@ export function useExecutionActions({
               // Keep the buffer baseline.
             }
           }
+          const live = stateRef.current.tabs.find((t) => t.id === tab.id);
+          const writeChanges = diskWriteTabChanges(
+            savePath,
+            savedBaseline,
+            live?.content ?? tab.content,
+          );
           dispatch({
             type: "UPDATE_TAB",
             id: tab.id,
             changes: {
               filePath: savePath,
-              savedContent: savedBaseline,
-              isDirty: false,
+              savedContent: writeChanges?.savedContent ?? savedBaseline,
+              isDirty: writeChanges?.isDirty ?? false,
             },
           });
           recordScriptPath = savePath;
@@ -1026,10 +1042,19 @@ export function useExecutionActions({
               // Keep the buffer baseline.
             }
           }
+          const live = stateRef.current.tabs.find((t) => t.id === tab.id);
+          const writeChanges = diskWriteTabChanges(
+            tab.filePath,
+            savedBaseline,
+            live?.content ?? tab.content,
+          );
           dispatch({
             type: "UPDATE_TAB",
             id: tab.id,
-            changes: { savedContent: savedBaseline, isDirty: false },
+            changes: {
+              savedContent: writeChanges?.savedContent ?? savedBaseline,
+              isDirty: writeChanges?.isDirty ?? false,
+            },
           });
         } catch {
           // Save failed; continue with in-memory content.

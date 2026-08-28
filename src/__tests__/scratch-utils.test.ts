@@ -3,6 +3,7 @@ import {
   isScratchBackedTab,
   recoveredScratchTitle,
   scratchPathForTab,
+  diskWriteTabChanges,
 } from "../scratch-utils";
 import type { EditorTab } from "../types";
 
@@ -49,5 +50,21 @@ describe("scratchPathForTab", () => {
   it("uses Untitled-N for recovered scratch tabs, not the UUID filename", () => {
     expect(recoveredScratchTitle(3)).toBe("Untitled-3");
     expect(recoveredScratchTitle(3)).not.toMatch(/\.ps1$/);
+  });
+});
+
+describe("diskWriteTabChanges", () => {
+  it("clears dirty only when the live buffer still matches what was written", () => {
+    expect(diskWriteTabChanges("/tmp/a.ps1", "old", "old")).toEqual({
+      filePath: "/tmp/a.ps1",
+      savedContent: "old",
+      isDirty: false,
+    });
+    expect(diskWriteTabChanges("/tmp/a.ps1", "old", "newer")).toEqual({
+      filePath: "/tmp/a.ps1",
+      savedContent: "old",
+      isDirty: true,
+    });
+    expect(diskWriteTabChanges("/tmp/a.ps1", "old", undefined)).toBeNull();
   });
 });

@@ -7,7 +7,8 @@
  *  - window.__psforge_triggerGoToLine()     -- opens Monaco Go To Line widget
  *  - window.__psforge_getRunText()          -- returns selection, or current line
  *  - window.__psforge_getHelpQuery()        -- returns selection/token for context help
- *  - window.__psforge_setEditorText()       -- replaces the active editor text
+ *  - window.__psforge_setEditorText(text, tabId?) -- replaces the editor text
+ *    when `tabId` is omitted or matches the active tab (AI Fix This / Fix All)
  *
  *  Editor enhancements wired here:
  *  - Cursor position tracking (dispatched to store -> displayed in StatusBar).
@@ -473,7 +474,8 @@ export function EditorPane() {
       editorRef.current?.getModel()?.getValue() ?? "";
     // Replace the active editor buffer in one shot (AI Fix This / Fix All,
     // paste helpers, E2E). Keep undo coalesced via executeEdits.
-    w.__psforge_setEditorText = (text: string) => {
+    w.__psforge_setEditorText = (text: string, tabId?: string) => {
+      if (tabId && activeTabRef.current?.id !== tabId) return false;
       const editor = editorRef.current;
       const model = editor?.getModel();
       if (!editor || !model) return false;

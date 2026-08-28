@@ -238,4 +238,13 @@ describe("terminal WindowHeight warning mitigations", () => {
     expect(terminalBootstrap).toContain("MIN_PTY_ROWS");
     expect(terminalBootstrap).toContain("SilentlyContinue");
   });
+
+  it("applies run prep from PSFORGE_PREP_PATH, not Windows APPDATA", () => {
+    expect(terminalBootstrap).toContain("$env:PSFORGE_PREP_PATH");
+    expect(terminalBootstrap).toContain("PSForge-ApplyPendingRunPrep");
+    expect(terminalBootstrap).toContain("cmd.env(\"PSFORGE_PREP_PATH\"");
+    expect(terminalBootstrap).not.toContain(
+      "Join-Path $env:APPDATA 'PSForge\\pending-run-prep.json'",
+    );
+  });
 });

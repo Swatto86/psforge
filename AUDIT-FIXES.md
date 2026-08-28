@@ -8,6 +8,36 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 12 (v1.4.45) — user-facing bug sweep + compile-speed pass
+
+Focused pass over paste/run, Fix All, scratch auto-save, and terminal run-prep after 1.4.28–1.4.44.
+
+### HIGH
+
+- [x] **S12-1** — Scratch auto-save completion always set `isDirty: false` from the stale effect closure. Typing during an in-flight save cleared the dirty dot; close then discarded unsaved edits. Completion now compares the live buffer via `diskWriteTabChanges`.
+- [x] **S12-2** — Fix All / Fix This / AI-tab blank Fix called `__psforge_setEditorText` with no tab id, so switching scripts mid-fix overwrote the visible editor. The bridge now refuses a mismatched tab id (`applyEditorTextForTab`).
+
+### MEDIUM
+
+- [x] **S12-3** — F5 / debug / Save As used the same stale `isDirty: false` after an async disk write. All three paths now re-read the live tab content.
+- [x] **S12-4** — Welcome Paste + Run returned silently when no PowerShell host was selected (toolbar already disables the same action). Now toasts and writes a terminal notice; empty clipboard also toasts.
+- [x] **S12-5** — With **Run after sanitized paste** on, Ctrl+V ran F5 before Monaco `onChange` updated the store, so the pre-paste script executed. Run is deferred with `setTimeout(0)`.
+- [x] **S12-6** — Terminal run prep was read from `$env:APPDATA\PSForge\pending-run-prep.json` while Rust writes to `dirs::config_dir()/PSForge/…`. Silent cwd/policy prep never ran on Linux/macOS. Bootstrap now uses `$env:PSFORGE_PREP_PATH` set at PTY spawn; `psrun` applies the same helper.
+
+### LOW
+
+- [x] **S12-7** — Analyzer spawn/timeout/invalid-host failures returned an empty list, so Problems looked clean. Those paths now emit a non-blocking `PSForge` Warning.
+
+### Compile speed
+
+- [x] Dev profile: `debug = "line-tables-only"`, `split-debuginfo = "unpacked"`. Release: `codegen-units = 64`, `lto = false`. Tokio features trimmed off `full`. CI/release: `CARGO_INCREMENTAL=0`; CI also `CARGO_PROFILE_DEV_DEBUG=0`.
+
+### Regression
+
+- [x] Vitest: dirty-after-write helper, tab-guarded editor apply, Welcome paste notices, deferred sanitized-paste run, prep-path contract. Cargo: bootstrap prep-path test + analyzer warning helper. 150 frontend tests + clippy/test green.
+
+---
+
 ## Sweep 11 (v1.4.19) — user-facing bug sweep + regression pass
 
 Full pass over the surfaces sweep 10 did not re-read: OutputPane/DebuggerPane,

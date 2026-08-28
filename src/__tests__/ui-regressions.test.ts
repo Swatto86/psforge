@@ -207,6 +207,14 @@ describe("Paste Clean + Format editor bridge (S10-1)", () => {
     expect(editorPane).toContain("w.__psforge_getEditorText = ");
     expect(app).toContain("w.__psforge_insertTextAtSelection as");
   });
+
+  it("only replaces the editor buffer when setEditorText matches the active tab", () => {
+    expect(editorPane).toContain(
+      "if (tabId && activeTabRef.current?.id !== tabId) return false;",
+    );
+    expect(app).toContain("diskWriteTabChanges");
+    expect(executionActions).toContain("diskWriteTabChanges");
+  });
 });
 
 describe("Recent files and project config merge against current settings (S10-2)", () => {
@@ -240,6 +248,18 @@ describe("Paste Clean + Format entry point (S11-1)", () => {
     expect(terminalPane).toContain("createLocalTab");
     expect(app).toContain("runOrDebugScript({ newConsole })");
     expect(executionActions).toContain("newConsole?: boolean");
+  });
+
+  it("surfaces a notice when Welcome paste has no PowerShell host", () => {
+    expect(app).toContain("No PowerShell host selected");
+    expect(app).toContain("Clipboard is empty.");
+  });
+
+  it("defers run-after-sanitized-paste until after Monaco onChange", () => {
+    const idx = app.indexOf("w.__psforge_afterPasteSanitized");
+    expect(idx).toBeGreaterThan(-1);
+    const block = app.slice(idx, idx + 420);
+    expect(block).toContain("window.setTimeout(() => runOrDebugScript(), 0)");
   });
 });
 

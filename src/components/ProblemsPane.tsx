@@ -7,6 +7,7 @@ import {
   buildFixProblemQuestion,
   diagnosticToTarget,
 } from "../fix-problem";
+import { applyEditorTextForTab } from "../editor-fix-problem";
 import {
   fixAllProblemsSequentially,
   formatFixAllSequentialSummary,
@@ -17,7 +18,7 @@ import { ProblemsPssaHint } from "./PssaInstallControls";
 
 declare global {
   interface Window {
-    __psforge_setEditorText?: (text: string) => void;
+    __psforge_setEditorText?: (text: string, tabId?: string) => boolean;
   }
 }
 
@@ -45,9 +46,7 @@ function applyFixedCode(
   onApplyFixedScript: (tabId: string, code: string) => void,
 ): void {
   onApplyFixedScript(tabId, code);
-  if (typeof window.__psforge_setEditorText === "function") {
-    window.__psforge_setEditorText(code);
-  }
+  applyEditorTextForTab(tabId, code);
 }
 
 export function ProblemsPane({

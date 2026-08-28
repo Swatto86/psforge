@@ -47,6 +47,7 @@ import {
   isScratchBackedTab,
   isUntitledScratchCandidate,
   recoveredScratchTitle,
+  diskWriteTabChanges,
 } from "./scratch-utils";
 import { findProjectConfig } from "./project-config";
 import { useExecutionActions } from "./use-execution-actions";
@@ -154,6 +155,8 @@ function AppInner() {
   const updateStatusResetTimerRef = useRef<number | null>(null);
   const autoUpdateCheckStartedRef = useRef(false);
   const scratchDirRef = useRef("");
+  const tabsRef = useRef(state.tabs);
+  tabsRef.current = state.tabs;
   const scratchSaveTimersRef = useRef<Map<string, number>>(new Map());
   const scratchRecoveryCheckedRef = useRef(false);
   const runWorkingDirOverrideRef = useRef<string | null>(null);
@@ -1150,7 +1153,13 @@ function AppInner() {
 
   const pasteFromClipboardAsNewScript = useCallback(
     async (options?: { runInNewConsole?: boolean }) => {
-      if (!state.selectedPsPath) return;
+      if (!state.selectedPsPath) {
+        const message =
+          "[PSForge] No PowerShell host selected. Choose a host in the toolbar, then paste again.";
+        showAppToast(message);
+        void writeTerminalNotice(message, { reveal: true });
+        return;
+      }
       let clip = "";
       try {
         clip = await navigator.clipboard.readText();
@@ -1161,7 +1170,10 @@ function AppInner() {
         );
         return;
       }
-      if (!clip.trim()) return;
+      if (!clip.trim()) {
+        showAppToast("Clipboard is empty.");
+        return;
+      }
 
       const { text: cleaned, summary } = sanitizePastedTextWithSummary(
         clip,
@@ -1301,6 +1313,13 @@ function AppInner() {
         void cmd
           .saveFileContent(path, tab.content, tab.encoding)
           .then(() => {
+            const live = tabsRef.current.find((t) => t.id === tab.id);
+            const changes = diskWriteTabChanges(
+              path,
+              tab.content,
+              live?.content,
+            );
+            if (!changes) return;
             dispatch({
               type: "UPDATE_TAB",
               id: tab.id,
@@ -1308,9 +1327,7 @@ function AppInner() {
                 // Do NOT overwrite the friendly "Untitled-N" title with the
                 // UUID-based scratch filename — this is an internal backing
                 // store, not a user-chosen save location (S3-17).
-                filePath: path,
-                savedContent: tab.content,
-                isDirty: false,
+                ...changes,
               },
             });
           })
@@ -1403,9 +1420,10 @@ function AppInner() {
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>;
     w.__psforge_afterPasteSanitized = () => {
-      if (state.settings.runAfterSanitizedPaste === true) {
-        runOrDebugScript();
-      }
+      if (state.settings.runAfterSanitizedPaste !== true) return;
+      // Monaco onChange (store update) runs after this paste handler returns.
+      // Defer F5 so the run uses the sanitized buffer, not the pre-paste script.
+      window.setTimeout(() => runOrDebugScript(), 0);
     };
     return () => {
       delete w.__psforge_afterPasteSanitized;

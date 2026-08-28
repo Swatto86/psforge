@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildFixAllProblemsQuestion,
   buildFixProblemQuestion,
@@ -8,6 +8,9 @@ import {
   MAX_FIX_PROBLEM_CHARS,
 } from "../fix-problem";
 import type { editor as MonacoEditor } from "monaco-editor";
+import {
+  applyEditorTextForTab,
+} from "../editor-fix-problem";
 import type { PssaDiagnostic } from "../types";
 
 function marker(
@@ -300,6 +303,10 @@ describe("Problems pane Fix This wiring", () => {
     expect(problemsPane).not.toMatch(
       /runFixAll[\s\S]*buildFixAllProblemsQuestion/,
     );
+    expect(problemsPane).toContain("applyEditorTextForTab");
+    expect(problemsPane).not.toContain(
+      "window.__psforge_setEditorText(code)",
+    );
   });
 });
 
@@ -309,5 +316,24 @@ describe("Assistant blank Fix uses sequential Fix All", () => {
       "../components/AssistantPane.tsx?raw"
     );
     expect(assistantPane).toContain("fixAllProblemsSequentially");
+    expect(assistantPane).toContain("applyEditorTextForTab");
+  });
+});
+
+describe("applyEditorTextForTab", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns false when the editor bridge is missing", () => {
+    vi.stubGlobal("window", {});
+    expect(applyEditorTextForTab("tab-a", "code")).toBe(false);
+  });
+
+  it("forwards tabId so a background tab cannot overwrite the visible editor", () => {
+    const setText = vi.fn().mockReturnValue(true);
+    vi.stubGlobal("window", { __psforge_setEditorText: setText });
+    expect(applyEditorTextForTab("tab-a", "fixed")).toBe(true);
+    expect(setText).toHaveBeenCalledWith("fixed", "tab-a");
   });
 });

@@ -20,7 +20,14 @@ tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "process",
+    "io-util",
+    "sync",
+] }
 log = "0.4"
 env_logger = "0.11"
 dirs = "6"
@@ -36,5 +43,17 @@ tauri-plugin-updater = "2"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 
+[profile.dev]
+# Faster links: line tables only (panic file:line still works).
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
 [profile.dev.package."*"]
 opt-level = 1
+
+# Prefer wall-clock compile time: PSForge's hot path is PowerShell, not Rust.
+# Default release codegen-units is 16; 64 parallelizes LLVM much more.
+[profile.release]
+codegen-units = 64
+lto = false
+

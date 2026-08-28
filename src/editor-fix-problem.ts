@@ -11,7 +11,21 @@ import {
   pickPrimaryMarker,
 } from "./fix-problem";
 
+declare global {
+  interface Window {
+    __psforge_setEditorText?: (text: string, tabId?: string) => boolean;
+  }
+}
+
 export const FIX_PROBLEM_ACTION_ID = "psforge-fix-problem";
+
+/** Replace the Monaco buffer only when it still belongs to `tabId`. */
+export function applyEditorTextForTab(tabId: string, text: string): boolean {
+  if (typeof window === "undefined") return false;
+  const setText = window.__psforge_setEditorText;
+  if (typeof setText !== "function") return false;
+  return setText(text, tabId) === true;
+}
 
 export interface FixProblemEditorDeps {
   getSettings: () => AppSettings;

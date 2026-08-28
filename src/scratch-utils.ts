@@ -41,3 +41,21 @@ export function isUntitledScratchCandidate(tab: EditorTab): boolean {
 export function recoveredScratchTitle(nextUntitled: number): string {
   return `Untitled-${nextUntitled}`;
 }
+
+/**
+ * After writing `writtenContent` to disk, keep the tab dirty when the live
+ * buffer has already moved on. A late save completion must not clear the
+ * dirty flag (or a close prompt) for newer unsaved edits.
+ */
+export function diskWriteTabChanges(
+  path: string,
+  writtenContent: string,
+  liveContent: string | undefined,
+): { filePath: string; savedContent: string; isDirty: boolean } | null {
+  if (liveContent === undefined) return null;
+  return {
+    filePath: path,
+    savedContent: writtenContent,
+    isDirty: liveContent !== writtenContent,
+  };
+}
