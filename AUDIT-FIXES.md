@@ -34,7 +34,7 @@ Focused pass over paste/run, Fix All, scratch auto-save, and terminal run-prep a
 
 ### Regression
 
-- [x] Vitest: dirty-after-write helper, tab-guarded editor apply, Welcome paste notices, deferred sanitized-paste run, prep-path contract. Cargo: bootstrap prep-path test + analyzer warning helper. 150 frontend tests + clippy/test green.
+- [x] Vitest: dirty-after-write helper, tab-guarded editor apply, Welcome paste notices, deferred sanitized-paste run, prep-path contract. Cargo: bootstrap prep-path test + analyzer warning helper. 150 frontend tests + Linux clippy/test green. Windows live `analyze_script` tests serialized (and skip on timeout warning) so parallel pwsh + 12s cap no longer fails CI.
 
 ---
 

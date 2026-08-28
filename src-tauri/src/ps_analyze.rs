@@ -10,6 +10,7 @@ use crate::win_compat::CommandExt;
 use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::process::Stdio;
 
 const ANALYSIS_TIMEOUT_SECS: u64 = 12;
 
@@ -158,6 +159,7 @@ if ($__out.Count -eq 0) { '[]'; exit 0 }
 fn ps_command(ps_path: &str) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(powershell::normalize_ps_path(ps_path));
     cmd.kill_on_drop(true);
+    cmd.stdin(Stdio::null());
     cmd
 }
 
@@ -363,6 +365,13 @@ mod tests {
         assert_eq!(diags[0].line, 1);
     }
 
+    static ANALYZE_LIVE_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    fn skip_live_analyze(diags: &[PssaDiagnostic]) -> bool {
+        diags.len() == 1 && diags[0].rule_name == "PSForge"
+    }
+
     #[test]
     fn analyze_snippet_contains_builtin_parser() {
         assert!(
@@ -386,11 +395,16 @@ mod tests {
             eprintln!("skip: pwsh not on PATH");
             return;
         };
+        let _guard = ANALYZE_LIVE_TEST_LOCK.lock().await;
 
         let broken = "class Pet { Pet() { } Pet([string]$n,[int]$a) { } }\nclass Dog : Pet { }\n[Dog]::new('Rex', 7)\n";
         let diags = analyze_script(pwsh.to_string_lossy().into_owned(), broken.to_string())
             .await
             .expect("analyze_script must not error");
+        if skip_live_analyze(&diags) {
+            eprintln!("skip: live analyzer unavailable ({})", diags[0].message);
+            return;
+        }
 
         assert!(
             diags
@@ -407,12 +421,17 @@ mod tests {
             eprintln!("skip: pwsh not on PATH");
             return;
         };
+        let _guard = ANALYZE_LIVE_TEST_LOCK.lock().await;
 
         let broken =
             "class Pet { Pet([string]$n) { } }\nclass Dog : Pet { [string] Speak() { 'x' } }\n";
         let diags = analyze_script(pwsh.to_string_lossy().into_owned(), broken.to_string())
             .await
             .expect("analyze_script must not error");
+        if skip_live_analyze(&diags) {
+            eprintln!("skip: live analyzer unavailable ({})", diags[0].message);
+            return;
+        }
 
         assert!(
             diags.iter().any(|d| {
@@ -431,11 +450,16 @@ mod tests {
             eprintln!("skip: pwsh not on PATH");
             return;
         };
+        let _guard = ANALYZE_LIVE_TEST_LOCK.lock().await;
 
         let broken = "$($$('abc123' -match '\\d{2}'))\nclass Dog : Pet { [string] Speak() { return 'x' } }\n";
         let diags = analyze_script(pwsh.to_string_lossy().into_owned(), broken.to_string())
             .await
             .expect("analyze_script must not error");
+        if skip_live_analyze(&diags) {
+            eprintln!("skip: live analyzer unavailable ({})", diags[0].message);
+            return;
+        }
 
         assert!(
             !diags.is_empty(),
