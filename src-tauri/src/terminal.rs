@@ -185,6 +185,17 @@ function global:psrun {
 # VS Code-style shell integration markers for rich terminal UX.
 # A = prompt start, B = prompt end, D = command finished with exit code,
 # E = command line submitted, P;Cwd=... = current working directory.
+#
+# Terminator is ST (ESC \) — not BEL (ASCII 7). Windows ConPTY rings the
+# system beep for BEL even when it only ends an OSC sequence. Windows
+# Terminal does not, because OpenConsole parses OSC and suppresses that
+# bell. xterm.js and run-output-capture already accept either terminator.
+function global:PSForge-WriteOsc633 {
+    param([Parameter(Mandatory = $true)][string]$Payload)
+    $esc = [char]27
+    [Console]::Out.Write("$esc]633;$Payload$esc\")
+}
+
 $global:PSForgePromptInitialised = $false
 $script:PSForgeRestoreRunDir = $null
 
@@ -196,9 +207,8 @@ try {
                 Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction SilentlyContinue
                 Set-PSReadLineOption -AddToHistoryHandler {
                     param([string]$line)
-                    $esc = [char]27
                     $encodedLine = $line -replace ';', '%3B'
-                    [Console]::Out.Write("$esc]633;E;$encodedLine`a")
+                    PSForge-WriteOsc633 "E;$encodedLine"
                     PSForge-ApplyPendingRunPrep
                     return $true
                 }
@@ -251,8 +261,6 @@ try {
 }
 
 function global:prompt {
-    $esc = [char]27
-
     if ($global:PSForgePromptInitialised) {
         if ($script:PSForgeRestoreRunDir) {
             try {
@@ -272,7 +280,7 @@ function global:prompt {
                 $exitCode = 1
             }
         }
-        [Console]::Out.Write("$esc]633;D;$exitCode`a")
+        PSForge-WriteOsc633 "D;$exitCode"
     } else {
         $global:PSForgePromptInitialised = $true
     }
@@ -280,9 +288,9 @@ function global:prompt {
     $cwd = (Get-Location).Path
     $encodedCwd = $cwd -replace ';', '%3B'
 
-    [Console]::Out.Write("$esc]633;A`a")
-    [Console]::Out.Write("$esc]633;P;Cwd=$encodedCwd`a")
-    [Console]::Out.Write("$esc]633;B`a")
+    PSForge-WriteOsc633 'A'
+    PSForge-WriteOsc633 "P;Cwd=$encodedCwd"
+    PSForge-WriteOsc633 'B'
 
     if ($script:PSForgePriorPrompt) {
         try {
@@ -848,6 +856,27 @@ mod tests {
                     .count()
                     >= 3,
             "history handler, psrun, and the function definition must all exist"
+        );
+    }
+
+    #[test]
+    fn bootstrap_terminates_osc_633_with_st_not_bel() {
+        assert!(
+            TERMINAL_BOOTSTRAP_SCRIPT.contains("PSForge-WriteOsc633"),
+            "OSC 633 writes must go through the shared helper"
+        );
+        assert!(
+            !TERMINAL_BOOTSTRAP_SCRIPT.contains("`a"),
+            "BEL (`a) rings the Windows ConPTY system beep on launch; use ST"
+        );
+        assert!(
+            TERMINAL_BOOTSTRAP_SCRIPT.contains(r#"$esc]633;$Payload$esc\"#),
+            "helper must end OSC 633 with ST (ESC \\), which ConPTY does not beep"
+        );
+        assert_eq!(
+            TERMINAL_BOOTSTRAP_SCRIPT.matches("PSForge-WriteOsc633").count(),
+            6,
+            "definition plus A/B/D/E/P call sites"
         );
     }
 }

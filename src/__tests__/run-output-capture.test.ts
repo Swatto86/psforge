@@ -14,6 +14,11 @@ function osc633(code: string, payload = ""): string {
   return `${ESC}]${body}\x07`;
 }
 
+function osc633St(code: string, payload = ""): string {
+  const body = payload ? `633;${code};${payload}` : `633;${code}`;
+  return `${ESC}]${body}${ESC}\\`;
+}
+
 describe("run-output-capture", () => {
   it("captures stdout/stderr between command submit and prompt finish", () => {
     const state = createRunOutputCaptureState();
@@ -68,6 +73,18 @@ describe("run-output-capture", () => {
     startRunOutputCapture(state, "exit 0");
     feedRunOutputCapture(state, "exit 0\r\n" + osc633("D", "0"));
     expect(getRunScriptOutputFromState(state)).toBe("");
+  });
+
+  it("captures runs when OSC 633 is terminated with ST instead of BEL", () => {
+    const state = createRunOutputCaptureState();
+    startRunOutputCapture(state, "& 'C:\\\\scripts\\\\Test.ps1'");
+
+    feedRunOutputCapture(
+      state,
+      `${osc633St("E", "&%20'C:\\\\scripts\\\\Test.ps1'")}& 'C:\\\\scripts\\\\Test.ps1'\r\nHello\r\n${osc633St("D", "0")}${osc633St("A")}PS C:\\>${osc633St("B")}`,
+    );
+
+    expect(getRunScriptOutputFromState(state)).toBe("Hello");
   });
 
   it("finalizeRunScriptOutput trims trailing blank lines", () => {
