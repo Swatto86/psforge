@@ -874,7 +874,9 @@ mod tests {
             "helper must end OSC 633 with ST (ESC \\), which ConPTY does not beep"
         );
         assert_eq!(
-            TERMINAL_BOOTSTRAP_SCRIPT.matches("PSForge-WriteOsc633").count(),
+            TERMINAL_BOOTSTRAP_SCRIPT
+                .matches("PSForge-WriteOsc633")
+                .count(),
             6,
             "definition plus A/B/D/E/P call sites"
         );
