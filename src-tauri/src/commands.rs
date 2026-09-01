@@ -585,7 +585,13 @@ pub async fn get_script_parameters(
 #[cfg_attr(not(test), tauri::command)]
 pub async fn get_ps_versions() -> Result<Vec<powershell::PsVersion>, AppError> {
     info!("get_ps_versions called");
-    tokio::task::spawn_blocking(powershell::discover_ps_versions)
+    // The saved host decides which spelling of a multiply-aliased install is
+    // listed, so the selector never ends up pointing at a path it dropped.
+    let preferred = settings::load()
+        .ok()
+        .map(|saved| saved.default_ps_version)
+        .filter(|host| !host.trim().is_empty() && host != "auto");
+    tokio::task::spawn_blocking(move || powershell::discover_ps_versions(preferred.as_deref()))
         .await
         .map_err(|e| AppError {
             code: "PS_DISCOVERY_FAILED".to_string(),

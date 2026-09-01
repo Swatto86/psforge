@@ -1230,14 +1230,83 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Real file a candidate host resolves to. Symlinked aliases of one install
+/// share it, so `~/.local/bin/powershell`, `.../powershell/latest/pwsh` and the
+/// concrete `.../powershell/7.6.5/pwsh` all carry the same identity.
+#[cfg(unix)]
+fn host_identity(candidate: &std::path::Path) -> String {
+    std::fs::canonicalize(candidate)
+        .unwrap_or_else(|_| candidate.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// A version-manager shim (mise, asdf) resolves to the manager's own binary
+/// rather than a PowerShell one. It launches the same install a direct path
+/// already found, through an extra process, so it is noise in the host list.
+///
+/// Matches on a `pwsh`/`powershell` *prefix* so a versioned real binary such as
+/// `pwsh-7.6.5` is not mistaken for a shim.
+#[cfg(unix)]
+fn is_version_manager_shim(candidate: &std::path::Path) -> bool {
+    let Ok(resolved) = std::fs::canonicalize(candidate) else {
+        return false;
+    };
+    let Some(name) = resolved.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    !(name.starts_with("pwsh") || name.starts_with("powershell"))
+}
+
+/// Collapse aliases of one PowerShell binary and drop version-manager shims,
+/// preserving discovery order.
+///
+/// A single mise install is reachable as `.../powershell/latest/pwsh`,
+/// `.../powershell/7.6.5/pwsh`, `~/.local/bin/powershell` and a shim; listing
+/// all four says nothing useful about which PowerShell will run.
+///
+/// `preferred` is the host the user has already selected. When several
+/// spellings share a binary the preferred one wins, so an update cannot leave
+/// the selector pointing at a path that is no longer in the list. A shim
+/// survives only when it is the sole way to reach PowerShell.
+#[cfg(unix)]
+pub fn dedupe_ps_hosts(candidates: Vec<PathBuf>, preferred: Option<&str>) -> Vec<PathBuf> {
+    let has_direct = candidates
+        .iter()
+        .any(|candidate| !is_version_manager_shim(candidate));
+
+    let mut hosts: Vec<(String, PathBuf)> = Vec::new();
+    for candidate in candidates {
+        if has_direct && is_version_manager_shim(&candidate) {
+            continue;
+        }
+        let identity = host_identity(&candidate);
+        match hosts.iter_mut().find(|(seen, _)| *seen == identity) {
+            Some((_, chosen)) => {
+                if preferred.is_some_and(|wanted| candidate.to_string_lossy() == wanted) {
+                    *chosen = candidate;
+                }
+            }
+            None => hosts.push((identity, candidate)),
+        }
+    }
+    hosts.into_iter().map(|(_, path)| path).collect()
+}
+
 /// Discovers all installed PowerShell versions on the system.
 ///
 /// Discovery is platform-aware:
 /// - Windows: probes the well-known PS7+ install dirs, scans `where.exe`, and
 ///   adds Windows PowerShell 5.1 if present.
 /// - Linux/macOS: scans every PATH entry for `pwsh` (PowerShell 7+ ships as
-///   `pwsh` there). PS5.1 does not exist outside Windows.
-pub fn discover_ps_versions() -> Vec<PsVersion> {
+///   `pwsh` there), then collapses aliases of one install. PS5.1 does not
+///   exist outside Windows.
+///
+/// `preferred` is the host currently saved in settings; it decides which
+/// spelling survives when several paths resolve to one binary (see
+/// `dedupe_ps_hosts`). Pass `None` when no host has been chosen.
+pub fn discover_ps_versions(preferred: Option<&str>) -> Vec<PsVersion> {
     info!("Discovering installed PowerShell versions");
     let mut versions = Vec::new();
     let mut seen_paths: HashMap<String, bool> = HashMap::new();
@@ -1314,20 +1383,13 @@ pub fn discover_ps_versions() -> Vec<PsVersion> {
         // PowerShell 7+ on Linux/macOS ships as `pwsh` (no .exe). We scan every
         // PATH entry rather than shelling out so the discovery does not depend
         // on a specific helper (`which`, `where`, etc.) being installed.
+        let mut candidates: Vec<PathBuf> = Vec::new();
         if let Ok(path_env) = std::env::var("PATH") {
             for dir in std::env::split_paths(&path_env) {
                 for candidate_name in ["pwsh", "powershell"] {
                     let candidate = dir.join(candidate_name);
                     if candidate.is_file() {
-                        let path_str = candidate.to_string_lossy().to_string();
-                        seen_paths.entry(path_str.clone()).or_insert_with(|| {
-                            versions.push(PsVersion {
-                                name: format!("PowerShell ({})", path_str),
-                                path: path_str.clone(),
-                                version: "7+".to_string(),
-                            });
-                            true
-                        });
+                        candidates.push(candidate);
                     }
                 }
             }
@@ -1342,15 +1404,22 @@ pub fn discover_ps_versions() -> Vec<PsVersion> {
         ] {
             let candidate = PathBuf::from(fixed);
             if candidate.is_file() {
-                seen_paths.entry(fixed.to_string()).or_insert_with(|| {
-                    versions.push(PsVersion {
-                        name: format!("PowerShell ({})", fixed),
-                        path: fixed.to_string(),
-                        version: "7+".to_string(),
-                    });
-                    true
-                });
+                candidates.push(candidate);
             }
+        }
+
+        // Package managers put one install on PATH several times over; list the
+        // binary once rather than once per alias.
+        for candidate in dedupe_ps_hosts(candidates, preferred) {
+            let path_str = candidate.to_string_lossy().to_string();
+            seen_paths.entry(path_str.clone()).or_insert_with(|| {
+                versions.push(PsVersion {
+                    name: format!("PowerShell ({})", path_str),
+                    path: path_str.clone(),
+                    version: "7+".to_string(),
+                });
+                true
+            });
         }
     }
 
@@ -1437,5 +1506,100 @@ mod tests {
             parse_run_complete_stderr_marker("<<PSFORGE_DONE|abc|0>>"),
             None
         );
+    }
+
+    #[cfg(unix)]
+    mod host_dedupe {
+        use super::super::dedupe_ps_hosts;
+        use std::path::PathBuf;
+        use uuid::Uuid;
+
+        /// One mise-style PowerShell install reachable four ways, plus a shim.
+        struct Tree {
+            _root: PathBuf,
+            concrete: PathBuf,
+            latest: PathBuf,
+            bin_alias: PathBuf,
+            shim: PathBuf,
+        }
+
+        fn build_tree() -> Tree {
+            let root = std::env::temp_dir().join(format!("psforge_hosts_{}", Uuid::new_v4()));
+            let install = root.join("installs/powershell/7.6.5");
+            std::fs::create_dir_all(&install).expect("install dir");
+            std::fs::create_dir_all(root.join("bin")).expect("bin dir");
+            std::fs::create_dir_all(root.join("shims")).expect("shims dir");
+            std::fs::create_dir_all(root.join("manager")).expect("manager dir");
+
+            let concrete = install.join("pwsh");
+            std::fs::write(&concrete, b"#!/bin/sh\n").expect("pwsh binary");
+            let manager = root.join("manager/mise");
+            std::fs::write(&manager, b"#!/bin/sh\n").expect("manager binary");
+
+            std::os::unix::fs::symlink("./7.6.5", root.join("installs/powershell/latest"))
+                .expect("latest symlink");
+            std::os::unix::fs::symlink(&concrete, root.join("bin/powershell"))
+                .expect("bin symlink");
+            std::os::unix::fs::symlink(&manager, root.join("shims/pwsh")).expect("shim symlink");
+
+            Tree {
+                latest: root.join("installs/powershell/latest/pwsh"),
+                bin_alias: root.join("bin/powershell"),
+                shim: root.join("shims/pwsh"),
+                concrete,
+                _root: root,
+            }
+        }
+
+        fn all_candidates(tree: &Tree) -> Vec<PathBuf> {
+            vec![
+                tree.latest.clone(),
+                tree.shim.clone(),
+                tree.bin_alias.clone(),
+                tree.concrete.clone(),
+            ]
+        }
+
+        #[test]
+        fn collapses_every_alias_of_one_install_to_the_first_spelling() {
+            let tree = build_tree();
+            assert_eq!(
+                dedupe_ps_hosts(all_candidates(&tree), None),
+                vec![tree.latest.clone()],
+                "latest/pwsh, the shim, bin/powershell and 7.6.5/pwsh are one install"
+            );
+        }
+
+        #[test]
+        fn keeps_the_spelling_the_user_already_selected() {
+            let tree = build_tree();
+            let selected = tree.bin_alias.to_string_lossy().into_owned();
+            assert_eq!(
+                dedupe_ps_hosts(all_candidates(&tree), Some(&selected)),
+                vec![tree.bin_alias.clone()],
+                "the saved host must survive dedupe or the selector goes blank"
+            );
+        }
+
+        #[test]
+        fn keeps_a_shim_when_it_is_the_only_way_to_reach_powershell() {
+            let tree = build_tree();
+            assert_eq!(
+                dedupe_ps_hosts(vec![tree.shim.clone()], None),
+                vec![tree.shim.clone()]
+            );
+        }
+
+        #[test]
+        fn keeps_genuinely_separate_installs() {
+            let tree = build_tree();
+            let other = tree._root.join("other");
+            std::fs::create_dir_all(&other).expect("other dir");
+            let other_pwsh = other.join("pwsh");
+            std::fs::write(&other_pwsh, b"#!/bin/sh\n").expect("other binary");
+
+            let hosts = dedupe_ps_hosts(vec![tree.concrete.clone(), other_pwsh.clone()], None);
+            assert_eq!(hosts, vec![tree.concrete.clone(), other_pwsh]);
+        }
     }
 }
