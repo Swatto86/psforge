@@ -71,11 +71,31 @@ fn request_exit(app: &tauri::AppHandle) {
     }
 }
 
+/// WebKitGTK's DMA-BUF renderer aborts the web process on several Wayland
+/// compositors — under Hyprland with the NVIDIA driver the window dies with
+/// "Error 71 (Protocol error) dispatching to Wayland display" before PSForge
+/// paints anything. Fall back to the plain GL renderer, but never overwrite an
+/// explicit choice, so `WEBKIT_DISABLE_DMABUF_RENDERER=0` still opts back in.
+///
+/// Must run before GTK/WebKit initialize, i.e. before the Tauri builder runs.
+#[cfg(target_os = "linux")]
+fn use_plain_gl_renderer_by_default() {
+    if std::env::var_os(WEBKIT_DMABUF_ENV).is_none() {
+        std::env::set_var(WEBKIT_DMABUF_ENV, "1");
+    }
+}
+
+#[cfg(target_os = "linux")]
+const WEBKIT_DMABUF_ENV: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+
 /// Entry point for the Tauri application.
 /// Registers all plugins and command handlers.
 #[cfg(not(test))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    use_plain_gl_renderer_by_default();
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
@@ -275,5 +295,34 @@ mod tests {
     #[test]
     fn unrelated_window_events_are_ignored() {
         assert_eq!(window_close_action(false), WindowCloseAction::Ignore);
+    }
+
+    /// Single test for both branches: the environment is process-global, so
+    /// splitting this in two would let the cases race each other.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dmabuf_renderer_is_disabled_unless_the_user_chose_a_value() {
+        let restore = std::env::var_os(WEBKIT_DMABUF_ENV);
+
+        std::env::remove_var(WEBKIT_DMABUF_ENV);
+        use_plain_gl_renderer_by_default();
+        assert_eq!(
+            std::env::var(WEBKIT_DMABUF_ENV).as_deref(),
+            Ok("1"),
+            "an unset renderer variable must fall back to plain GL"
+        );
+
+        std::env::set_var(WEBKIT_DMABUF_ENV, "0");
+        use_plain_gl_renderer_by_default();
+        assert_eq!(
+            std::env::var(WEBKIT_DMABUF_ENV).as_deref(),
+            Ok("0"),
+            "an explicit opt-in to DMA-BUF must survive"
+        );
+
+        match restore {
+            Some(value) => std::env::set_var(WEBKIT_DMABUF_ENV, value),
+            None => std::env::remove_var(WEBKIT_DMABUF_ENV),
+        }
     }
 }
