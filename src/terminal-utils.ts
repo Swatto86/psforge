@@ -128,3 +128,22 @@ export function startupPtyDims(
   if (!paneIsLaidOut) return clampPtyDims(0, 0);
   return clampPtyDims(cols, rows);
 }
+
+/**
+ * Publish imperative terminal entry points on `window` and return their
+ * teardown. Install and teardown share one key list, so a new entry can no
+ * longer be added without also being removed on unmount.
+ */
+export function installWindowBridge(
+  entries: Record<string, unknown>,
+): () => void {
+  const w = window as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(entries)) {
+    w[key] = value;
+  }
+  return () => {
+    for (const key of Object.keys(entries)) {
+      delete w[key];
+    }
+  };
+}

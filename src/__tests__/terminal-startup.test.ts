@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { startupPtyDims } from "../terminal-utils";
-import terminalPane from "../components/TerminalPane.tsx?raw";
+import consoleSession from "../terminal/console-session.ts?raw";
 
 describe("integrated terminal startup size", () => {
   it("ignores xterm's degenerate minimum when the pane has no layout yet", () => {
@@ -20,15 +20,15 @@ describe("integrated terminal startup size", () => {
 });
 
 describe("integrated terminal cursor position reports", () => {
-  it("reads TerminalPane source", () => {
-    expect(terminalPane).toContain("cmd.startTerminal(");
+  it("reads the console session source", () => {
+    expect(consoleSession).toContain("cmd.startTerminal(");
   });
 
   it("never fabricates a cursor position report on session start", () => {
     // A DSR reply the terminal was never asked for is queued as keyboard
     // input: on a real PTY it echoes as literal `^[[1;1R` and desynchronises
     // PSReadLine's own cursor query. xterm.js already answers CSI 6 n itself.
-    expect(terminalPane).not.toContain("buffer.active.cursorY");
-    expect(terminalPane).not.toContain("R`, true)");
+    expect(consoleSession).not.toContain("buffer.active.cursorY");
+    expect(consoleSession).not.toContain("R`, true)");
   });
 });

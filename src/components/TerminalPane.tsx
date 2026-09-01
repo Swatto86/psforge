@@ -1,32 +1,15 @@
-/** PSForge Integrated Terminal (multi-console + remote tabs). */
+/** PSForge Integrated Terminal: console tabs and the app-wide terminal bridge. */
 
-import React, {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import type { Terminal } from "@xterm/xterm";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import "@xterm/xterm/css/xterm.css";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ITheme } from "@xterm/xterm";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
+import { installWindowBridge } from "../terminal-utils";
+import { highlightPs } from "../terminal/ps-highlight";
 import {
-  createRunOutputCaptureState,
-  feedRunOutputCapture,
-  getRunScriptOutputFromState,
-  startRunOutputCapture,
-  type RunOutputCaptureState,
-} from "../run-output-capture";
-import { clampPtyDims, startupPtyDims } from "../terminal-utils";
-import {
-  createTerminalWithAddons,
-  type TerminalPerformanceAddons,
-} from "../terminal/xterm-setup";
-import { wipeTerminalDisplay } from "../terminal/wipe-display";
+  enterPsSessionCommand,
+  validateRemoteTarget,
+} from "../terminal/remote-console";
 import { terminalThemeFromCss } from "../terminal/xterm-theme";
 import {
   parseWindowsTerminalAppearance,
@@ -34,866 +17,12 @@ import {
   windowsTerminalSchemeToXtermTheme,
   type WindowsTerminalAppearance,
 } from "../terminal/windows-terminal-theme";
-import type { ITheme } from "@xterm/xterm";
-
-const MAX_TERMINAL_WRITE_PER_FRAME = 256 * 1024;
-
-function highlightPs(text: string): string {
-  const K = "\x1b[38;2;86;156;214m";
-  const F = "\x1b[38;2;220;220;170m";
-  const V = "\x1b[38;2;156;220;254m";
-  const S = "\x1b[38;2;206;145;120m";
-  const C = "\x1b[38;2;106;153;85m";
-  const N = "\x1b[38;2;181;206;168m";
-  const R = "\x1b[0m";
-
-  const KEYWORDS = new Set([
-    "if",
-    "else",
-    "elseif",
-    "for",
-    "foreach",
-    "while",
-    "do",
-    "until",
-    "switch",
-    "break",
-    "continue",
-    "return",
-    "function",
-    "filter",
-    "param",
-    "begin",
-    "process",
-    "end",
-    "try",
-    "catch",
-    "finally",
-    "throw",
-    "class",
-    "enum",
-    "using",
-    "in",
-    "trap",
-    "exit",
-    "hidden",
-    "static",
-    "data",
-  ]);
-
-  let result = "";
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] === "#") {
-      result += C + text.slice(i) + R;
-      break;
-    }
-    if (text[i] === "'") {
-      let j = i + 1;
-      while (j < text.length && text[j] !== "'") j++;
-      if (j < text.length) j++;
-      result += S + text.slice(i, j) + R;
-      i = j;
-      continue;
-    }
-    if (text[i] === '"') {
-      let j = i + 1;
-      while (j < text.length) {
-        if (text[j] === "`" && j + 1 < text.length) {
-          j += 2;
-          continue;
-        }
-        if (text[j] === '"') {
-          j++;
-          break;
-        }
-        j++;
-      }
-      result += S + text.slice(i, j) + R;
-      i = j;
-      continue;
-    }
-    if (text[i] === "$" && i + 1 < text.length && /[\w{?]/.test(text[i + 1])) {
-      let j = i + 1;
-      if (text[j] === "{") {
-        j++;
-        while (j < text.length && text[j] !== "}") j++;
-        if (j < text.length) j++;
-      } else {
-        while (j < text.length && /[\w?]/.test(text[j])) j++;
-      }
-      result += V + text.slice(i, j) + R;
-      i = j;
-      continue;
-    }
-    if (
-      text[i] === "-" &&
-      i + 1 < text.length &&
-      /[a-zA-Z]/.test(text[i + 1])
-    ) {
-      let j = i + 1;
-      while (j < text.length && /[a-zA-Z]/.test(text[j])) j++;
-      result += K + text.slice(i, j) + R;
-      i = j;
-      continue;
-    }
-    if (/\d/.test(text[i]) && (i === 0 || /\W/.test(text[i - 1]))) {
-      let j = i;
-      while (j < text.length && /[\d._xXa-fA-FoObBeE+-]/.test(text[j])) j++;
-      result += N + text.slice(i, j) + R;
-      i = j;
-      continue;
-    }
-    if (/[a-zA-Z_]/.test(text[i])) {
-      let j = i;
-      while (j < text.length && /[a-zA-Z0-9_-]/.test(text[j])) j++;
-      while (j > i + 1 && text[j - 1] === "-") j--;
-      const word = text.slice(i, j);
-      if (KEYWORDS.has(word.toLowerCase())) {
-        result += K + word + R;
-      } else if (
-        /^[a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z][a-zA-Z0-9]*)+$/.test(word)
-      ) {
-        result += F + word + R;
-      } else {
-        result += word;
-      }
-      i = j;
-      continue;
-    }
-    result += text[i];
-    i++;
-  }
-  return result;
-}
-
-type TerminalOutputEvent = {
-  sessionId: number;
-  data: string;
-};
-
-type TerminalExitEvent = {
-  sessionId: number;
-  exitCode: number | null;
-};
-
-const REMOTE_TARGET_MAX_LENGTH = 255;
-
-const MISSING_COMMAND_RE =
-  /The term ['"`]([^'"`\r\n]+)['"`] is not recognized as (?:the )?name of a cmdlet, function, script file, or (?:executable|operable) program\./gi;
-
-function stripAnsi(text: string): string {
-  return text
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
-}
-
-function quotePs(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-function validateRemoteTarget(raw: string): string | null {
-  const target = raw.trim();
-  if (!target) {
-    return "Enter a remote computer name.";
-  }
-  if (target.length > REMOTE_TARGET_MAX_LENGTH) {
-    return `Remote computer name must be ${REMOTE_TARGET_MAX_LENGTH} characters or fewer.`;
-  }
-  if (target.startsWith("-")) {
-    return "Remote computer name cannot start with '-'.";
-  }
-  const invalidNonWhitespaceChars = target
-    .replace(/[A-Za-z0-9._:-]/g, "")
-    .replace(/\s/g, "");
-  if (invalidNonWhitespaceChars.length > 0) {
-    return "Remote computer name may only contain letters, numbers, dots, hyphens, underscores, and colons.";
-  }
-  if (/\s/.test(target)) {
-    return "Remote computer name must not contain spaces.";
-  }
-  return null;
-}
-
-interface TerminalSessionHandle {
-  /** Restart the PowerShell session (Clear button). */
-  clear: () => void;
-  /** Wipe the xterm buffer without killing the session (clear-on-run). */
-  clearBuffer: () => void;
-  exec: (command: string) => Promise<number | null>;
-  focus: () => void;
-  restart: () => void;
-  getContent: (lineCount?: number) => string;
-  /** Selected plain text in this console, or "" when nothing is selected. */
-  getSelection: () => string;
-  /** Register a reflow/eviction-safe marker at the current row as the
-   *  "last run" output baseline (S3-13). */
-  markRunStart: (command: string) => void;
-  /** stdout/stderr from the last script run (prompt/command echo stripped). */
-  getRunScriptOutput: () => string | null;
-  /** Lines of output since the last markRunStart(), tracked via an xterm
-   *  marker so it survives resize reflow and scrollback eviction. Returns
-   *  null if no run has started or the baseline row was evicted. */
-  getRunOutputLineCount: () => number | null;
-  isReady: () => boolean;
-  submitCurrentInput: () => void;
-  resetInput: () => void;
-  writeLocal: (text: string) => void;
-  /** Paste text into the PTY (same path as terminal right-click paste). */
-  pasteText: (text: string) => void;
-}
-
-interface TerminalSessionProps {
-  active: boolean;
-  shellPath: string;
-  loadProfile: boolean;
-  fontFamily: string;
-  fontSize: number;
-  /** xterm colour theme (Windows Terminal scheme or PSForge CSS fallback). */
-  theme: ITheme;
-  startupCommand?: string;
-}
-
-const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
-  function TerminalSession(
-    {
-      active,
-      shellPath,
-      loadProfile,
-      fontFamily,
-      fontSize,
-      theme,
-      startupCommand,
-    },
-    ref,
-  ) {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const termRef = useRef<Terminal | null>(null);
-    const fitRef = useRef<TerminalPerformanceAddons["fit"] | null>(null);
-    const performanceAddonsDisposeRef = useRef<(() => void) | null>(null);
-
-    const isReadyRef = useRef(false);
-    const activeRef = useRef(active);
-    activeRef.current = active;
-
-    const pendingOutputRef = useRef("");
-    const outputFlushRafRef = useRef<number | null>(null);
-    /** Bytes of pendingOutput already scanned for exit codes / suggestions. */
-    const outputSideEffectOffsetRef = useRef(0);
-
-    const isStoppingRef = useRef(false);
-    const startInFlightRef = useRef(false);
-    const sessionIdRef = useRef(0);
-
-    const writeQueueRef = useRef("");
-    const writeInFlightRef = useRef(false);
-    const fitRafRef = useRef<number | null>(null);
-    const outputTailRef = useRef("");
-    const suggestedCommandsRef = useRef<Set<string>>(new Set());
-    const suggestInFlightRef = useRef<Set<string>>(new Set());
-    const startupSentForSessionRef = useRef(0);
-    const pendingCommandExecutionsRef = useRef<
-      Array<{
-        resolve: (exitCode: number | null) => void;
-        reject: (error: Error) => void;
-      }>
-    >([]);
-
-    const shellPathRef = useRef(shellPath);
-    const loadProfileRef = useRef(loadProfile);
-    const startupCommandRef = useRef(startupCommand ?? "");
-    shellPathRef.current = shellPath;
-    loadProfileRef.current = loadProfile;
-    startupCommandRef.current = startupCommand ?? "";
-
-    const queueInputFnRef = useRef<
-      ((data: string, allowWhenNotReady?: boolean) => void) | null
-    >(null);
-    const startSessionFnRef = useRef<(() => void) | null>(null);
-    const focusFnRef = useRef<(() => void) | null>(null);
-    const clearFnRef = useRef<(() => void) | null>(null);
-    const clearBufferFnRef = useRef<(() => void) | null>(null);
-    const contentFnRef = useRef<((lineCount?: number) => string) | null>(null);
-    const selectionFnRef = useRef<(() => string) | null>(null);
-    const markRunStartFnRef = useRef<((command: string) => void) | null>(null);
-    const runOutputLineCountFnRef = useRef<(() => number | null) | null>(null);
-    const runScriptOutputFnRef = useRef<(() => string | null) | null>(null);
-    const execFnRef = useRef<
-      ((command: string) => Promise<number | null>) | null
-    >(null);
-    const writeLocalFnRef = useRef<((text: string) => void) | null>(null);
-    const pasteTextFnRef = useRef<((text: string) => void) | null>(null);
-
-    useImperativeHandle(
-      ref,
-      () => ({
-        clear: () => clearFnRef.current?.(),
-        clearBuffer: () => clearBufferFnRef.current?.(),
-        exec: (command: string) =>
-          execFnRef.current?.(command) ??
-          Promise.reject(new Error("Terminal session is unavailable.")),
-        focus: () => focusFnRef.current?.(),
-        restart: () => startSessionFnRef.current?.(),
-        getContent: (lineCount?: number) =>
-          contentFnRef.current?.(lineCount) ?? "",
-        getSelection: () => selectionFnRef.current?.() ?? "",
-        markRunStart: (command: string) => markRunStartFnRef.current?.(command),
-        getRunOutputLineCount: () => runOutputLineCountFnRef.current?.() ?? null,
-        getRunScriptOutput: () => runScriptOutputFnRef.current?.() ?? null,
-        isReady: () => isReadyRef.current,
-        submitCurrentInput: () => queueInputFnRef.current?.("\r", true),
-        resetInput: () => queueInputFnRef.current?.("\u0003", true),
-        writeLocal: (text: string) => writeLocalFnRef.current?.(text),
-        pasteText: (text: string) => pasteTextFnRef.current?.(text),
-      }),
-      [],
-    );
-
-    useEffect(() => {
-      if (!containerRef.current) return;
-
-      isStoppingRef.current = false;
-      let cancelled = false;
-
-      const { terminal: term, addons } = createTerminalWithAddons(
-        containerRef.current,
-        {
-          cursorBlink: true,
-          cursorStyle: "block",
-          cursorInactiveStyle: "block",
-          fontFamily,
-          fontSize,
-          theme,
-        },
-      );
-      const fitAddon = addons.fit;
-      termRef.current = term;
-      fitRef.current = fitAddon;
-      performanceAddonsDisposeRef.current = addons.dispose;
-
-      const safeFit = () => {
-        const host = containerRef.current;
-        if (cancelled || !host || !host.isConnected) return;
-        if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
-        try {
-          fitAddon.fit();
-        } catch {
-          // best effort
-        }
-      };
-
-      const scheduleFit = () => {
-        if (fitRafRef.current !== null) cancelAnimationFrame(fitRafRef.current);
-        fitRafRef.current = requestAnimationFrame(() => {
-          fitRafRef.current = null;
-          safeFit();
-        });
-      };
-
-      const rejectPendingCommands = (message: string) => {
-        const pending = pendingCommandExecutionsRef.current.splice(0);
-        for (const entry of pending) {
-          entry.reject(new Error(message));
-        }
-      };
-
-      const syncSizeToBackend = () => {
-        if (!isReadyRef.current || sessionIdRef.current <= 0) return;
-        const { cols, rows } = clampPtyDims(term.cols, term.rows);
-        void cmd
-          .terminalResize(sessionIdRef.current, cols, rows)
-          .catch(() => {});
-      };
-
-      const flushWriteQueue = (allowWhenNotReady = false) => {
-        if (!allowWhenNotReady && !isReadyRef.current) return;
-        if (writeInFlightRef.current || sessionIdRef.current <= 0) return;
-        const chunk = writeQueueRef.current;
-        if (!chunk) return;
-
-        writeQueueRef.current = "";
-        writeInFlightRef.current = true;
-        const sid = sessionIdRef.current;
-        void cmd
-          .terminalWrite(sid, chunk)
-          .catch((err: unknown) => {
-            term.write(
-              `\r\n\x1b[31m[Terminal write failed: ${String(err)}]\x1b[0m\r\n`,
-            );
-          })
-          .finally(() => {
-            writeInFlightRef.current = false;
-            flushWriteQueue();
-          });
-      };
-
-      const queueInput = (data: string, allowWhenNotReady = false) => {
-        if (cancelled || isStoppingRef.current) return;
-        if (!allowWhenNotReady && !isReadyRef.current) return;
-        writeQueueRef.current += data;
-        flushWriteQueue(allowWhenNotReady);
-      };
-
-      const focusTerminal = () => {
-        scheduleFit();
-        term.focus();
-        syncSizeToBackend();
-      };
-
-      const startSession = async () => {
-        if (startInFlightRef.current) return;
-        startInFlightRef.current = true;
-        // Wipe first so the new prompt is not painted under leftover scrollback
-        // (Clear used to restart alone and leave the old prompt above).
-        wipeTerminalDisplay(term);
-        isReadyRef.current = false;
-        writeQueueRef.current = "";
-        writeInFlightRef.current = false;
-        pendingOutputRef.current = "";
-        outputSideEffectOffsetRef.current = 0;
-        if (outputFlushRafRef.current !== null) {
-          cancelAnimationFrame(outputFlushRafRef.current);
-          outputFlushRafRef.current = null;
-        }
-        outputTailRef.current = "";
-        suggestedCommandsRef.current.clear();
-        suggestInFlightRef.current.clear();
-        rejectPendingCommands("Terminal session restarted before command completion.");
-
-        const existing = sessionIdRef.current;
-        if (existing > 0) {
-          await cmd.stopTerminal(existing).catch(() => {});
-          sessionIdRef.current = 0;
-        }
-
-        // Measure first: the console can mount before its pane has a layout,
-        // and a PTY started from xterm's placeholder size never recovers.
-        safeFit();
-        const host = containerRef.current;
-        const paneIsLaidOut =
-          !!host && host.clientWidth > 0 && host.clientHeight > 0;
-        const { cols, rows } = startupPtyDims(
-          paneIsLaidOut,
-          term.cols,
-          term.rows,
-        );
-
-        try {
-          const sid = await cmd.startTerminal(
-            shellPathRef.current || "",
-            cols,
-            rows,
-            loadProfileRef.current,
-          );
-          if (cancelled) {
-            // The owning tab unmounted while the backend was still spawning:
-            // its cleanup ran before sessionIdRef was set, so nothing else
-            // will ever stop this session. Stop it here or the PTY process
-            // leaks for the rest of the app run.
-            void cmd.stopTerminal(sid).catch(() => {});
-            return;
-          }
-          sessionIdRef.current = sid;
-          isReadyRef.current = true;
-          flushWriteQueue();
-
-          if (startupCommandRef.current.trim()) {
-            if (startupSentForSessionRef.current !== sid) {
-              startupSentForSessionRef.current = sid;
-              queueInput(`${startupCommandRef.current.trim()}\r`, true);
-            }
-          }
-
-          syncSizeToBackend();
-          scheduleFit();
-          if (active) {
-            requestAnimationFrame(() => {
-              scheduleFit();
-              if (term.rows > 0) {
-                term.refresh(0, term.rows - 1);
-              }
-              focusTerminal();
-            });
-          }
-        } catch (err: unknown) {
-          rejectPendingCommands(
-            `Failed to start terminal session: ${String(err)}`,
-          );
-          if (!cancelled) {
-            term.write(
-              `\r\n\x1b[1;31m[Failed to start terminal: ${String(err)}]\x1b[0m\r\n`,
-            );
-          }
-        } finally {
-          startInFlightRef.current = false;
-        }
-      };
-
-      queueInputFnRef.current = queueInput;
-      startSessionFnRef.current = () => {
-        void startSession();
-      };
-      focusFnRef.current = focusTerminal;
-      // Clear = wipe display, then restart so prompt / Nerd Font chrome redraws.
-      // term.clear() alone keeps the current prompt line; wipe uses reset().
-      clearFnRef.current = () => {
-        void startSession();
-      };
-      clearBufferFnRef.current = () => term.clear();
-      writeLocalFnRef.current = (text: string) => {
-        if (!text) return;
-        term.write(text.replace(/\r?\n/g, "\r\n"));
-      };
-      pasteTextFnRef.current = (text: string) => {
-        if (!text) return;
-        term.paste(text);
-      };
-      contentFnRef.current = (lineCount?: number) => {
-        const buf = term.buffer.active;
-        // No explicit count means "copy everything" (debug-bundle
-        // fallback) — return the full scrollback, not a stale 80-line default
-        // that silently truncated long runs (S3-4).
-        const count = lineCount ?? buf.length;
-        const lines: string[] = [];
-        const start = Math.max(0, buf.length - count);
-        for (let i = start; i < buf.length; i++) {
-          const line = buf.getLine(i);
-          lines.push(line ? line.translateToString(true) : "");
-        }
-        return lines.join("\n");
-      };
-      selectionFnRef.current = () => term.getSelection();
-      // Reflow/eviction-safe "last run" baseline. A raw buffer index goes
-      // stale the moment the terminal is resized (xterm re-wraps the whole
-      // scrollback) or the scrollback cap trims old lines; an xterm marker is
-      // kept current by xterm and disposed when its row is evicted (S3-13).
-      let runStartMarker: ReturnType<Terminal["registerMarker"]> | undefined =
-        undefined;
-      const runOutputCaptureRef: { current: RunOutputCaptureState } = {
-        current: createRunOutputCaptureState(),
-      };
-      markRunStartFnRef.current = (command: string) => {
-        runStartMarker?.dispose();
-        runStartMarker = term.registerMarker() ?? undefined;
-        startRunOutputCapture(runOutputCaptureRef.current, command);
-      };
-      runScriptOutputFnRef.current = () =>
-        getRunScriptOutputFromState(runOutputCaptureRef.current);
-      runOutputLineCountFnRef.current = () => {
-        if (
-          !runStartMarker ||
-          runStartMarker.isDisposed ||
-          runStartMarker.line < 0
-        ) {
-          return null;
-        }
-        const count = term.buffer.active.length - runStartMarker.line;
-        return count > 0 ? count : 0;
-      };
-      execFnRef.current = async (command: string) => {
-        if (cancelled || isStoppingRef.current) {
-          throw new Error("Terminal session is unavailable.");
-        }
-        const trimmed = command.trim();
-        if (!trimmed) return 0;
-
-        const sid = sessionIdRef.current;
-        if (!isReadyRef.current || sid <= 0) {
-          throw new Error("Terminal session is not ready.");
-        }
-
-        return new Promise<number | null>((resolve, reject) => {
-          const pending = { resolve, reject };
-          pendingCommandExecutionsRef.current.push(pending);
-          void cmd.terminalExec(sid, trimmed).catch((err: unknown) => {
-            pendingCommandExecutionsRef.current =
-              pendingCommandExecutionsRef.current.filter(
-                (candidate) => candidate !== pending,
-              );
-            reject(new Error(`Failed to execute in terminal: ${String(err)}`));
-          });
-        });
-      };
-
-      const dataDisposable = term.onData((data) => queueInput(data));
-      const resizeDisposable = term.onResize(({ cols, rows }) => {
-        if (!isReadyRef.current || sessionIdRef.current <= 0) return;
-        void cmd
-          .terminalResize(sessionIdRef.current, cols, rows)
-          .catch(() => {});
-      });
-
-      const onWindowResize = () => {
-        scheduleFit();
-        syncSizeToBackend();
-      };
-      window.addEventListener("resize", onWindowResize);
-      const resizeObserver = new ResizeObserver(() => {
-        scheduleFit();
-        syncSizeToBackend();
-      });
-      resizeObserver.observe(containerRef.current);
-
-      const processOutputChunk = (chunk: string) => {
-        feedRunOutputCapture(runOutputCaptureRef.current, chunk);
-
-        for (const match of chunk.matchAll(/\x1b]633;D;(-?\d+)(?:\x07|\x1b\\)/g)) {
-          const exitCode = Number.parseInt(match[1] ?? "", 10);
-          const pending = pendingCommandExecutionsRef.current.shift();
-          if (pending) {
-            pending.resolve(Number.isFinite(exitCode) ? exitCode : null);
-          }
-        }
-
-        const psPath = shellPathRef.current;
-        if (psPath && activeRef.current) {
-          const plainChunk = stripAnsi(chunk);
-          outputTailRef.current = (outputTailRef.current + plainChunk).slice(
-            -12000,
-          );
-          const tail = outputTailRef.current;
-          MISSING_COMMAND_RE.lastIndex = 0;
-
-          let m: RegExpExecArray | null;
-          while ((m = MISSING_COMMAND_RE.exec(tail)) !== null) {
-            const commandName = m[1]?.trim();
-            if (!commandName || /\s/.test(commandName)) continue;
-            const key = commandName.toLowerCase();
-            if (
-              suggestedCommandsRef.current.has(key) ||
-              suggestInFlightRef.current.has(key)
-            ) {
-              continue;
-            }
-
-            suggestInFlightRef.current.add(key);
-            const sid = sessionIdRef.current;
-            void cmd
-              .suggestModulesForCommand(psPath, commandName)
-              .then((suggestions) => {
-                if (
-                  cancelled ||
-                  sessionIdRef.current !== sid ||
-                  !suggestions.length
-                ) {
-                  return;
-                }
-                term.write(
-                  `\r\n\x1b[36m[PSForge] '${commandName}' may be available in:\x1b[0m\r\n`,
-                );
-                for (const item of suggestions.slice(0, 5)) {
-                  const parts = [item.name];
-                  if (item.version) parts.push(item.version);
-                  if (item.repository) parts.push(`(${item.repository})`);
-                  term.write(`\x1b[36m  - ${parts.join(" ")}\x1b[0m\r\n`);
-                  term.write(`\x1b[36m    ${item.installCommand}\x1b[0m\r\n`);
-                }
-              })
-              .catch(() => {})
-              .finally(() => {
-                suggestInFlightRef.current.delete(key);
-                suggestedCommandsRef.current.add(key);
-              });
-          }
-        }
-      };
-
-      const flushTerminalOutput = () => {
-        outputFlushRafRef.current = null;
-        const pending = pendingOutputRef.current;
-        if (!pending) return;
-
-        const sideEffectOffset = outputSideEffectOffsetRef.current;
-        if (sideEffectOffset < pending.length) {
-          processOutputChunk(pending.slice(sideEffectOffset));
-          outputSideEffectOffsetRef.current = pending.length;
-        }
-
-        const writeLen = Math.min(
-          pending.length,
-          MAX_TERMINAL_WRITE_PER_FRAME,
-        );
-        term.write(pending.slice(0, writeLen));
-        if (writeLen < pending.length) {
-          pendingOutputRef.current = pending.slice(writeLen);
-          outputSideEffectOffsetRef.current = 0;
-          outputFlushRafRef.current = requestAnimationFrame(flushTerminalOutput);
-          return;
-        }
-        pendingOutputRef.current = "";
-        outputSideEffectOffsetRef.current = 0;
-      };
-
-      const scheduleTerminalOutputFlush = () => {
-        if (outputFlushRafRef.current !== null) return;
-        outputFlushRafRef.current = requestAnimationFrame(flushTerminalOutput);
-      };
-
-      const onTerminalOutput = (event: { payload: TerminalOutputEvent }) => {
-        if (event.payload.sessionId !== sessionIdRef.current) return;
-        pendingOutputRef.current += event.payload.data;
-        scheduleTerminalOutputFlush();
-      };
-
-      const onTerminalExit = (event: { payload: TerminalExitEvent }) => {
-        if (event.payload.sessionId !== sessionIdRef.current) return;
-        isReadyRef.current = false;
-        rejectPendingCommands("Terminal session ended before command completion.");
-        if (isStoppingRef.current) return;
-        term.write(
-          "\r\n\x1b[33m[Terminal session ended. Use Restart Session to start a new shell.]\x1b[0m\r\n",
-        );
-      };
-
-      let unlistenOutput: UnlistenFn | null = null;
-      let unlistenExit: UnlistenFn | null = null;
-      void Promise.all([
-        listen<TerminalOutputEvent>("terminal-output", onTerminalOutput),
-        listen<TerminalExitEvent>("terminal-exit", onTerminalExit),
-      ])
-        .then(([outFn, exitFn]) => {
-          if (cancelled) {
-            outFn();
-            exitFn();
-            return;
-          }
-          unlistenOutput = outFn;
-          unlistenExit = exitFn;
-          void startSession();
-        })
-        .catch((err: unknown) => {
-          term.write(
-            `\r\n\x1b[1;31m[Failed to attach terminal listeners: ${String(err)}]\x1b[0m\r\n`,
-          );
-        });
-
-      scheduleFit();
-
-      return () => {
-        cancelled = true;
-        isStoppingRef.current = true;
-        isReadyRef.current = false;
-
-        unlistenOutput?.();
-        unlistenExit?.();
-        window.removeEventListener("resize", onWindowResize);
-        resizeObserver.disconnect();
-        dataDisposable.dispose();
-        resizeDisposable.dispose();
-
-        if (fitRafRef.current !== null) {
-          cancelAnimationFrame(fitRafRef.current);
-          fitRafRef.current = null;
-        }
-        if (outputFlushRafRef.current !== null) {
-          cancelAnimationFrame(outputFlushRafRef.current);
-          outputFlushRafRef.current = null;
-        }
-        const pendingFlush = pendingOutputRef.current;
-        if (pendingFlush) {
-          const sideEffectOffset = outputSideEffectOffsetRef.current;
-          if (sideEffectOffset < pendingFlush.length) {
-            processOutputChunk(pendingFlush.slice(sideEffectOffset));
-          }
-          term.write(pendingFlush);
-        }
-        pendingOutputRef.current = "";
-        outputSideEffectOffsetRef.current = 0;
-
-        performanceAddonsDisposeRef.current?.();
-        performanceAddonsDisposeRef.current = null;
-
-        queueInputFnRef.current = null;
-        startSessionFnRef.current = null;
-        focusFnRef.current = null;
-        clearFnRef.current = null;
-        clearBufferFnRef.current = null;
-        selectionFnRef.current = null;
-        contentFnRef.current = null;
-        markRunStartFnRef.current = null;
-        runOutputLineCountFnRef.current = null;
-        runScriptOutputFnRef.current = null;
-        execFnRef.current = null;
-        writeLocalFnRef.current = null;
-        pasteTextFnRef.current = null;
-        rejectPendingCommands("Terminal session was disposed.");
-
-        const sid = sessionIdRef.current;
-        sessionIdRef.current = 0;
-        if (sid > 0) {
-          void cmd.stopTerminal(sid).catch(() => {});
-        }
-        term.dispose();
-        termRef.current = null;
-        fitRef.current = null;
-      };
-    }, []);
-
-    useEffect(() => {
-      const term = termRef.current;
-      if (!term) return;
-      term.options.fontFamily = fontFamily;
-      term.options.fontSize = fontSize;
-      try {
-        fitRef.current?.fit();
-      } catch {
-        // best effort
-      }
-      if (isReadyRef.current && sessionIdRef.current > 0) {
-        const { cols, rows } = clampPtyDims(term.cols, term.rows);
-        void cmd
-          .terminalResize(sessionIdRef.current, cols, rows)
-          .catch(() => {});
-      }
-    }, [fontFamily, fontSize]);
-
-    useEffect(() => {
-      const term = termRef.current;
-      if (!term) return;
-      term.options.theme = theme;
-      if (term.rows > 0) {
-        term.refresh(0, term.rows - 1);
-      }
-    }, [theme]);
-
-    useEffect(() => {
-      if (!active || !termRef.current) return;
-      const term = termRef.current;
-      const syncActive = () => {
-        try {
-          fitRef.current?.fit();
-        } catch {
-          // best effort
-        }
-        if (term.rows > 0) {
-          term.refresh(0, term.rows - 1);
-        }
-        term.focus();
-        if (isReadyRef.current && sessionIdRef.current > 0) {
-          const { cols, rows } = clampPtyDims(term.cols, term.rows);
-          void cmd
-            .terminalResize(sessionIdRef.current, cols, rows)
-            .catch(() => {});
-        }
-      };
-      // Two frames: the new console tab must finish flex layout before fit().
-      requestAnimationFrame(() => {
-        requestAnimationFrame(syncActive);
-      });
-    }, [active]);
-
-    return (
-      <div
-        ref={containerRef}
-        className="w-full h-full"
-        style={{
-          backgroundColor: theme.background ?? "var(--bg-primary)",
-          minHeight: 0,
-        }}
-      />
-    );
-  },
-);
+import {
+  TerminalSession,
+  type TerminalSessionHandle,
+} from "./TerminalSession";
+import { TerminalRemoteDialog } from "./TerminalRemoteDialog";
+import { TerminalTabStrip } from "./TerminalTabStrip";
 
 interface ConsoleTabModel {
   id: string;
@@ -903,11 +32,22 @@ interface ConsoleTabModel {
   startupCommand?: string;
 }
 
+type RunOptions = {
+  clearBeforeRun?: boolean;
+  reveal?: boolean;
+  newConsole?: boolean;
+};
+
+/** Longest a console may take to come up before a run gives up. */
+const READY_TIMEOUT_MS = 30000;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
 export function TerminalPane() {
   const { state, dispatch } = useAppState();
   const tabCounterRef = useRef(1);
   const sessionRefs = useRef<Record<string, TerminalSessionHandle | null>>({});
-  const remoteTargetInputRef = useRef<HTMLInputElement>(null);
   const [wtAppearance, setWtAppearance] =
     useState<WindowsTerminalAppearance | null>(null);
   const [tabs, setTabs] = useState<ConsoleTabModel[]>(() => [
@@ -965,47 +105,47 @@ export function TerminalPane() {
       ? (sessionRefs.current[lastRunTabIdRef.current] ?? null)
       : null;
 
-  const createLocalTab = useCallback(() => {
+  const newTabModel = useCallback((): ConsoleTabModel => {
     tabCounterRef.current += 1;
-    const id = `console-${tabCounterRef.current}`;
-    const tab: ConsoleTabModel = {
-      id,
+    return {
+      id: `console-${tabCounterRef.current}`,
       title: `Console ${tabCounterRef.current}`,
       shellPath: state.selectedPsPath || "",
       loadProfile: state.settings.terminalLoadProfile !== false,
     };
+  }, [state.selectedPsPath, state.settings.terminalLoadProfile]);
+
+  const createLocalTab = useCallback(() => {
+    const tab = newTabModel();
     dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
     setTabs((prev) => [...prev, tab]);
-    setActiveTabId(id);
-    return id;
-  }, [dispatch, state.selectedPsPath, state.settings.terminalLoadProfile]);
-
-  const addLocalTab = () => {
-    createLocalTab();
-  };
+    setActiveTabId(tab.id);
+    return tab.id;
+  }, [dispatch, newTabModel]);
 
   const createRemoteTab = (target: string) => {
-    tabCounterRef.current += 1;
-    const id = `console-${tabCounterRef.current}`;
     const tab: ConsoleTabModel = {
-      id,
+      ...newTabModel(),
       title: `Remote: ${target}`,
-      shellPath: state.selectedPsPath || "",
-      loadProfile: state.settings.terminalLoadProfile !== false,
-      startupCommand: `Enter-PSSession -ComputerName ${quotePs(target)}`,
+      startupCommand: enterPsSessionCommand(target),
     };
     setTabs((prev) => [...prev, tab]);
-    setActiveTabId(id);
+    setActiveTabId(tab.id);
   };
 
   const openRemoteDialog = () => {
     setRemoteTarget("");
     setRemoteValidationError("");
     setShowRemoteDialog(true);
-    requestAnimationFrame(() => remoteTargetInputRef.current?.focus());
   };
 
-  const confirmRemoteDialog = () => {
+  const closeRemoteDialog = useCallback(() => {
+    setShowRemoteDialog(false);
+    setRemoteTarget("");
+    setRemoteValidationError("");
+  }, []);
+
+  const confirmRemoteDialog = useCallback(() => {
     const target = remoteTarget.trim();
     const validationError = validateRemoteTarget(target);
     if (validationError) {
@@ -1013,31 +153,11 @@ export function TerminalPane() {
       return;
     }
     createRemoteTab(target);
-    setShowRemoteDialog(false);
-    setRemoteTarget("");
-    setRemoteValidationError("");
-  };
-
-  const cancelRemoteDialog = () => {
-    setShowRemoteDialog(false);
-    setRemoteTarget("");
-    setRemoteValidationError("");
-  };
-
-  useEffect(() => {
-    if (!showRemoteDialog) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        cancelRemoteDialog();
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        confirmRemoteDialog();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [showRemoteDialog, remoteTarget]);
+    closeRemoteDialog();
+    // createRemoteTab is recreated every render; the values it reads are
+    // captured here through remoteTarget.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closeRemoteDialog, remoteTarget]);
 
   const closeTab = (id: string) => {
     setTabs((prev) => {
@@ -1054,43 +174,26 @@ export function TerminalPane() {
     });
   };
 
-  const sleep = (ms: number) =>
-    new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-
-  const getHandleForTab = (tabId: string) => sessionRefs.current[tabId] ?? null;
-
+  /** A local (non-remote) console to run in: current, existing, or new. */
   const ensureLocalExecutionTab = useCallback(() => {
     const active = tabs.find((tab) => tab.id === activeTabId) ?? null;
-    if (active && !active.startupCommand) {
-      return active.id;
-    }
+    if (active && !active.startupCommand) return active.id;
 
     const existingLocal = tabs.find((tab) => !tab.startupCommand) ?? null;
-    if (existingLocal) {
-      return existingLocal.id;
-    }
+    if (existingLocal) return existingLocal.id;
 
-    tabCounterRef.current += 1;
-    const id = `console-${tabCounterRef.current}`;
-    const tab: ConsoleTabModel = {
-      id,
-      title: `Console ${tabCounterRef.current}`,
-      shellPath: state.selectedPsPath || "",
-      loadProfile: state.settings.terminalLoadProfile !== false,
-    };
+    const tab = newTabModel();
     setTabs((prev) => [...prev, tab]);
-    return id;
-  }, [activeTabId, state.selectedPsPath, state.settings.terminalLoadProfile, tabs]);
+    return tab.id;
+  }, [activeTabId, newTabModel, tabs]);
 
   const waitForReadyHandle = useCallback(async (tabId: string) => {
-    const timeoutAt = Date.now() + 30000;
+    const timeoutAt = Date.now() + READY_TIMEOUT_MS;
     let restartRequested = false;
 
     while (Date.now() < timeoutAt) {
-      const handle = getHandleForTab(tabId);
-      if (handle?.isReady()) {
-        return handle;
-      }
+      const handle = sessionRefs.current[tabId] ?? null;
+      if (handle?.isReady()) return handle;
       if (handle && !restartRequested) {
         handle.restart();
         restartRequested = true;
@@ -1101,27 +204,27 @@ export function TerminalPane() {
     throw new Error("Integrated terminal did not become ready.");
   }, []);
 
+  /** Reveal a console tab and wait for its PowerShell session to come up. */
+  const prepareTab = useCallback(
+    async (tabId: string, reveal: boolean) => {
+      if (reveal) {
+        dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
+        setActiveTabId(tabId);
+      }
+      await sleep(0);
+      return waitForReadyHandle(tabId);
+    },
+    [dispatch, waitForReadyHandle],
+  );
+
   const runCommandInLocalTerminal = useCallback(
-    async (
-      command: string,
-      options?: {
-        clearBeforeRun?: boolean;
-        reveal?: boolean;
-        newConsole?: boolean;
-      },
-    ) => {
+    async (command: string, options?: RunOptions) => {
       const tabId = options?.newConsole
         ? createLocalTab()
         : ensureLocalExecutionTab();
       const reveal = options?.reveal !== false;
 
-      if (reveal) {
-        dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
-        setActiveTabId(tabId);
-      }
-
-      await sleep(0);
-      let handle = await waitForReadyHandle(tabId);
+      let handle = await prepareTab(tabId, reveal);
       // New consoles already start blank; only wipe+restart when reusing a tab.
       if (options?.clearBeforeRun && !options?.newConsole) {
         // Full Clear (wipe + restart) so F5 starts on a blank console with a
@@ -1133,130 +236,87 @@ export function TerminalPane() {
       // starts, via a reflow/eviction-safe xterm marker (S3-13).
       handle.markRunStart(command);
       lastRunTabIdRef.current = tabId;
-      if (reveal) {
-        handle.focus();
-      }
+      if (reveal) handle.focus();
       return handle.exec(command);
     },
-    [createLocalTab, dispatch, ensureLocalExecutionTab, waitForReadyHandle],
+    [createLocalTab, ensureLocalExecutionTab, prepareTab, waitForReadyHandle],
   );
 
   const writeNoticeToLocalTerminal = useCallback(
     async (text: string, options?: { reveal?: boolean }) => {
       if (!text) return;
-
-      const tabId = ensureLocalExecutionTab();
       const reveal = options?.reveal === true;
-      if (reveal) {
-        dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
-        setActiveTabId(tabId);
-      }
-
-      await sleep(0);
-      const handle = await waitForReadyHandle(tabId);
+      const handle = await prepareTab(ensureLocalExecutionTab(), reveal);
       handle.writeLocal(text);
-      if (reveal) {
-        handle.focus();
-      }
+      if (reveal) handle.focus();
     },
-    [dispatch, ensureLocalExecutionTab, waitForReadyHandle],
+    [ensureLocalExecutionTab, prepareTab],
   );
 
   const pasteToLocalTerminal = useCallback(
     async (text: string, options?: { reveal?: boolean }) => {
       if (!text) return;
-      const tabId = ensureLocalExecutionTab();
       const reveal = options?.reveal !== false;
-      if (reveal) {
-        dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" });
-        setActiveTabId(tabId);
-      }
-      await sleep(0);
-      const handle = await waitForReadyHandle(tabId);
+      const handle = await prepareTab(ensureLocalExecutionTab(), reveal);
       handle.pasteText(text);
-      if (reveal) {
-        handle.focus();
-      }
+      if (reveal) handle.focus();
     },
-    [dispatch, ensureLocalExecutionTab, waitForReadyHandle],
+    [ensureLocalExecutionTab, prepareTab],
   );
 
   useEffect(() => {
-    const w = window as unknown as Record<string, unknown>;
-    w.__psforge_terminal_clear = () => getActiveHandle()?.clear();
-    w.__psforge_terminal_focus = () => getActiveHandle()?.focus();
-    w.__psforge_terminal_run_command = (
-      command: string,
-      options?: {
-        clearBeforeRun?: boolean;
-        reveal?: boolean;
-        newConsole?: boolean;
+    return installWindowBridge({
+      __psforge_terminal_clear: () => getActiveHandle()?.clear(),
+      __psforge_terminal_focus: () => getActiveHandle()?.focus(),
+      __psforge_terminal_run_command: (command: string, options?: RunOptions) =>
+        runCommandInLocalTerminal(command, options),
+      __psforge_terminal_restart: () => getActiveHandle()?.restart(),
+      // "Copy Output" semantics: the console the user is looking at.
+      __psforge_terminal_get_content: (lineCount?: number) =>
+        getActiveHandle()?.getContent(lineCount) ?? "",
+      __psforge_terminal_get_selection: () =>
+        getActiveHandle()?.getSelection() ?? "",
+      // Run-output semantics (Copy Last Run, debug bundle, AI context): the tab
+      // that ran the script — including the marker-evicted no-count fallback,
+      // which previously leaked back to the active tab (S6-20 round 4). If the
+      // run's tab was closed its output is gone: return "" rather than silently
+      // reading a different terminal. Before any run, fall back to the active
+      // tab (legacy "no baseline → whole scrollback" behavior).
+      __psforge_terminal_get_run_content: (lineCount?: number) => {
+        const runTabId = lastRunTabIdRef.current;
+        if (runTabId) {
+          return sessionRefs.current[runTabId]?.getContent(lineCount) ?? "";
+        }
+        return getActiveHandle()?.getContent(lineCount) ?? "";
       },
-    ) => runCommandInLocalTerminal(command, options);
-    w.__psforge_terminal_restart = () => getActiveHandle()?.restart();
-    // "Copy Output" semantics: the console the user is looking at.
-    w.__psforge_terminal_get_content = (lineCount?: number) =>
-      getActiveHandle()?.getContent(lineCount) ?? "";
-    w.__psforge_terminal_get_selection = () =>
-      getActiveHandle()?.getSelection() ?? "";
-    // Run-output semantics (Copy Last Run, debug bundle, AI context): the tab
-    // that ran the script — including the marker-evicted no-count fallback,
-    // which previously leaked back to the active tab (S6-20 round 4). If the
-    // run's tab was closed its output is gone: return "" rather than silently
-    // reading a different terminal. Before any run, fall back to the active
-    // tab (legacy "no baseline → whole scrollback" behavior).
-    w.__psforge_terminal_get_run_content = (lineCount?: number) => {
-      const runTabId = lastRunTabIdRef.current;
-      if (runTabId) {
-        return sessionRefs.current[runTabId]?.getContent(lineCount) ?? "";
-      }
-      return getActiveHandle()?.getContent(lineCount) ?? "";
-    };
-    w.__psforge_terminal_get_run_output_line_count = () =>
-      getRunHandle()?.getRunOutputLineCount() ?? null;
-    w.__psforge_terminal_get_run_script_output = () =>
-      getRunHandle()?.getRunScriptOutput() ?? null;
-    w.__psforge_terminal_is_ready = () => getActiveHandle()?.isReady() ?? false;
-    w.__psforge_terminal_submit_current_input = () =>
-      getActiveHandle()?.submitCurrentInput();
-    w.__psforge_terminal_write_notice = (
-      text: string,
-      options?: { reveal?: boolean },
-    ) => writeNoticeToLocalTerminal(text, options);
-    w.__psforge_terminal_paste = (
-      text: string,
-      options?: { reveal?: boolean },
-    ) => pasteToLocalTerminal(text, options);
-    // Stop (Shift+F5) must hit the console that is executing the F5 run, not
-    // whichever console sub-tab is currently visible (same class as S6-20).
-    w.__psforge_terminal_interrupt = () => {
-      const runHandle = getRunHandle();
-      if (runHandle) {
-        runHandle.resetInput();
-        return;
-      }
-      getActiveHandle()?.resetInput();
-    };
-    w.__psforge_terminal_reset_input = () => getActiveHandle()?.resetInput();
-    w.__psforge_highlight_ps = highlightPs;
-    return () => {
-      delete w.__psforge_terminal_clear;
-      delete w.__psforge_terminal_focus;
-      delete w.__psforge_terminal_run_command;
-      delete w.__psforge_terminal_restart;
-      delete w.__psforge_terminal_get_content;
-      delete w.__psforge_terminal_get_selection;
-      delete w.__psforge_terminal_get_run_content;
-      delete w.__psforge_terminal_get_run_output_line_count;
-      delete w.__psforge_terminal_get_run_script_output;
-      delete w.__psforge_terminal_is_ready;
-      delete w.__psforge_terminal_submit_current_input;
-      delete w.__psforge_terminal_write_notice;
-      delete w.__psforge_terminal_paste;
-      delete w.__psforge_terminal_interrupt;
-      delete w.__psforge_terminal_reset_input;
-      delete w.__psforge_highlight_ps;
-    };
+      __psforge_terminal_get_run_output_line_count: () =>
+        getRunHandle()?.getRunOutputLineCount() ?? null,
+      __psforge_terminal_get_run_script_output: () =>
+        getRunHandle()?.getRunScriptOutput() ?? null,
+      __psforge_terminal_is_ready: () => getActiveHandle()?.isReady() ?? false,
+      __psforge_terminal_submit_current_input: () =>
+        getActiveHandle()?.submitCurrentInput(),
+      __psforge_terminal_write_notice: (
+        text: string,
+        options?: { reveal?: boolean },
+      ) => writeNoticeToLocalTerminal(text, options),
+      __psforge_terminal_paste: (
+        text: string,
+        options?: { reveal?: boolean },
+      ) => pasteToLocalTerminal(text, options),
+      // Stop (Shift+F5) must hit the console that is executing the F5 run, not
+      // whichever console sub-tab is currently visible (same class as S6-20).
+      __psforge_terminal_interrupt: () => {
+        const runHandle = getRunHandle();
+        if (runHandle) {
+          runHandle.resetInput();
+          return;
+        }
+        getActiveHandle()?.resetInput();
+      },
+      __psforge_terminal_reset_input: () => getActiveHandle()?.resetInput(),
+      __psforge_highlight_ps: highlightPs,
+    });
   }, [
     activeTabId,
     runCommandInLocalTerminal,
@@ -1266,216 +326,37 @@ export function TerminalPane() {
 
   useEffect(() => {
     if (state.bottomPanelTab !== "terminal") return;
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       getActiveHandle()?.focus();
     });
+    return () => cancelAnimationFrame(frame);
   }, [state.bottomPanelTab, activeTabId]);
 
   return (
     <div className="flex flex-col h-full" data-testid="terminal-multi-root">
-      <div
-        className="flex items-center gap-2 px-2 py-1"
-        style={{
-          borderBottom: "1px solid var(--border-primary)",
-          backgroundColor: "var(--bg-secondary)",
-          fontFamily: "var(--ui-font-family)",
-          fontSize: "var(--ui-font-size)",
+      <TerminalTabStrip
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSelect={setActiveTabId}
+        onClose={closeTab}
+        onAddLocal={() => {
+          createLocalTab();
         }}
-      >
-        <div className="flex items-center gap-1 flex-1 overflow-auto">
-          {tabs.map((tab) => {
-            const isActive = tab.id === activeTabId;
-            return (
-              <div
-                key={tab.id}
-                className="flex items-center"
-                style={{
-                  border: `1px solid ${isActive ? "var(--accent)" : "var(--border-primary)"}`,
-                  borderRadius: "3px",
-                  backgroundColor: isActive ? "var(--bg-hover)" : "transparent",
-                }}
-              >
-                <button
-                  onClick={() => setActiveTabId(tab.id)}
-                  style={{
-                    backgroundColor: "transparent",
-                    color: isActive
-                      ? "var(--text-primary)"
-                      : "var(--text-secondary)",
-                    padding: "2px 8px",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {tab.title}
-                </button>
-                {tabs.length > 1 && (
-                  <button
-                    onClick={() => closeTab(tab.id)}
-                    style={{
-                      backgroundColor: "transparent",
-                      color: "var(--text-muted)",
-                      padding: "2px 6px",
-                    }}
-                    title="Close console tab"
-                  >
-                    x
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <button
-          data-testid="terminal-new-local"
-          onClick={addLocalTab}
-          style={{
-            backgroundColor: "transparent",
-            color: "var(--text-secondary)",
-          }}
-          title="New local console tab"
-        >
-          + Local
-        </button>
-        <button
-          data-testid="terminal-new-remote"
-          onClick={openRemoteDialog}
-          style={{
-            backgroundColor: "transparent",
-            color: "var(--text-secondary)",
-          }}
-          title="New remote console tab (Enter-PSSession)"
-        >
-          + Remote
-        </button>
-        <button
-          data-testid="terminal-clear-active"
-          onClick={() => getActiveHandle()?.clear()}
-          style={{
-            backgroundColor: "transparent",
-            color: "var(--text-secondary)",
-          }}
-          title="Clear the console, then restart PowerShell (fresh prompt)"
-        >
-          Clear
-        </button>
-        <span
-          style={{
-            color: "var(--text-muted)",
-            fontSize: "var(--ui-font-size-sm)",
-            whiteSpace: "nowrap",
-          }}
-          title="Hold Alt while scrolling the terminal to move quickly through scrollback"
-        >
-          Alt+scroll: fast scroll
-        </span>
-      </div>
+        onAddRemote={openRemoteDialog}
+        onClear={() => getActiveHandle()?.clear()}
+      />
 
       {showRemoteDialog && (
-        <div
-          onClick={cancelRemoteDialog}
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(0, 0, 0, 0.55)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1200,
+        <TerminalRemoteDialog
+          target={remoteTarget}
+          validationError={remoteValidationError}
+          onTargetChange={(target) => {
+            setRemoteTarget(target);
+            setRemoteValidationError("");
           }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "460px",
-              maxWidth: "calc(100vw - 32px)",
-              backgroundColor: "var(--bg-panel)",
-              border: "1px solid var(--border-primary)",
-              borderRadius: "6px",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.45)",
-              padding: "14px",
-              fontFamily: "var(--ui-font-family)",
-              fontSize: "var(--ui-font-size)",
-            }}
-            data-testid="terminal-remote-dialog"
-          >
-            <div
-              style={{
-                color: "var(--text-primary)",
-                fontSize: "var(--ui-font-size-lg)",
-                marginBottom: "8px",
-                fontWeight: 600,
-              }}
-            >
-              PSForge
-            </div>
-            <div
-              style={{ color: "var(--text-secondary)", marginBottom: "8px" }}
-            >
-              Remote target for Enter-PSSession -ComputerName:
-            </div>
-            <input
-              data-testid="terminal-remote-input"
-              ref={remoteTargetInputRef}
-              value={remoteTarget}
-              onChange={(e) => {
-                setRemoteTarget(
-                  e.target.value.slice(0, REMOTE_TARGET_MAX_LENGTH),
-                );
-                if (remoteValidationError) setRemoteValidationError("");
-              }}
-              placeholder="server01.contoso.local"
-              style={{ width: "100%" }}
-            />
-            {remoteValidationError && (
-              <div
-                data-testid="terminal-remote-error"
-                style={{
-                  color: "var(--stream-stderr)",
-                  marginTop: "6px",
-                  fontSize: "var(--ui-font-size-sm)",
-                }}
-              >
-                {remoteValidationError}
-              </div>
-            )}
-            <div
-              style={{
-                marginTop: "12px",
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: "8px",
-              }}
-            >
-              <button
-                data-testid="terminal-remote-cancel"
-                onClick={cancelRemoteDialog}
-                style={{
-                  backgroundColor: "transparent",
-                  border: "1px solid var(--border-primary)",
-                  color: "var(--text-primary)",
-                  padding: "4px 12px",
-                  borderRadius: "4px",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                data-testid="terminal-remote-connect"
-                onClick={confirmRemoteDialog}
-                style={{
-                  backgroundColor: "var(--accent)",
-                  border: "1px solid var(--accent)",
-                  color: "#ffffff",
-                  padding: "4px 12px",
-                  borderRadius: "4px",
-                }}
-              >
-                Connect
-              </button>
-            </div>
-          </div>
-        </div>
+          onCancel={closeRemoteDialog}
+          onConfirm={confirmRemoteDialog}
+        />
       )}
 
       <div className="flex-1 min-h-0">

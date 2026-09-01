@@ -22,6 +22,7 @@ import store from "../store.tsx?raw";
 import tabBar from "../components/TabBar.tsx?raw";
 import toolbar from "../components/Toolbar.tsx?raw";
 import terminalPane from "../components/TerminalPane.tsx?raw";
+import consoleSession from "../terminal/console-session.ts?raw";
 import executionActionsSource from "../use-execution-actions.ts?raw";
 import xtermSetup from "../terminal/xterm-setup.ts?raw";
 
@@ -33,7 +34,7 @@ describe("Integrated terminal stability", () => {
 
   it("reveals the terminal pane and refits when opening a local console tab", () => {
     expect(terminalPane).toContain('dispatch({ type: "SET_BOTTOM_TAB", tab: "terminal" })');
-    expect(terminalPane).toContain("term.refresh(0, term.rows - 1)");
+    expect(consoleSession).toContain("term.refresh(0, term.rows - 1)");
   });
 
   it("applies Windows Terminal scheme and glyph font to consoles", () => {
@@ -49,20 +50,21 @@ describe("Integrated terminal stability", () => {
   });
 
   it("does not write a PSForge Terminal banner into consoles", () => {
-    expect(terminalPane).toContain("startTerminal");
+    expect(consoleSession).toContain("startTerminal");
+    expect(consoleSession).not.toContain("PSForge Terminal");
     expect(terminalPane).not.toContain("PSForge Terminal");
   });
 
   it("wipes the display before restarting so Clear does not leave the old prompt", () => {
-    expect(terminalPane).toContain("wipeTerminalDisplay");
-    const startSessionIdx = terminalPane.indexOf("const startSession = async");
+    expect(consoleSession).toContain("wipeTerminalDisplay");
+    const startSessionIdx = consoleSession.indexOf("const startSession = async");
     expect(startSessionIdx).toBeGreaterThan(-1);
-    const wipeIdx = terminalPane.indexOf(
+    const wipeIdx = consoleSession.indexOf(
       "wipeTerminalDisplay(term)",
       startSessionIdx,
     );
     expect(wipeIdx).toBeGreaterThan(startSessionIdx);
-    const stopIdx = terminalPane.indexOf("stopTerminal", wipeIdx);
+    const stopIdx = consoleSession.indexOf("stopTerminal", wipeIdx);
     expect(stopIdx).toBeGreaterThan(wipeIdx);
   });
 
