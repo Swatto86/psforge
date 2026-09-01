@@ -1307,7 +1307,10 @@ pub fn dedupe_ps_hosts(candidates: Vec<PathBuf>, preferred: Option<&str>) -> Vec
 /// spelling survives when several paths resolve to one binary (see
 /// `dedupe_ps_hosts`). Pass `None` when no host has been chosen.
 pub fn discover_ps_versions(preferred: Option<&str>) -> Vec<PsVersion> {
-    info!("Discovering installed PowerShell versions");
+    info!(
+        "Discovering installed PowerShell versions (preferred host: {:?})",
+        preferred
+    );
     let mut versions = Vec::new();
     let mut seen_paths: HashMap<String, bool> = HashMap::new();
 
