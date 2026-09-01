@@ -131,9 +131,8 @@ export const TerminalSession = forwardRef<
       sessionRef.current = null;
       session.dispose();
     };
-    // Appearance is applied by the effects below; re-creating the PTY when a
-    // font or theme changes would kill the user's shell.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Mount only: appearance changes go through the effects below, because
+    // re-creating the session would kill the user's PowerShell process.
   }, []);
 
   useEffect(() => {

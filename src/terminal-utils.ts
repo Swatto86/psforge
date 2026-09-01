@@ -54,7 +54,7 @@ export function getRunTerminalPlainContent(lineCount?: number): string {
 
 /**
  * Number of output lines since the last run started, tracked by a
- * reflow/eviction-safe xterm marker in TerminalPane (S3-13). Returns null when
+ * reflow/eviction-safe xterm marker in session-readers.ts (S3-13). Returns null
  * no run has started or the baseline row was evicted from scrollback.
  */
 export function getRunOutputLineCount(): number | null {

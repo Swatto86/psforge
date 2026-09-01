@@ -154,9 +154,6 @@ export function TerminalPane() {
     }
     createRemoteTab(target);
     closeRemoteDialog();
-    // createRemoteTab is recreated every render; the values it reads are
-    // captured here through remoteTarget.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [closeRemoteDialog, remoteTarget]);
 
   const closeTab = (id: string) => {
