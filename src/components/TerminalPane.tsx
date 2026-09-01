@@ -21,7 +21,7 @@ import {
   startRunOutputCapture,
   type RunOutputCaptureState,
 } from "../run-output-capture";
-import { clampPtyDims } from "../terminal-utils";
+import { clampPtyDims, startupPtyDims } from "../terminal-utils";
 import {
   createTerminalWithAddons,
   type TerminalPerformanceAddons,
@@ -466,7 +466,17 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           sessionIdRef.current = 0;
         }
 
-        const { cols, rows } = clampPtyDims(term.cols, term.rows);
+        // Measure first: the console can mount before its pane has a layout,
+        // and a PTY started from xterm's placeholder size never recovers.
+        safeFit();
+        const host = containerRef.current;
+        const paneIsLaidOut =
+          !!host && host.clientWidth > 0 && host.clientHeight > 0;
+        const { cols, rows } = startupPtyDims(
+          paneIsLaidOut,
+          term.cols,
+          term.rows,
+        );
 
         try {
           const sid = await cmd.startTerminal(
@@ -486,10 +496,6 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
           sessionIdRef.current = sid;
           isReadyRef.current = true;
           flushWriteQueue();
-
-          const initRow = term.buffer.active.cursorY + 1;
-          const initCol = term.buffer.active.cursorX + 1;
-          queueInput(`\x1b[${initRow};${initCol}R`, true);
 
           if (startupCommandRef.current.trim()) {
             if (startupSentForSessionRef.current !== sid) {
@@ -689,12 +695,6 @@ const TerminalSession = forwardRef<TerminalSessionHandle, TerminalSessionProps>(
                 suggestedCommandsRef.current.add(key);
               });
           }
-        }
-
-        if (chunk.includes("\x1b[6n")) {
-          const row = term.buffer.active.cursorY + 1;
-          const col = term.buffer.active.cursorX + 1;
-          queueInput(`\x1b[${row};${col}R`, true);
         }
       };
 

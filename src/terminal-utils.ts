@@ -109,3 +109,22 @@ export function clampPtyDims(
     rows: Math.max(rows || 30, MIN_PTY_ROWS),
   };
 }
+
+/**
+ * PTY size for a console that is starting up.
+ *
+ * xterm.js falls back to its own 2x1 floor while the host element has no
+ * layout, and on WebKitGTK the console mounts before the pane's flex layout
+ * resolves. Spawning PowerShell against a 2-column window wraps the prompt
+ * into unreadable fragments that survive the later resize, so ignore the
+ * measurement until the pane has a real size; the ResizeObserver resizes the
+ * PTY as soon as it does.
+ */
+export function startupPtyDims(
+  paneIsLaidOut: boolean,
+  cols: number,
+  rows: number,
+): { cols: number; rows: number } {
+  if (!paneIsLaidOut) return clampPtyDims(0, 0);
+  return clampPtyDims(cols, rows);
+}
