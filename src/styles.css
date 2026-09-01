@@ -302,11 +302,39 @@ select {
   font-family: inherit;
   font-size: inherit;
   border: 1px solid var(--border-primary);
-  background: var(--bg-input);
+  background-color: var(--bg-input);
   color: var(--text-primary);
   padding: 4px 8px;
   border-radius: 2px;
   outline: none;
+}
+
+/* WebKitGTK draws a native GTK combo box for <select> and ignores the
+   background above, leaving grey-on-white text against the GTK theme. Take
+   the control over ourselves, caret included. The popup rows do not inherit
+   the control's colours either, so `option` is set explicitly below. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 24px;
+  background-image: linear-gradient(
+      45deg,
+      transparent 50%,
+      var(--text-secondary) 50%
+    ),
+    linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+  background-position:
+    right 11px center,
+    right 7px center;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+}
+
+select option {
+  background-color: var(--bg-input);
+  color: var(--text-primary);
 }
 
 input:focus,
