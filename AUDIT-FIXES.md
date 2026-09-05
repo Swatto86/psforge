@@ -8,6 +8,18 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 13 — terminal streams and diagnostics lifecycle
+
+- [x] **S13-1** — Output batches larger than 256 KiB re-ran capture and completion side effects while painting the remaining frames. Preserve the processed offset when removing the painted prefix, including during teardown.
+- [x] **S13-2** — A completion marker split across PTY/frame boundaries never resolved the pending command. A bounded streaming completion reader now accepts both BEL and ST terminators and resets between sessions.
+- [x] **S13-3** — Split ANSI colour sequences or a lone trailing ESC leaked into Script output, and split completion markers could keep capture active. Retain incomplete escape sequences until the next chunk.
+- [x] **S13-4** — Capture continued after the completion marker when later text arrived in the same chunk. Stop parsing immediately at completion.
+- [x] **S13-5** — In-flight analysis could update Problems after diagnostics were disabled, the selected host was cleared, or the hook unmounted. Effect cleanup now invalidates pending responses.
+
+Regression evidence: all five defects were observed as failing tests before the fixes. All 179 frontend tests and `npm run build` pass. Tests cover output spanning frames, teardown, every two-chunk split of completion markers, copied output boundaries, and diagnostics lifecycle. `tauri dev --no-watch` cannot start because Cargo is unavailable; PowerShell is also absent. Native acceptance and local Rust checks remain unverified; no release has been cut.
+
+---
+
 ## Sweep 12 (v1.4.45) — user-facing bug sweep + compile-speed pass
 
 Focused pass over paste/run, Fix All, scratch auto-save, and terminal run-prep after 1.4.28–1.4.44.

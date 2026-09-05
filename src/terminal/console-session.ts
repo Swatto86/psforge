@@ -15,6 +15,7 @@ import { clampPtyDims, startupPtyDims } from "../terminal-utils";
 import { createTerminalWithAddons } from "./xterm-setup";
 import { wipeTerminalDisplay } from "./wipe-display";
 import { createOutputPump } from "./output-pump";
+import { createCommandCompletionReader } from "./command-completion";
 import { createSessionReaders, type SessionReaders } from "./session-readers";
 import { createMissingCommandNotifier } from "./missing-command-suggest";
 
@@ -68,6 +69,7 @@ export function createConsoleSession(
     options,
   );
   const readers = createSessionReaders(term);
+  const completions = createCommandCompletionReader();
 
   let disposed = false;
   let stopping = false;
@@ -160,10 +162,7 @@ export function createConsoleSession(
   const processOutputChunk = (chunk: string) => {
     readers.feed(chunk);
 
-    for (const match of chunk.matchAll(
-      /\x1b]633;D;(-?\d+)(?:\x07|\x1b\\)/g,
-    )) {
-      const exitCode = Number.parseInt(match[1] ?? "", 10);
+    for (const exitCode of completions.feed(chunk)) {
       const pending = pendingExecutions.shift();
       if (pending) {
         pending.resolve(Number.isFinite(exitCode) ? exitCode : null);
@@ -185,6 +184,7 @@ export function createConsoleSession(
     writeQueue = "";
     writeInFlight = false;
     pump.reset();
+    completions.reset();
     missingCommands.reset();
     rejectPendingExecutions(
       "Terminal session restarted before command completion.",

@@ -45,7 +45,7 @@ export function createOutputPump(
     term.write(pending.slice(0, writeLength));
     if (writeLength < pending.length) {
       pending = pending.slice(writeLength);
-      sideEffectOffset = 0;
+      sideEffectOffset -= writeLength;
       rafId = requestAnimationFrame(flush);
       return;
     }

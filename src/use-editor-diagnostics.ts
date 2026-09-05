@@ -71,6 +71,9 @@ export function useEditorDiagnostics(opts: {
     }, debounceMs);
 
     return () => {
+      // Also invalidate work already sent to the backend. The next effect
+      // can return early (disabled/no host), or never run on unmount.
+      requestIdRef.current++;
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current);
         timerRef.current = null;

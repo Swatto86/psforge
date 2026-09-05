@@ -9,7 +9,7 @@ export interface RunOutputCaptureState {
   captureBody: boolean;
   buffer: string;
   commandLine: string;
-  /** Bytes of an incomplete OSC sequence spanning chunk boundaries. */
+  /** Bytes of an incomplete escape sequence spanning chunk boundaries. */
   pendingOsc: string;
 }
 
@@ -76,7 +76,7 @@ function skipCsiSequence(input: string, start: number): number {
     if (ch >= "@" && ch <= "~") return i + 1;
     i++;
   }
-  return input.length;
+  return -1;
 }
 
 function appendVisibleText(state: RunOutputCaptureState, text: string): void {
@@ -106,6 +106,12 @@ export function feedRunOutputCapture(
   while (i < input.length) {
     const ch = input[i]!;
 
+    if (ch === "\x1b" && i + 1 === input.length) {
+      flushTextRun();
+      state.pendingOsc = ch;
+      return;
+    }
+
     if (ch === "\x1b" && input[i + 1] === "]") {
       flushTextRun();
       const rest = input.slice(i);
@@ -118,6 +124,7 @@ export function feedRunOutputCapture(
       const oscPayload = input.slice(i + 2, i + endMatch.index);
       if (oscPayload.startsWith("633;")) {
         handleOsc633(state, oscPayload.slice(4));
+        if (state.done) return;
       }
       i = end;
       continue;
@@ -126,7 +133,7 @@ export function feedRunOutputCapture(
     if (ch === "\x1b" && input[i + 1] === "[") {
       flushTextRun();
       const next = skipCsiSequence(input, i);
-      if (next === input.length && i + 2 >= input.length) {
+      if (next < 0) {
         state.pendingOsc = input.slice(i);
         return;
       }

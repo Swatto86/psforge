@@ -20,6 +20,25 @@ function osc633St(code: string, payload = ""): string {
 }
 
 describe("run-output-capture", () => {
+  it("handles every chunk split through colour codes and completion markers", () => {
+    const stream = `\x1b[31mHello\x1b[0m\r\n${osc633St("D", "0")}`;
+    for (let split = 1; split < stream.length; split++) {
+      const state = createRunOutputCaptureState();
+      startRunOutputCapture(state, "Write-Output Hello");
+      feedRunOutputCapture(state, stream.slice(0, split));
+      feedRunOutputCapture(state, stream.slice(split));
+      expect(state.done, `split ${split}`).toBe(true);
+      expect(getRunScriptOutputFromState(state), `split ${split}`).toBe("Hello");
+    }
+  });
+
+  it("excludes text after completion in the same chunk", () => {
+    const state = createRunOutputCaptureState();
+    startRunOutputCapture(state, "Write-Output Hello");
+    feedRunOutputCapture(state, `Hello\r\n${osc633("D", "0")}later command output`);
+    expect(getRunScriptOutputFromState(state)).toBe("Hello");
+  });
+
   it("captures stdout/stderr between command submit and prompt finish", () => {
     const state = createRunOutputCaptureState();
     startRunOutputCapture(state, "psrun 'Test.ps1'");
