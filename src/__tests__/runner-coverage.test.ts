@@ -25,16 +25,16 @@ describe("runner coverage fixture", () => {
     expect(text).toMatch(/Dog\(\[string\]\$n, \[int\]\$a\) : base\(/);
   });
 
-  it("builds a live-console & invoke for the fixture path", () => {
+  it("builds an isolated child invoke for the fixture path", () => {
     const { command, workingDir } = buildDirectTerminalRunCommand({
       scriptPath: fixturePath,
       workingDir: dirname(fixturePath),
       executionPolicy: "Default",
       scriptArgs: ["-Name", "Alice", "-Switch:$true"],
     });
-    expect(workingDir).toBe(dirname(fixturePath));
-    expect(command).toContain(`& '${fixturePath.replace(/'/g, "''")}'`);
-    expect(command).toContain(" -Name 'Alice' ");
+    expect(workingDir).toBeNull();
+    expect(command).toContain(`& ''${fixturePath.replace(/'/g, "''''")}''`);
+    expect(command).toContain(" -Name ''Alice'' ");
     expect(command).toContain(" -Switch:$true");
     expect(formatDirectRunArg("-Name")).toBe("-Name");
     expect(formatDirectRunArg("-Switch:$true")).toBe("-Switch:$true");

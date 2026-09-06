@@ -100,9 +100,9 @@ export function WelcomePane() {
               maxWidth: "36rem",
             }}
           >
-            Open a saved .ps1, press F5 — it runs in the terminal below, in
-            the current PowerShell session (same idea as VS Code). Paste
-            remains available when you are iterating with an AI.
+            Use Paste + Run for each new script, or open a saved .ps1 and press F5.
+            Each run starts in a fresh PowerShell process, without variables
+            or session changes left by earlier scripts.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <button

@@ -1,3 +1,4 @@
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 /**
  * Shared xterm.js setup: WebGL renderer (with safe fallback), fit, and web links.
  */
@@ -40,7 +41,7 @@ export function tryLoadWebglAddon(_term: Terminal): WebglAddon | null {
 async function copyTerminalSelection(term: Terminal): Promise<boolean> {
   const text = term.getSelection();
   if (!text) return false;
-  await navigator.clipboard.writeText(text);
+  await writeText(text);
   return true;
 }
 
@@ -68,8 +69,7 @@ export function createTerminalWithAddons(
       void copyTerminalSelection(term).catch(() => {});
       return;
     }
-    void navigator.clipboard
-      .readText()
+    void readText()
       .then((text) => {
         if (text) term.paste(text);
       })

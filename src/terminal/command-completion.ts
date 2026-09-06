@@ -21,3 +21,16 @@ export function createCommandCompletionReader() {
     },
   };
 }
+
+/** PTY creation is not shell readiness: wait for PowerShell's first prompt. */
+export function createPromptReadyReader() {
+  let pending = "";
+  return {
+    feed(chunk: string): boolean {
+      const input = pending + chunk;
+      pending = input.slice(-16);
+      return /\x1b]633;B(?:\x07|\x1b\\)/.test(input);
+    },
+    reset() { pending = ""; },
+  };
+}

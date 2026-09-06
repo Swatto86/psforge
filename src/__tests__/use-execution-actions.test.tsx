@@ -217,12 +217,9 @@ describe("useExecutionActions", () => {
 
     expect(commands.getScriptParameters).not.toHaveBeenCalled();
     expect(commands.prepareTerminalScriptCommand).not.toHaveBeenCalled();
-    expect(commands.stageTerminalRunPrep).toHaveBeenCalledWith(
-      "C:\\Scripts",
-      "Default",
-    );
+    expect(commands.stageTerminalRunPrep).not.toHaveBeenCalled();
     expect(runCommandInTerminal).toHaveBeenCalledWith(
-      "& 'C:\\Scripts\\script.ps1'",
+      expect.stringContaining("-NoProfile -Command 'Set-Location"),
       {
         clearBeforeRun: false,
         reveal: true,

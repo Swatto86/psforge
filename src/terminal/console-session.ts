@@ -8,15 +8,17 @@
  * what lets callers hold a stable object instead of a bag of function refs.
  */
 
-import type { ITerminalOptions, ITheme, Terminal } from "@xterm/xterm";
+import type { ITerminalOptions, ITheme } from "@xterm/xterm";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as cmd from "../commands";
 import { clampPtyDims, startupPtyDims } from "../terminal-utils";
 import { createTerminalWithAddons } from "./xterm-setup";
 import { wipeTerminalDisplay } from "./wipe-display";
 import { createOutputPump } from "./output-pump";
-import { createCommandCompletionReader } from "./command-completion";
-import { createSessionReaders, type SessionReaders } from "./session-readers";
+import type { ConsoleSession, ConsoleSessionContext } from "./console-session-types";
+export type { ConsoleSession, ConsoleSessionContext } from "./console-session-types";
+import { createCommandCompletionReader, createPromptReadyReader } from "./command-completion";
+import { createSessionReaders } from "./session-readers";
 import { createMissingCommandNotifier } from "./missing-command-suggest";
 
 type TerminalOutputEvent = {
@@ -27,36 +29,6 @@ type TerminalOutputEvent = {
 type TerminalExitEvent = {
   sessionId: number;
   exitCode: number | null;
-};
-
-/** What the session needs to read from the owning component, when it asks. */
-export type ConsoleSessionContext = {
-  shellPath: () => string;
-  loadProfile: () => boolean;
-  /** Command sent once per PTY, e.g. Enter-PSSession for a remote tab. */
-  startupCommand: () => string;
-  /** Whether this console is the visible one; gates module suggestions. */
-  isActive: () => boolean;
-};
-
-export type ConsoleSession = {
-  readonly term: Terminal;
-  readonly readers: SessionReaders;
-  /** Wipe the display and (re)spawn PowerShell. Also the Clear action. */
-  restart: () => void;
-  isReady: () => boolean;
-  queueInput: (data: string, allowWhenNotReady?: boolean) => void;
-  exec: (command: string) => Promise<number | null>;
-  focus: () => void;
-  /** Clear the xterm buffer without touching the PowerShell session. */
-  clearBuffer: () => void;
-  writeLocal: (text: string) => void;
-  pasteText: (text: string) => void;
-  applyFont: (fontFamily: string, fontSize: number) => void;
-  applyTheme: (theme: ITheme) => void;
-  /** Re-fit, repaint and focus after this console becomes visible. */
-  syncActive: () => void;
-  dispose: () => void;
 };
 
 export function createConsoleSession(
@@ -74,6 +46,8 @@ export function createConsoleSession(
   let disposed = false;
   let stopping = false;
   let ready = false;
+  let waitingForPrompt = true;
+  const promptReady = createPromptReadyReader();
   let startInFlight = false;
   let sessionId = 0;
   let startupSentForSession = 0;
@@ -161,6 +135,17 @@ export function createConsoleSession(
 
   const processOutputChunk = (chunk: string) => {
     readers.feed(chunk);
+    if (waitingForPrompt && promptReady.feed(chunk)) {
+      waitingForPrompt = false;
+      ready = true;
+      flushWriteQueue();
+      const startup = context.startupCommand().trim();
+      if (startup && startupSentForSession !== sessionId) {
+        startupSentForSession = sessionId;
+        queueInput(`${startup}\r`);
+      }
+      resizeBackend();
+    }
 
     for (const exitCode of completions.feed(chunk)) {
       const pending = pendingExecutions.shift();
@@ -181,6 +166,8 @@ export function createConsoleSession(
     // (Clear used to restart alone and leave the old prompt above).
     wipeTerminalDisplay(term);
     ready = false;
+    waitingForPrompt = true;
+    promptReady.reset();
     writeQueue = "";
     writeInFlight = false;
     pump.reset();
@@ -194,8 +181,9 @@ export function createConsoleSession(
     );
 
     if (sessionId > 0) {
-      await cmd.stopTerminal(sessionId).catch(() => {});
+      const previousSession = sessionId;
       sessionId = 0;
+      await cmd.stopTerminal(previousSession).catch(() => {});
     }
 
     // Measure first: the console can mount before its pane has a layout, and a
@@ -221,14 +209,8 @@ export function createConsoleSession(
         return;
       }
       sessionId = sid;
-      ready = true;
-      flushWriteQueue();
-
-      const startup = context.startupCommand().trim();
-      if (startup && startupSentForSession !== sid) {
-        startupSentForSession = sid;
-        queueInput(`${startup}\r`, true);
-      }
+      // xterm must answer terminal queries during startup, before the first prompt.
+      flushWriteQueue(true);
 
       resizeBackend();
       scheduleFit();
@@ -240,6 +222,7 @@ export function createConsoleSession(
         });
       }
     } catch (err: unknown) {
+      waitingForPrompt = false;
       rejectPendingExecutions(`Failed to start terminal session: ${String(err)}`);
       if (!disposed) {
         term.write(
@@ -251,7 +234,7 @@ export function createConsoleSession(
     }
   };
 
-  const dataDisposable = term.onData((data) => queueInput(data));
+  const dataDisposable = term.onData((data) => queueInput(data, true));
   const resizeDisposable = term.onResize(({ cols, rows }) => {
     if (!ready || sessionId <= 0) return;
     void cmd.terminalResize(sessionId, cols, rows).catch(() => {});
@@ -273,6 +256,7 @@ export function createConsoleSession(
   const onTerminalExit = (event: { payload: TerminalExitEvent }) => {
     if (event.payload.sessionId !== sessionId) return;
     ready = false;
+    waitingForPrompt = false;
     readers.stopRunCapture();
     rejectPendingExecutions("Terminal session ended before command completion.");
     if (stopping) return;
@@ -312,6 +296,7 @@ export function createConsoleSession(
       void startSession();
     },
     isReady: () => ready,
+    isStarting: () => !disposed && !stopping && (startInFlight || waitingForPrompt),
     queueInput,
     exec: (command: string) => {
       if (disposed || stopping) {

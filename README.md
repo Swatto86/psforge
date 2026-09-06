@@ -10,11 +10,11 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 
 | Platform | Artifacts |
 |----------|-----------|
-| Windows | `.msi`, setup `.exe` |
+| Windows | Self-contained portable `.exe` (includes WebView2), setup `.exe` |
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.4.51](https://github.com/Swatto86/psforge/releases/tag/v1.4.51)
+**Current version:** [1.4.52](https://github.com/Swatto86/psforge/releases/tag/v1.4.52)
 
 ## AI-assisted workflow (paste → run → debug)
 
@@ -133,3 +133,19 @@ Machine-readable architecture notes for agents: [`AI_CONTEXT.md`](AI_CONTEXT.md)
 | **Run markers in terminal** | Visible `--- Run ---` / `--- Exit N ---` boundaries |
 | **CLI launch** — `psforge script.ps1` | Open a run-ready window from tooling |
 | **Per-project scratch folders** | Isolate untitled AI snippets by repo |
+
+## Desktop verification
+
+Run `bash scripts/verify.sh` (Linux) or `pwsh scripts/verify.ps1` (Windows).
+The gate builds a debug app and drives real clipboard actions, repeated Paste +
+Run, F5, working-directory effects, history persistence, restart and exit through
+WebdriverIO and `tauri-driver`. It uses temporary application state and real
+PowerShell, with update checks and profile loading disabled. Keep your regular
+PSForge instance closed while running this suite because of its single-instance
+identity. Required tools: `pwsh`, `tauri-driver`, and the platform WebDriver
+(`WebKitWebDriver` on Linux; matching `msedgedriver` on Windows).
+
+`TAURI_DRIVER`, `WEBKIT_WEBDRIVER`, and `PSFORGE_TEST_BINARY` can specify local tool
+and debug-binary paths. CI runs the same journey on Linux and Windows. Windows
+CI drives the self-contained launcher with the included fixed WebView2 runtime;
+its archive URL and SHA-256 are pinned in `scripts/webview2-runtime.json`.

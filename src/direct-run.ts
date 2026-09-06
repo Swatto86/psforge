@@ -1,26 +1,17 @@
-/**
- * VS Code-style terminal run: invoke a saved script in the current session
- * (`& 'path.ps1'`), not a fresh -NoProfile child. Working-directory and
- * execution-policy setup run as a silent prelude so the echoed command line
- * shows only the script invocation.
- */
+/** Saved scripts run in a fresh, profile-free PowerShell child process. */
 
 export interface DirectTerminalRunCommand {
-  /** Echoed command line — script invocation only. */
+  /** Command submitted to the integrated console. */
   command: string;
-  /** Working directory applied silently before the command runs. */
+  /** Legacy prep metadata; setup now happens inside the child. */
   workingDir: string | null;
-  /** Process-scoped execution policy applied silently (when not Default). */
+  /** Legacy prep metadata; policy now belongs to the child. */
   executionPolicy: string | null;
 }
 
 import type { EditorTab } from "./types";
 
-/**
- * True when F5 should `&` the file in the open console (not a temp wrapper).
- * Scratch-backed paths count: they are real files on disk, so running them
- * in the live console matches saved-script behaviour (profile, modules, classes).
- */
+/** Disk scripts retain their real path, including scratch-backed files. */
 export function isSavedDiskScript(
   _tab: EditorTab,
   scriptPath: string,
@@ -59,9 +50,16 @@ export function buildDirectTerminalRunCommand(options: {
   if (args.length > 0) {
     invoke += ` ${args.map(formatDirectRunArg).join(" ")}`;
   }
+  const setup = workDir
+    ? `Set-Location -LiteralPath ${psSingleQuote(workDir)} -ErrorAction Stop; `
+    : "";
+  const childScript = `${setup}${invoke}; if (-not $?) { exit 1 }`;
+  const policyArg = policy && policy !== "Default"
+    ? ` -ExecutionPolicy ${psSingleQuote(policy)}`
+    : "";
   return {
-    command: invoke,
-    workingDir: workDir || null,
-    executionPolicy: policy && policy !== "Default" ? policy : null,
+    command: `& (Get-Process -Id $PID).Path -NoLogo -NoProfile${policyArg} -Command ${psSingleQuote(childScript)}`,
+    workingDir: null,
+    executionPolicy: null,
   };
 }

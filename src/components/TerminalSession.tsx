@@ -35,6 +35,7 @@ export interface TerminalSessionHandle {
    *  null if no run has started or the baseline row was evicted. */
   getRunOutputLineCount: () => number | null;
   isReady: () => boolean;
+  isStarting: () => boolean;
   submitCurrentInput: () => void;
   resetInput: () => void;
   writeLocal: (text: string) => void;
@@ -96,6 +97,7 @@ export const TerminalSession = forwardRef<
       getRunOutputLineCount: () =>
         sessionRef.current?.readers.getRunOutputLineCount() ?? null,
       isReady: () => sessionRef.current?.isReady() ?? false,
+      isStarting: () => sessionRef.current?.isStarting() ?? true,
       submitCurrentInput: () => sessionRef.current?.queueInput("\r", true),
       resetInput: () => sessionRef.current?.queueInput("\u0003", true),
       writeLocal: (text: string) => sessionRef.current?.writeLocal(text),

@@ -1,3 +1,4 @@
+import { waitForTerminalReady } from "../terminal/wait-for-ready";
 /** PSForge Integrated Terminal: console tabs and the app-wide terminal bridge. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -39,7 +40,6 @@ type RunOptions = {
 };
 
 /** Longest a console may take to come up before a run gives up. */
-const READY_TIMEOUT_MS = 30000;
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -184,22 +184,8 @@ export function TerminalPane() {
     return tab.id;
   }, [activeTabId, newTabModel, tabs]);
 
-  const waitForReadyHandle = useCallback(async (tabId: string) => {
-    const timeoutAt = Date.now() + READY_TIMEOUT_MS;
-    let restartRequested = false;
-
-    while (Date.now() < timeoutAt) {
-      const handle = sessionRefs.current[tabId] ?? null;
-      if (handle?.isReady()) return handle;
-      if (handle && !restartRequested) {
-        handle.restart();
-        restartRequested = true;
-      }
-      await sleep(100);
-    }
-
-    throw new Error("Integrated terminal did not become ready.");
-  }, []);
+  const waitForReadyHandle = useCallback((tabId: string) =>
+    waitForTerminalReady(() => sessionRefs.current[tabId] ?? null), []);
 
   /** Reveal a console tab and wait for its PowerShell session to come up. */
   const prepareTab = useCallback(

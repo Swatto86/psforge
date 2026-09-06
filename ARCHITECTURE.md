@@ -64,3 +64,24 @@ and listen sites; changes must update both sides in one commit.
 
 `AI_CONTEXT.md` records detailed workflow history and recent architectural
 decisions; this file describes the current stable boundaries.
+
+## Clipboard execution
+
+`use-clipboard-script.ts` owns Paste + Run. It serializes clipboard preparation,
+creates a new buffer, and starts execution only after that buffer is committed
+and active. It calls normal execution, never debugger continuation. Saved
+scripts run through `direct-run.ts` in a fresh profile-free PowerShell child;
+working-directory and policy setup affect that child. Prior script globals,
+functions, modules and process environment therefore do not enter later runs.
+Explicit filesystem changes and machine/user environment changes are persistent
+external effects, not session state that PSForge rolls back.
+
+Clipboard buttons use the native Tauri text clipboard capability, scoped to the
+main window. Console readiness follows PowerShell's OSC prompt marker rather
+than PTY creation; readiness polling never restarts a shell still booting.
+
+The desktop regression harness uses disposable state and real PowerShell through
+WebDriver on Linux and Windows. A normal app exit can delete the driver session;
+persistence assertions and a second launch remain mandatory. Windows portable
+artifacts wrap the native executable and a pinned fixed WebView2 runtime in a
+non-elevated temporary-extraction launcher, also driven by the Windows CI gate.

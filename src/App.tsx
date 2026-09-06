@@ -1,3 +1,4 @@
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 /** PSForge main application component with full layout. */
 
 import React, { useEffect, useCallback, useRef } from "react";
@@ -49,6 +50,7 @@ import {
   diskWriteTabChanges,
 } from "./scratch-utils";
 import { findProjectConfig } from "./project-config";
+import { useClipboardScript } from "./use-clipboard-script";
 import { useExecutionActions } from "./use-execution-actions";
 import { PssaRunGateDialog } from "./components/PssaRunGateDialog";
 import { usePssaAutoInstall } from "./components/PssaInstallControls";
@@ -890,7 +892,7 @@ function AppInner() {
     }
     let clip = "";
     try {
-      clip = await navigator.clipboard.readText();
+      clip = await readText();
     } catch {
       void writeTerminalNotice(
         "[PSForge] Could not read the clipboard. Allow clipboard access or paste with Ctrl+V (clean on paste is still applied).",
@@ -946,77 +948,12 @@ function AppInner() {
     runOrDebugScript,
   ]);
 
-  const pasteFromClipboardAsNewScript = useCallback(
-    async (options?: { runInNewConsole?: boolean }) => {
-      if (!state.selectedPsPath) {
-        const message =
-          "[PSForge] No PowerShell host selected. Choose a host in the toolbar, then paste again.";
-        showAppToast(message);
-        void writeTerminalNotice(message, { reveal: true });
-        return;
-      }
-      let clip = "";
-      try {
-        clip = await navigator.clipboard.readText();
-      } catch {
-        void writeTerminalNotice(
-          "[PSForge] Could not read the clipboard. Allow clipboard access and try again.",
-          { reveal: true },
-        );
-        return;
-      }
-      if (!clip.trim()) {
-        showAppToast("Clipboard is empty.");
-        return;
-      }
-
-      const { text: cleaned, summary } = sanitizePastedTextWithSummary(
-        clip,
-        FULL_PASTE_SANITIZE_OPTIONS,
-      );
-      showAppToast(formatPasteSummaryMessage(summary));
-      let formatted = cleaned;
-      try {
-        formatted = await cmd.formatScript(state.selectedPsPath, cleaned);
-      } catch {
-        // Formatting is optional; cleaned paste is still usable.
-      }
-
-      const id = newTabId();
-      const tab: EditorTab = {
-        id,
-        title: `Untitled-${untitledCounter()}`,
-        filePath: "",
-        content: formatted,
-        savedContent: "",
-        encoding: "utf8",
-        language: "powershell",
-        isDirty: true,
-        tabType: "code",
-      };
-      dispatch({ type: "ADD_TAB", tab });
-      const welcomeTab = state.tabs.find((t) => t.tabType === "welcome");
-      if (welcomeTab) {
-        dispatch({ type: "CLOSE_TAB", id: welcomeTab.id });
-      }
-
-      if (state.settings.runAfterPasteCleanFormat !== false) {
-        const newConsole = options?.runInNewConsole !== false;
-        window.setTimeout(
-          () => runOrDebugScript({ newConsole }),
-          50,
-        );
-      }
-    },
-    [
-      state.selectedPsPath,
-      state.tabs,
-      state.settings.runAfterPasteCleanFormat,
-      dispatch,
-      writeTerminalNotice,
-      runOrDebugScript,
-    ],
-  );
+  const pasteFromClipboardAsNewScript = useClipboardScript({
+    state,
+    dispatch,
+    writeTerminalNotice,
+    runScript,
+  });
 
   /** Shared Paste Clean + Format entry point (toolbar, Ctrl+Shift+Alt+V, and
    *  command palette). Paste + Run always opens a new script tab and a new

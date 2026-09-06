@@ -1,3 +1,4 @@
+import clipboardScript from "../use-clipboard-script.ts?raw";
 import { describe, expect, it, vi } from "vitest";
 import {
   formatAppVersionLabel,
@@ -44,7 +45,7 @@ describe("Integrated terminal stability", () => {
     expect(xtermSetup).toContain("customGlyphs: true");
   });
 
-  it("runs saved scripts in the current console session", () => {
+  it("routes saved scripts through the disk-script runner", () => {
     expect(executionActionsSource).toContain("buildDirectTerminalRunCommand");
     expect(executionActionsSource).toContain("isSavedDiskScript");
   });
@@ -248,13 +249,13 @@ describe("Paste Clean + Format entry point (S11-1)", () => {
   it("runs Paste + Run in a newly created local console", () => {
     expect(terminalPane).toContain("options?.newConsole");
     expect(terminalPane).toContain("createLocalTab");
-    expect(app).toContain("runOrDebugScript({ newConsole })");
+    expect(clipboardScript).toContain("runScript({ newConsole: next.newConsole })");
     expect(executionActions).toContain("newConsole?: boolean");
   });
 
   it("surfaces a notice when Welcome paste has no PowerShell host", () => {
-    expect(app).toContain("No PowerShell host selected");
-    expect(app).toContain("Clipboard is empty.");
+    expect(clipboardScript).toContain("No PowerShell host selected");
+    expect(clipboardScript).toContain("Clipboard is empty.");
   });
 
   it("defers run-after-sanitized-paste until after Monaco onChange", () => {

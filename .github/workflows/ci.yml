@@ -25,7 +25,8 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            pkg-config
+            pkg-config \
+            webkit2gtk-driver xvfb xauth
 
       - uses: actions/setup-node@v5
         with:
@@ -63,6 +64,15 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      - name: Install desktop test driver
+        run: cargo install tauri-driver --version 2.0.6 --locked --debug
+
+      - name: Build debug application
+        run: npx tauri build --debug --no-bundle
+
+      - name: Desktop workflow
+        run: xvfb-run -a npm run test:e2e
+
   # The Linux job compiles out every #[cfg(windows)] block (registry file
   # associations, PS discovery, ConPTY), so Windows-only breakage would only
   # surface after a release tag was already pushed. This leg gates it here.
@@ -86,6 +96,17 @@ jobs:
         with:
           workspaces: ./src-tauri -> target
 
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend tests (Windows)
+        run: npm test
+
       - name: cargo clippy (windows)
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
@@ -93,3 +114,31 @@ jobs:
       - name: cargo test (windows)
         working-directory: src-tauri
         run: cargo test
+
+      - name: Install desktop test tools
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --version 2.0.6 --locked --debug
+          if ($LASTEXITCODE -ne 0) { throw 'tauri-driver install failed.' }
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS install failed.' }
+          $version = (Get-Content scripts/webview2-runtime.json -Raw | ConvertFrom-Json).version
+          $driverDir = Join-Path $env:RUNNER_TEMP 'psforge-edge-driver'
+          New-Item -ItemType Directory -Path $driverDir -Force | Out-Null
+          $archive = Join-Path $driverDir 'driver.zip'
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $archive
+          Expand-Archive $archive -DestinationPath $driverDir -Force
+          $driverDir | Out-File $env:GITHUB_PATH -Append
+
+      - name: Build debug application
+        run: npx tauri build --debug --no-bundle
+
+      - name: Build self-contained debug executable
+        shell: pwsh
+        run: ./scripts/build-portable.ps1 -AppBinary src-tauri/target/debug/psforge.exe -OutputFile PSForge-debug-portable.exe -Fast
+
+      - name: Desktop workflow with bundled runtime
+        env:
+          PSFORGE_TEST_BINARY: PSForge-debug-portable.exe
+          WEBVIEW2_BROWSER_EXECUTABLE_FOLDER: C:\psforge-runtime-must-not-exist
+        run: npm run test:e2e

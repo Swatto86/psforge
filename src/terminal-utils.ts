@@ -1,3 +1,4 @@
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 /** Strip ANSI escape sequences from integrated terminal buffer text. */
 export function stripAnsi(text: string): string {
   return text
@@ -18,7 +19,7 @@ export function getTerminalSelection(): string {
 export async function copyTerminalSelectionToClipboard(): Promise<boolean> {
   const text = getTerminalSelection();
   if (!text) return false;
-  await navigator.clipboard.writeText(text);
+  await writeText(text);
   return true;
 }
 
@@ -36,7 +37,7 @@ export async function copyTerminalOutputToClipboard(
 ): Promise<boolean> {
   const text = getTerminalPlainContent(lineCount);
   if (!text.trim()) return false;
-  await navigator.clipboard.writeText(text);
+  await writeText(text);
   return true;
 }
 
@@ -77,7 +78,7 @@ export async function copyLastRunOutputToClipboard(): Promise<boolean> {
   const scriptOutput = getRunScriptOutput();
   if (scriptOutput !== null) {
     if (!scriptOutput.trim()) return false;
-    await navigator.clipboard.writeText(scriptOutput);
+    await writeText(scriptOutput);
     return true;
   }
 
@@ -92,7 +93,7 @@ export async function copyLastRunOutputToClipboard(): Promise<boolean> {
       ? getRunTerminalPlainContent(count)
       : getRunTerminalPlainContent();
   if (!text.trim()) return false;
-  await navigator.clipboard.writeText(text);
+  await writeText(text);
   return true;
 }
 

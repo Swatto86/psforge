@@ -128,3 +128,15 @@ describe("sanitizePastedText", () => {
     );
   });
 });
+
+describe("literal prompt text", () => {
+  it("preserves terminal prompts inside a here-string", () => {
+    const script = '$example = @"\nPS C:\\> Write-Host hello\n>> continuation\n"@';
+    expect(sanitizePastedText(script)).toBe(script);
+  });
+});
+
+it("does not rewrite typography in already-quoted string data", () => {
+  const script = `Write-Output "Don’t change my text — or …"`;
+  expect(sanitizePastedText(script)).toBe(script);
+});

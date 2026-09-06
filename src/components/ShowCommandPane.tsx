@@ -2,27 +2,12 @@
  *  ISE-style command builder: pick a module + command, fill parameters, and insert the generated command text.
  */
 
+import { buildCommandPreview, sortParams } from "../command-preview";
+import { CommandPreview } from "./CommandPreview";
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { CommandInfo, CommandParameterInfo } from "../types";
-
-function quotePsArgument(value: string): string {
-  // Always single-quote. A whitelist fast path left values with a leading
-  // PowerShell-significant char (# - $ @) bare, which the parser then treated
-  // as a comment, switch, or variable — corrupting the generated command
-  // (S3-26). Quoting is always safe for a literal parameter value.
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-function sortParams(params: CommandParameterInfo[]): CommandParameterInfo[] {
-  return [...params].sort((a, b) => {
-    const aPos = typeof a.position === "number" ? a.position : Number.MAX_SAFE_INTEGER;
-    const bPos = typeof b.position === "number" ? b.position : Number.MAX_SAFE_INTEGER;
-    if (aPos !== bPos) return aPos - bPos;
-    return a.name.localeCompare(b.name);
-  });
-}
 
 export function ShowCommandPane() {
   const { state, dispatch } = useAppState();
@@ -187,20 +172,7 @@ export function ShowCommandPane() {
   }, [state.selectedPsPath, selectedCommand]);
 
   const commandPreview = useMemo(() => {
-    if (!selectedCommand) return "";
-    const parts: string[] = [selectedCommand];
-    for (const param of commandParams) {
-      const raw = paramValues[param.name] ?? "";
-      if (param.isSwitch) {
-        if (raw === "true") parts.push(`-${param.name}`);
-        continue;
-      }
-      const trimmed = raw.trim();
-      if (!trimmed) continue;
-      parts.push(`-${param.name}`);
-      parts.push(quotePsArgument(trimmed));
-    }
-    return parts.join(" ");
+    return buildCommandPreview(selectedCommand, commandParams, paramValues);
   }, [selectedCommand, commandParams, paramValues]);
 
   const insertCommand = () => {
@@ -412,53 +384,13 @@ export function ShowCommandPane() {
         )}
       </div>
 
-      <div className="mt-3">
-        <div style={{ color: "var(--text-secondary)" }}>
-          Command Preview
-        </div>
-        <textarea
-          value={commandPreview}
-          readOnly
-          rows={3}
-          className="w-full mt-1 px-2 py-1"
-          style={{
-            ...controlStyle,
-            fontFamily:
-              state.settings.outputFontFamily ??
-              "Cascadia Code, Consolas, monospace",
-            fontSize: `${state.settings.outputFontSize ?? 13}px`,
-            resize: "vertical",
-          }}
-        />
-        <div className="mt-2 flex items-center gap-2">
-          <button
-            onClick={insertCommand}
-            disabled={!commandPreview.trim()}
-            style={{
-              backgroundColor: "transparent",
-              color: commandPreview.trim()
-                ? "var(--text-accent)"
-                : "var(--text-muted)",
-              cursor: commandPreview.trim() ? "pointer" : "default",
-            }}
-          >
-            Insert At Cursor
-          </button>
-          <button
-            onClick={() => navigator.clipboard.writeText(commandPreview).catch(() => {})}
-            disabled={!commandPreview.trim()}
-            style={{
-              backgroundColor: "transparent",
-              color: commandPreview.trim()
-                ? "var(--text-secondary)"
-                : "var(--text-muted)",
-              cursor: commandPreview.trim() ? "pointer" : "default",
-            }}
-          >
-            Copy
-          </button>
-        </div>
-      </div>
+      <CommandPreview
+        commandPreview={commandPreview}
+        insertCommand={insertCommand}
+        controlStyle={controlStyle}
+        fontFamily={state.settings.outputFontFamily}
+        fontSize={state.settings.outputFontSize}
+      />
     </div>
   );
 }

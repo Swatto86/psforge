@@ -147,7 +147,7 @@ jobs:
           - platform: ubuntu-22.04
             args: ''
           - platform: windows-latest
-            args: ''
+            args: '--bundles nsis'
 
     runs-on: ${{ matrix.platform }}
     env:
@@ -210,14 +210,11 @@ jobs:
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS install failed.' }
           $ver = (Get-Content 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
-          $exe = Get-ChildItem 'src-tauri/target/release/*.exe' -File -ErrorAction SilentlyContinue |
-                 Where-Object { $_.Name -notlike '*setup*' } |
-                 Sort-Object Length -Descending | Select-Object -First 1
-          if (-not $exe) { throw 'No portable exe in src-tauri/target/release' }
           $dest = "PSForge_${ver}_x64-portable.exe"
-          Copy-Item $exe.FullName $dest -Force
-          Write-Host "Staged $dest ($([math]::Round($exe.Length/1MB,1)) MB)"
+          ./scripts/build-portable.ps1 -AppBinary src-tauri/target/release/psforge.exe -OutputFile $dest
           "portable_exe=$dest" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload portable exe to release
@@ -246,6 +243,17 @@ jobs:
     needs: [create-release, build]
 
     steps:
+      - name: Add release checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          mkdir assets
+          gh release download "$RELEASE_TAG" --dir assets
+          (cd assets && sha256sum -- * > ../SHA256SUMS)
+          gh release upload "$RELEASE_TAG" SHA256SUMS --clobber
+
       - name: Publish release
         uses: actions/github-script@v8
         env:

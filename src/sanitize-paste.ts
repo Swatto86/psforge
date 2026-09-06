@@ -1,58 +1,7 @@
-import type { AppSettings, PasteSanitizeSummary } from "./types";
-
-/** Options for cleaning text pasted from the web, Teams, or terminal captures. */
-export interface PasteSanitizeOptions {
-  /** Replace curly quotes, em dashes, NBSP, and zero-width characters. */
-  fixTypography: boolean;
-  /** Strip markdown ``` fences (optional language tag on first line). */
-  stripMarkdownFences: boolean;
-  /** Pull script bodies out of ```powershell blocks embedded in chat prose. */
-  extractEmbeddedFences: boolean;
-  /** Drop common AI intro/outro lines before and after code. */
-  stripProseWrappers: boolean;
-  /** Remove leading `12 |` or `12:` line-number gutters from blog snippets. */
-  stripLineNumberGutters: boolean;
-  /** Remove `PS>` / `PS C:\path>` / `>>` prompt prefixes per line. */
-  stripPromptPrefixes: boolean;
-  /** Normalize CRLF/CR to LF. */
-  normalizeNewlines: boolean;
-  /** Remove ASCII control characters except tab and newline. */
-  stripControlChars: boolean;
-  /** Strip simple HTML tags often copied from docs pages. */
-  stripSimpleHtml: boolean;
-}
-
-/** Full cleanup used by Paste Clean + Format and when paste sanitization is enabled. */
-export const FULL_PASTE_SANITIZE_OPTIONS: PasteSanitizeOptions = {
-  fixTypography: true,
-  stripMarkdownFences: true,
-  extractEmbeddedFences: true,
-  stripProseWrappers: true,
-  stripLineNumberGutters: true,
-  stripPromptPrefixes: true,
-  normalizeNewlines: true,
-  stripControlChars: true,
-  stripSimpleHtml: true,
-};
-
-export function pasteSanitizeOptionsFromSettings(
-  settings: AppSettings,
-): PasteSanitizeOptions {
-  const enabled = settings.sanitizePasteOnPaste !== false;
-  return enabled
-    ? FULL_PASTE_SANITIZE_OPTIONS
-    : {
-        fixTypography: false,
-        stripMarkdownFences: false,
-        extractEmbeddedFences: false,
-        stripProseWrappers: false,
-        stripLineNumberGutters: false,
-        stripPromptPrefixes: false,
-        normalizeNewlines: false,
-        stripControlChars: false,
-        stripSimpleHtml: false,
-      };
-}
+import { FULL_PASTE_SANITIZE_OPTIONS, type PasteSanitizeOptions } from "./paste-sanitize-options";
+export { FULL_PASTE_SANITIZE_OPTIONS, pasteSanitizeOptionsFromSettings, type PasteSanitizeOptions } from "./paste-sanitize-options";
+import { splitPsStringSegments } from "./paste-string-segments";
+import type { PasteSanitizeSummary } from "./types";
 
 /// Substitutions for "smart" typographic characters that Word, Teams, and
 /// many web pages introduce when copying text. PowerShell's parser rejects
@@ -114,93 +63,7 @@ function isProseLine(line: string): boolean {
 }
 
 function fixTypography(input: string): string {
-  return input.replace(TYPOGRAPHY_PATTERN, (ch) => REPLACEMENTS[ch] ?? ch);
-}
-
-/**
- * Splits PowerShell source into alternating code / string-literal segments so
- * sanitizer passes can skip string contents. Handles '...', "..." (with `"
- * and doubled-quote escapes), and @"..."@ / @'...'@ here-strings.
- * ponytail: does not track comments — a quote inside a # comment starts a
- * phantom string segment; acceptable for sanitizer heuristics, add comment
- * tracking if a real paste ever trips it.
- */
-function splitPsStringSegments(
-  input: string,
-): { text: string; isString: boolean }[] {
-  const segments: { text: string; isString: boolean }[] = [];
-  const n = input.length;
-  let segStart = 0;
-  let i = 0;
-  const push = (end: number, isString: boolean) => {
-    if (end > segStart) {
-      segments.push({ text: input.slice(segStart, end), isString });
-    }
-    segStart = end;
-  };
-  while (i < n) {
-    const ch = input[i];
-    if (ch === "@" && (input[i + 1] === '"' || input[i + 1] === "'")) {
-      // Here-string: opener must be followed by a newline; terminator is a
-      // closing quote + @ at the start of a line.
-      const quote = input[i + 1];
-      let j = i + 2;
-      if (input[j] === "\r") j++;
-      if (input[j] === "\n") {
-        push(i, false);
-        const term = `\n${quote}@`;
-        const k = input.indexOf(term, j);
-        const end = k === -1 ? n : k + term.length;
-        push(end, true);
-        i = end;
-        continue;
-      }
-    }
-    if (ch === "'") {
-      push(i, false);
-      let j = i + 1;
-      while (j < n) {
-        if (input[j] === "'") {
-          if (input[j + 1] === "'") {
-            j += 2;
-            continue;
-          }
-          j++;
-          break;
-        }
-        j++;
-      }
-      push(Math.min(j, n), true);
-      i = Math.min(j, n);
-      continue;
-    }
-    if (ch === '"') {
-      push(i, false);
-      let j = i + 1;
-      while (j < n) {
-        const c = input[j];
-        if (c === "`") {
-          j += 2;
-          continue;
-        }
-        if (c === '"') {
-          if (input[j + 1] === '"') {
-            j += 2;
-            continue;
-          }
-          j++;
-          break;
-        }
-        j++;
-      }
-      push(Math.min(j, n), true);
-      i = Math.min(j, n);
-      continue;
-    }
-    i++;
-  }
-  push(n, false);
-  return segments;
+  return splitPsStringSegments(input).map((seg) => seg.isString ? seg.text : seg.text.replace(TYPOGRAPHY_PATTERN, (ch) => REPLACEMENTS[ch] ?? ch)).join("");
 }
 
 const BR_TAG_RE = /<br\b[^>]*>/gi;
@@ -350,10 +213,10 @@ function stripLineNumberGutters(input: string): string {
 }
 
 function stripPromptPrefixes(input: string): string {
-  return input
-    .split("\n")
-    .map((line) => line.replace(PROMPT_PREFIX_RE, ""))
-    .join("\n");
+  return splitPsStringSegments(input)
+    .map((segment) => segment.isString ? segment.text : segment.text
+      .split("\n").map((line) => line.replace(PROMPT_PREFIX_RE, "")).join("\n"))
+    .join("");
 }
 
 function normalizeNewlines(input: string): string {
@@ -365,7 +228,7 @@ function stripControlChars(input: string): string {
 }
 
 function countTypographyReplacements(input: string): number {
-  return input.match(TYPOGRAPHY_PATTERN)?.length ?? 0;
+  return splitPsStringSegments(input).reduce((count, seg) => count + (seg.isString ? 0 : (seg.text.match(TYPOGRAPHY_PATTERN)?.length ?? 0)), 0);
 }
 
 function countHtmlTags(input: string): number {
@@ -387,7 +250,7 @@ function countLineGutters(input: string): number {
 }
 
 function countPromptPrefixes(input: string): number {
-  return input.split("\n").filter((line) => PROMPT_PREFIX_RE.test(line)).length;
+  return splitPsStringSegments(input).reduce((count, seg) => count + (seg.isString ? 0 : seg.text.split("\n").filter((line) => PROMPT_PREFIX_RE.test(line)).length), 0);
 }
 
 function countProseLinesRemoved(before: string, after: string): number {

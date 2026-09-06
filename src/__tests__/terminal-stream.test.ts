@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as commands from "../commands";
 import type { Terminal } from "@xterm/xterm";
 import { createOutputPump, MAX_TERMINAL_WRITE_PER_FRAME } from "../terminal/output-pump";
 import { createConsoleSession, type ConsoleSession } from "../terminal/console-session";
@@ -51,12 +52,17 @@ function output(data: string) {
   emitOutput(data);
   frame();
 }
-function startSession() {
+async function startSession(prompt = true) {
   session = createConsoleSession(container, {}, {
     shellPath: () => "", loadProfile: () => false,
     startupCommand: () => "", isActive: () => false,
   });
-  return vi.waitFor(() => expect(session!.isReady()).toBe(true));
+  await vi.waitFor(() => expect(commands.startTerminal).toHaveBeenCalled());
+  if (prompt) {
+    output("\x1b]633;B\x07");
+    expect(session!.isReady()).toBe(true);
+  }
+
 }
 
 beforeEach(() => {
@@ -114,6 +120,19 @@ describe("terminal output pump", () => {
   });
 });
 
+describe("PowerShell readiness", () => {
+  it("waits for a complete prompt marker before accepting a run", async () => {
+    await startSession(false);
+    expect(session!.isReady()).toBe(false);
+    await expect(session!.exec("Write-Output fresh")).rejects.toThrow("not ready");
+    output("\x1b]633;");
+    expect(session!.isReady()).toBe(false);
+    output("B\x07");
+    expect(session!.isReady()).toBe(true);
+    expect(commands.terminalExec).not.toHaveBeenCalled();
+  });
+});
+
 describe("terminal command completion", () => {
   it("consumes each marker once and resets incomplete markers between sessions", () => {
     const reader = createCommandCompletionReader();
@@ -155,7 +174,9 @@ describe("run output capture lifecycle", () => {
     session!.readers.markRunStart("Start-Sleep 60");
     output("Start-Sleep 60\r\nworking\r\n");
     session!.restart();
-    await vi.waitFor(() => expect(session!.isReady()).toBe(true));
+    await vi.waitFor(() => expect(commands.startTerminal).toHaveBeenCalledTimes(2));
+    output("\x1b]633;B\x07");
+    expect(session!.isReady()).toBe(true);
     output("\x1b]633;A\x1b\\PS C:\\>\x1b]633;B\x1b\\Get-Date\r\nMonday\r\n\x1b]633;D;0\x1b\\");
     expect(session!.readers.getRunScriptOutput()).toBe("working");
   });

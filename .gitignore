@@ -29,3 +29,6 @@ PROGRESS.md
 # Local agent/tooling config
 .claude/
 tsconfig.tsbuildinfo
+
+# Generated Windows portable launcher
+PSForge*-portable.exe

@@ -61,46 +61,17 @@ describe("formatDirectRunArg", () => {
 });
 
 describe("buildDirectTerminalRunCommand", () => {
-  it("invokes the saved script with silent run prep metadata", () => {
-    expect(
-      buildDirectTerminalRunCommand({
-        scriptPath: "C:\\Scripts\\script.ps1",
-        workingDir: "C:\\Scripts",
-        executionPolicy: "Default",
-      }),
-    ).toEqual({
-      command: "& 'C:\\Scripts\\script.ps1'",
-      workingDir: "C:\\Scripts",
+  it("runs setup and the saved path inside a fresh child, leaving console prep empty", () => {
+    expect(buildDirectTerminalRunCommand({ scriptPath: "/tmp/a.ps1", workingDir: "/tmp", executionPolicy: "Bypass", scriptArgs: ["-Name", "x"] })).toEqual({
+      command: "& (Get-Process -Id $PID).Path -NoLogo -NoProfile -ExecutionPolicy 'Bypass' -Command 'Set-Location -LiteralPath ''/tmp'' -ErrorAction Stop; & ''/tmp/a.ps1'' -Name ''x''; if (-not $?) { exit 1 }'",
+      workingDir: null,
       executionPolicy: null,
     });
   });
-
-  it("includes a non-default execution policy in run prep metadata", () => {
-    expect(
-      buildDirectTerminalRunCommand({
-        scriptPath: "/tmp/a.ps1",
-        workingDir: "/tmp",
-        executionPolicy: "Bypass",
-      }),
-    ).toEqual({
-      command: "& '/tmp/a.ps1'",
-      workingDir: "/tmp",
-      executionPolicy: "Bypass",
-    });
-  });
-
-  it("appends named args without quoting the -Param token", () => {
-    expect(
-      buildDirectTerminalRunCommand({
-        scriptPath: "C:\\a.ps1",
-        workingDir: "C:\\",
-        executionPolicy: "Default",
-        scriptArgs: ["-Name", "x"],
-      }),
-    ).toEqual({
-      command: "& 'C:\\a.ps1' -Name 'x'",
-      workingDir: "C:\\",
-      executionPolicy: null,
-    });
+  it("omits the policy override for Default", () => {
+    const result = buildDirectTerminalRunCommand({ scriptPath: "/tmp/a.ps1", workingDir: "", executionPolicy: "Default" });
+    expect(result.command).toContain("-NoProfile -Command");
+    expect(result.command).not.toContain("Set-Location");
+    expect(result.executionPolicy).toBeNull();
   });
 });
