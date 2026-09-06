@@ -146,6 +146,9 @@ try {
   await connect();
   const recovery = await browser.$('[data-testid="scratch-recovery-dismiss"]');
   await recovery.waitForDisplayed({ timeout: 10000 });
+  // Loaded previews resize the dialog; wait before WebDriver chooses click coordinates.
+  await waitFor(async () => !(await browser.$('[data-testid="scratch-recovery-dialog"]').getText()).includes('Loading…'),
+    'Scratch previews did not finish loading');
   await recovery.click();
   await browser.$('[data-testid="scratch-recovery-dialog"]').waitForDisplayed({ reverse: true, timeout: 10000 });
   const loaded = await invoke('load_settings');
