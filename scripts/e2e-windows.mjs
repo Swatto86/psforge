@@ -17,6 +17,13 @@ export async function launchWindowsApp(executable, env, port, waitFor) {
   });
   let launchError;
   let endpointError;
+  const stop = () => {
+    try {
+      if (app.pid && app.exitCode === null) {
+        execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'pipe' });
+      }
+    } finally { policy('Restore'); }
+  };
   app.on('error', error => { launchError = error; });
   try {
     await waitFor(async () => {
@@ -34,8 +41,7 @@ export async function launchWindowsApp(executable, env, port, waitFor) {
       console.error(execFileSync('pwsh', ['-NoProfile', '-File', 'scripts/diagnose-portable.ps1'],
         { encoding: 'utf8', timeout: 15000 }));
     } catch (diagnosticError) { console.error(`Portable diagnostics failed: ${diagnosticError.message}`); }
-    app.kill();
-    policy('Restore');
+    stop();
     throw error;
   }
   return {
@@ -46,6 +52,6 @@ export async function launchWindowsApp(executable, env, port, waitFor) {
       assert.equal(app.exitCode, 0, 'Portable application must exit successfully');
       policy('Restore');
     },
-    stop() { if (app.exitCode === null) app.kill(); policy('Restore'); },
+    stop,
   };
 }

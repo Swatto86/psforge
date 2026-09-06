@@ -7,9 +7,11 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import assert from 'node:assert/strict';
 import { launchWindowsApp } from './e2e-windows.mjs';
+import { prepareConfig } from './e2e-config.mjs';
 
 const state = realpathSync.native(mkdtempSync(join(tmpdir(), 'psforge-e2e-')));
-const config = join(state, 'config');
+const configState = prepareConfig(state);
+const config = configState.config;
 const settingsPath = join(config, 'PSForge', 'settings.json');
 mkdirSync(join(config, 'PSForge'), { recursive: true });
 writeFileSync(settingsPath, JSON.stringify({
@@ -164,11 +166,17 @@ try {
   console.error(driverLog);
   throw error;
 } finally {
-  if (browser) {
-    if (previousClipboard !== undefined) await invoke('plugin:clipboard-manager|write_text', { text: previousClipboard });
-    await deleteSession();
+  try {
+    if (browser) {
+      if (previousClipboard !== undefined) await invoke('plugin:clipboard-manager|write_text', { text: previousClipboard });
+      await deleteSession();
+    }
+  } finally {
+    driver.kill();
+    try { windowsApp?.stop(); }
+    finally {
+      configState.restore();
+      rmSync(state, { recursive: true, force: true });
+    }
   }
-  driver.kill();
-  windowsApp?.stop();
-  rmSync(state, { recursive: true, force: true });
 }

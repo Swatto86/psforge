@@ -16,7 +16,7 @@ if ($Mode -eq 'Enable') {
     $existing = Get-ItemProperty -LiteralPath $key -Name $name -ErrorAction SilentlyContinue
     @{ exists = $null -ne $existing; value = if ($existing) { $existing.$name } else { $null } } |
         ConvertTo-Json | Set-Content -LiteralPath $StateFile
-    New-Item -Path $key -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
     New-ItemProperty -LiteralPath $key -Name $name -Value "--remote-debugging-port=$Port" -PropertyType String -Force | Out-Null
 } elseif (Test-Path -LiteralPath $StateFile) {
     $saved = Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json
