@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import assert from 'node:assert/strict';
+import { launchWindowsApp } from './e2e-windows.mjs';
 
 const state = realpathSync.native(mkdtempSync(join(tmpdir(), 'psforge-e2e-')));
 const config = join(state, 'config');
@@ -30,9 +31,10 @@ const port = await freePort();
 const nativePort = await freePort();
 const args = ['--port', String(port), '--native-port', String(nativePort)];
 if (process.env.WEBKIT_WEBDRIVER) args.push('--native-driver', process.env.WEBKIT_WEBDRIVER);
+const appEnv = { ...process.env, XDG_CONFIG_HOME: config, APPDATA: config,
+  XDG_DATA_HOME: join(state, 'data'), XDG_CACHE_HOME: join(state, 'cache') };
 const driver = spawn(process.env.TAURI_DRIVER || 'tauri-driver', args, {
-  env: { ...process.env, XDG_CONFIG_HOME: config, APPDATA: config,
-    XDG_DATA_HOME: join(state, 'data'), XDG_CACHE_HOME: join(state, 'cache') },
+  env: appEnv,
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let driverError;
@@ -50,6 +52,7 @@ const waitFor = async (check, message, timeout = 30000) => {
   throw new Error(message);
 };
 let browser;
+let windowsApp;
 let previousClipboard;
 const invoke = (command, args = {}) => browser.executeAsync((command, args, done) => {
   window.__TAURI__.core.invoke(command, args).then(
@@ -57,9 +60,13 @@ const invoke = (command, args = {}) => browser.executeAsync((command, args, done
   );
 }, command, args);
 const connect = async () => {
+  if (process.platform === 'win32') {
+    windowsApp = await launchWindowsApp(executable, appEnv, await freePort(), waitFor);
+  }
   browser = await remote({ hostname: '127.0.0.1', port, logLevel: 'silent',
     connectionRetryCount: 0, connectionRetryTimeout: 60000,
-    capabilities: { 'tauri:options': { application: executable }, 'wdio:enforceWebDriverClassic': true },
+    capabilities: { ...(windowsApp?.capabilities ?? { 'tauri:options': { application: executable } }),
+      'wdio:enforceWebDriverClassic': true },
   });
   await browser.$('[data-testid="toolbar-paste-run"]').waitForEnabled({ timeout: 30000 });
 };
@@ -75,6 +82,12 @@ const deleteSession = async () => {
 const exitApp = async () => {
   await browser.$('[data-testid="menubar-file"]').click();
   await browser.$('button=Exit').click();
+  if (windowsApp) {
+    await windowsApp.waitForExit();
+    await deleteSession();
+    windowsApp = undefined;
+    return;
+  }
   await waitFor(async () => {
     try { return (await browser.getWindowHandles()).length === 0; }
     catch (error) {
@@ -152,5 +165,6 @@ try {
     await deleteSession();
   }
   driver.kill();
+  windowsApp?.stop();
   rmSync(state, { recursive: true, force: true });
 }
