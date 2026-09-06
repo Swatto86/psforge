@@ -5,8 +5,8 @@ on:
     tags:
       - 'v*'
   # Manual fallback for environments that cannot push tags directly: the
-  # release (and its tag, via createRelease) is cut from the dispatched
-  # commit. The tag input must match the manifest versions on that commit.
+  # tag and the release are created on the dispatched commit. The tag input
+  # must match the manifest versions on that commit.
   workflow_dispatch:
     inputs:
       tag:
@@ -83,9 +83,37 @@ jobs:
               }
             }
 
-            // When the tag does not exist yet (workflow_dispatch fallback),
-            // createRelease creates it on target_commitish; for tag-push runs
-            // the tag exists and target_commitish is ignored.
+            // A draft release does not create its tag until it is published,
+            // so the build legs (which check out the tag) need the ref to
+            // exist now. Tag-push runs already have it.
+            try {
+              await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              await github.rest.git.createRef({
+                owner,
+                repo,
+                ref: `refs/tags/${tag}`,
+                sha: context.sha,
+              });
+              core.info(`Created tag ${tag} at ${context.sha}`);
+            }
+
+            // Drafts are not returned by getReleaseByTag; reuse one left by
+            // an earlier failed run rather than accumulating untagged drafts.
+            const drafts = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const draft = drafts.find((r) => r.draft && r.tag_name === tag);
+            if (draft) {
+              core.info(`Reusing draft release ${draft.id} for ${tag}`);
+              return draft.id;
+            }
+
             const { data } = await github.rest.repos.createRelease({
               owner,
               repo,
