@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 
 // WebDriver's launch mode expects the launched process to own the webview.
@@ -18,6 +18,10 @@ export async function launchWindowsApp(executable, env, port, waitFor) {
       catch { return false; }
     }, 'Portable application did not expose its webview', 60000);
   } catch (error) {
+    try {
+      console.error(execFileSync('pwsh', ['-NoProfile', '-File', 'scripts/diagnose-portable.ps1'],
+        { encoding: 'utf8', timeout: 15000 }));
+    } catch (diagnosticError) { console.error(`Portable diagnostics failed: ${diagnosticError.message}`); }
     app.kill();
     throw error;
   }
