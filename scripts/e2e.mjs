@@ -79,6 +79,8 @@ const exitApp = async () => {
     try { return (await browser.getWindowHandles()).length === 0; }
     catch (error) {
       if (sessionClosed(error)) return true;
+      // Older WebKit briefly loses the page before declaring the session closed.
+      if (/WebDriverError: unknown error/.test(error.message ?? '')) return false;
       throw error;
     }
   }, 'App did not exit');
@@ -124,9 +126,12 @@ try {
   await exitApp();
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   assert.ok(settings.recentRuns.length >= 3, 'Exit must flush run history');
+  // Seed a genuine orphan: ordinary open tabs may already restore automatically.
+  const scratch = join(config, 'PSForge', 'scratch');
+  mkdirSync(scratch, { recursive: true });
+  writeFileSync(join(scratch, 'tab-e2e-orphan.ps1'), "'recover me'");
   await connect();
-  // Scratch recovery is an expected startup dialog after unsaved scripts.
-  const recovery = await browser.$('button=Not now');
+  const recovery = await browser.$('[data-testid="scratch-recovery-dismiss"]');
   await recovery.waitForDisplayed({ timeout: 10000 });
   await recovery.click();
   const loaded = await invoke('load_settings');
