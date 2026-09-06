@@ -2,12 +2,12 @@
 import { remote } from 'webdriverio';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import assert from 'node:assert/strict';
 
-const state = mkdtempSync(join(tmpdir(), 'psforge-e2e-'));
+const state = realpathSync.native(mkdtempSync(join(tmpdir(), 'psforge-e2e-')));
 const config = join(state, 'config');
 const settingsPath = join(config, 'PSForge', 'settings.json');
 mkdirSync(join(config, 'PSForge'), { recursive: true });

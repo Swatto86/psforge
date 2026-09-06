@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,7 +7,7 @@ import { buildDirectTerminalRunCommand, psSingleQuote } from "../direct-run";
 
 describe("saved script process isolation", () => {
   it("keeps globals, environment, functions and location out of subsequent runs", () => {
-    const dir = mkdtempSync(join(tmpdir(), "psforge-isolation-"));
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "psforge-isolation-")));
     try {
       const first = join(dir, "first.ps1");
       const second = join(dir, "O'Brien-second.ps1");
