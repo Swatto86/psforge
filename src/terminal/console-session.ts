@@ -186,6 +186,9 @@ export function createConsoleSession(
     pump.reset();
     completions.reset();
     missingCommands.reset();
+    // A run cut short by the restart keeps what it printed, but the new
+    // shell's prompt and commands must not be appended to it.
+    readers.stopRunCapture();
     rejectPendingExecutions(
       "Terminal session restarted before command completion.",
     );
@@ -270,6 +273,7 @@ export function createConsoleSession(
   const onTerminalExit = (event: { payload: TerminalExitEvent }) => {
     if (event.payload.sessionId !== sessionId) return;
     ready = false;
+    readers.stopRunCapture();
     rejectPendingExecutions("Terminal session ended before command completion.");
     if (stopping) return;
     term.write(

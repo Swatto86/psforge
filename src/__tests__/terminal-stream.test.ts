@@ -10,6 +10,7 @@ const { handlers, terminal } = vi.hoisted(() => ({
   terminal: {
     write: vi.fn(), reset: vi.fn(), focus: vi.fn(), refresh: vi.fn(),
     dispose: vi.fn(), clear: vi.fn(), paste: vi.fn(),
+    registerMarker: vi.fn(() => ({ dispose: vi.fn(), isDisposed: false, line: 0 })),
     onData: vi.fn(() => ({ dispose: vi.fn() })),
     onResize: vi.fn(() => ({ dispose: vi.fn() })),
     cols: 120, rows: 30, options: {},
@@ -43,9 +44,19 @@ function frame() {
   frames.clear();
   queued.forEach((callback) => callback(0));
 }
-function output(data: string) {
+function emitOutput(data: string) {
   handlers.get("terminal-output")!({ payload: { sessionId: 1, data } });
+}
+function output(data: string) {
+  emitOutput(data);
   frame();
+}
+function startSession() {
+  session = createConsoleSession(container, {}, {
+    shellPath: () => "", loadProfile: () => false,
+    startupCommand: () => "", isActive: () => false,
+  });
+  return vi.waitFor(() => expect(session!.isReady()).toBe(true));
 }
 
 beforeEach(() => {
@@ -81,6 +92,17 @@ describe("terminal output pump", () => {
     expect(terminal.write.mock.calls.map(([text]) => text).join("")).toBe(first + "new");
   });
 
+  it("runs side effects as each chunk arrives, before any frame", () => {
+    const seen = vi.fn();
+    const pump = createOutputPump(terminal as unknown as Terminal, seen);
+    pump.push("first");
+    pump.push("second");
+    expect(seen.mock.calls.map(([text]) => text)).toEqual(["first", "second"]);
+    expect(terminal.write).not.toHaveBeenCalled();
+    frame();
+    expect(terminal.write).toHaveBeenCalledExactlyOnceWith("firstsecond");
+  });
+
   it("does not reprocess a partially painted batch on teardown", () => {
     const seen = vi.fn();
     const pump = createOutputPump(terminal as unknown as Terminal, seen);
@@ -103,15 +125,11 @@ describe("terminal command completion", () => {
   });
 
   it.each(["\x07", "\x1b\\"])("handles every split of a completion marker ending in %j", async (end) => {
-    session = createConsoleSession(container, {}, {
-      shellPath: () => "", loadProfile: () => false,
-      startupCommand: () => "", isActive: () => false,
-    });
-    await vi.waitFor(() => expect(session!.isReady()).toBe(true));
+    await startSession();
     const marker = `\x1b]633;D;7${end}`;
     for (let split = 1; split < marker.length; split++) {
       const complete = vi.fn();
-      void session.exec("Write-Output test").then(complete, complete);
+      void session!.exec("Write-Output test").then(complete, complete);
       output(marker.slice(0, split));
       await Promise.resolve();
       expect(complete).not.toHaveBeenCalled();
@@ -119,5 +137,35 @@ describe("terminal command completion", () => {
       await Promise.resolve();
       expect(complete).toHaveBeenCalledExactlyOnceWith(7);
     }
+  });
+
+  it("completes a run while animation frames are paused", async () => {
+    await startSession();
+    const complete = vi.fn();
+    void session!.exec("Write-Output test").then(complete, complete);
+    emitOutput("test\r\n\x1b]633;D;0\x1b\\");
+    await Promise.resolve();
+    expect(complete).toHaveBeenCalledExactlyOnceWith(0);
+  });
+});
+
+describe("run output capture lifecycle", () => {
+  it("stops capturing when the session restarts mid-run", async () => {
+    await startSession();
+    session!.readers.markRunStart("Start-Sleep 60");
+    output("Start-Sleep 60\r\nworking\r\n");
+    session!.restart();
+    await vi.waitFor(() => expect(session!.isReady()).toBe(true));
+    output("\x1b]633;A\x1b\\PS C:\\>\x1b]633;B\x1b\\Get-Date\r\nMonday\r\n\x1b]633;D;0\x1b\\");
+    expect(session!.readers.getRunScriptOutput()).toBe("working");
+  });
+
+  it("stops capturing when the PTY exits mid-run", async () => {
+    await startSession();
+    session!.readers.markRunStart("exit 3");
+    output("exit 3\r\nbye\r\n");
+    handlers.get("terminal-exit")!({ payload: { sessionId: 1, exitCode: 3 } });
+    output("stray output after exit\r\n");
+    expect(session!.readers.getRunScriptOutput()).toBe("bye");
   });
 });

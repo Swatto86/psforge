@@ -14,6 +14,7 @@ import {
   feedRunOutputCapture,
   getRunScriptOutputFromState,
   startRunOutputCapture,
+  stopRunOutputCapture,
   type RunOutputCaptureState,
 } from "../run-output-capture";
 
@@ -29,6 +30,8 @@ export type SessionReaders = {
   getRunScriptOutput: () => string | null;
   /** Feed PTY output to the run capture. */
   feed: (chunk: string) => void;
+  /** End the run capture early: the PTY exited or is being restarted. */
+  stopRunCapture: () => void;
 };
 
 export function createSessionReaders(term: Terminal): SessionReaders {
@@ -66,5 +69,6 @@ export function createSessionReaders(term: Terminal): SessionReaders {
     },
     getRunScriptOutput: () => getRunScriptOutputFromState(capture),
     feed: (chunk: string) => feedRunOutputCapture(capture, chunk),
+    stopRunCapture: () => stopRunOutputCapture(capture),
   };
 }

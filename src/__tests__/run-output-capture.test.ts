@@ -5,6 +5,7 @@ import {
   finalizeRunScriptOutput,
   getRunScriptOutputFromState,
   startRunOutputCapture,
+  stopRunOutputCapture,
 } from "../run-output-capture";
 
 const ESC = "\x1b";
@@ -30,6 +31,28 @@ describe("run-output-capture", () => {
       expect(state.done, `split ${split}`).toBe(true);
       expect(getRunScriptOutputFromState(state), `split ${split}`).toBe("Hello");
     }
+  });
+
+  it("strips charset, keypad, cursor and DCS escapes at every chunk split", () => {
+    const stream = `${ESC}[?1h${ESC}=${ESC}(BHello${ESC}7 ${ESC}P1$r0q${ESC}\\${ESC}8${ESC}${ESC}[?1l${ESC}>World\r\n${osc633St("D", "0")}`;
+    for (let split = 1; split < stream.length; split++) {
+      const state = createRunOutputCaptureState();
+      startRunOutputCapture(state, "Read-Host");
+      feedRunOutputCapture(state, stream.slice(0, split));
+      feedRunOutputCapture(state, stream.slice(split));
+      expect(state.done, `split ${split}`).toBe(true);
+      expect(getRunScriptOutputFromState(state), `split ${split}`).toBe("Hello World");
+    }
+  });
+
+  it("keeps partial output and ignores later chunks once stopped early", () => {
+    const state = createRunOutputCaptureState();
+    startRunOutputCapture(state, "Start-Sleep 60");
+    feedRunOutputCapture(state, `Start-Sleep 60\r\nworking\r\n${ESC}[3`);
+    stopRunOutputCapture(state);
+    feedRunOutputCapture(state, `1mPS C:\\> Get-Date\r\n${osc633St("D", "0")}`);
+    expect(state.done).toBe(false);
+    expect(getRunScriptOutputFromState(state)).toBe("working");
   });
 
   it("excludes text after completion in the same chunk", () => {

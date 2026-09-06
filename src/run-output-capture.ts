@@ -1,5 +1,3 @@
-import { stripAnsi } from "./terminal-utils";
-
 export interface RunOutputCaptureState {
   active: boolean;
   done: boolean;
@@ -10,7 +8,7 @@ export interface RunOutputCaptureState {
   buffer: string;
   commandLine: string;
   /** Bytes of an incomplete escape sequence spanning chunk boundaries. */
-  pendingOsc: string;
+  pendingEscape: string;
 }
 
 export function createRunOutputCaptureState(): RunOutputCaptureState {
@@ -21,7 +19,7 @@ export function createRunOutputCaptureState(): RunOutputCaptureState {
     captureBody: false,
     buffer: "",
     commandLine: "",
-    pendingOsc: "",
+    pendingEscape: "",
   };
 }
 
@@ -37,10 +35,21 @@ export function startRunOutputCapture(
   state.captureBody = true;
   state.buffer = "";
   state.commandLine = commandLine.trim();
-  state.pendingOsc = "";
+  state.pendingEscape = "";
 }
 
-const OSC_END_RE = /(\x07|\x1b\\)/;
+/**
+ * Stop feeding without a completion marker: the session ended or restarted
+ * mid-run. What was captured before that stays readable as the last run's
+ * output; the next session's prompt and commands must not be appended to it.
+ */
+export function stopRunOutputCapture(state: RunOutputCaptureState): void {
+  state.active = false;
+  state.pendingEscape = "";
+}
+
+const OSC_END_RE = /\x07|\x1b\\/;
+const ST_RE = /\x1b\\/;
 
 function handleOsc633(
   state: RunOutputCaptureState,
@@ -69,19 +78,58 @@ function handleOsc633(
   }
 }
 
-function skipCsiSequence(input: string, start: number): number {
-  let i = start + 2;
-  while (i < input.length) {
-    const ch = input[i]!;
-    if (ch >= "@" && ch <= "~") return i + 1;
-    i++;
+/**
+ * End (exclusive) of the escape sequence starting at `start`, or -1 when the
+ * chunk ends before the sequence does.
+ *
+ * Copied output must contain none of what PowerShell and .NET emit around a
+ * run, so every ECMA-48 form is recognised, not only CSI and OSC: the other
+ * string sequences (DCS, SOS, PM, APC, ended by ST), nF sequences such as
+ * charset selection (`ESC ( B`), and the two-byte Fp/Fs/Fe forms such as
+ * keypad mode (`ESC =`) or cursor save (`ESC 7`).
+ */
+function escapeSequenceEnd(input: string, start: number): number {
+  const kind = input[start + 1];
+  if (kind === undefined) return -1;
+  // A doubled ESC introduces the sequence that follows; drop only the first.
+  if (kind === "\x1b") return start + 1;
+
+  if (kind === "[") {
+    let i = start + 2;
+    while (i < input.length) {
+      const ch = input[i]!;
+      if (ch >= "@" && ch <= "~") return i + 1;
+      i++;
+    }
+    return -1;
   }
-  return -1;
+
+  if (
+    kind === "]" ||
+    kind === "P" ||
+    kind === "X" ||
+    kind === "^" ||
+    kind === "_"
+  ) {
+    const terminator = (kind === "]" ? OSC_END_RE : ST_RE).exec(
+      input.slice(start + 2),
+    );
+    if (!terminator) return -1;
+    return start + 2 + terminator.index + terminator[0].length;
+  }
+
+  if (kind >= " " && kind <= "/") {
+    let i = start + 2;
+    while (i < input.length && input[i]! >= " " && input[i]! <= "/") i++;
+    return i < input.length ? i + 1 : -1;
+  }
+
+  return start + 2;
 }
 
 function appendVisibleText(state: RunOutputCaptureState, text: string): void {
   if (!state.captureBody || state.inPrompt || !text) return;
-  state.buffer += stripAnsi(text);
+  state.buffer += text;
 }
 
 /** Feed raw PTY bytes while a script run is in progress. */
@@ -91,8 +139,8 @@ export function feedRunOutputCapture(
 ): void {
   if (!state.active || state.done) return;
 
-  let input = state.pendingOsc + chunk;
-  state.pendingOsc = "";
+  const input = state.pendingEscape + chunk;
+  state.pendingEscape = "";
 
   let i = 0;
   let textRun = "";
@@ -105,44 +153,27 @@ export function feedRunOutputCapture(
 
   while (i < input.length) {
     const ch = input[i]!;
-
-    if (ch === "\x1b" && i + 1 === input.length) {
-      flushTextRun();
-      state.pendingOsc = ch;
-      return;
+    if (ch !== "\x1b") {
+      textRun += ch;
+      i++;
+      continue;
     }
 
-    if (ch === "\x1b" && input[i + 1] === "]") {
-      flushTextRun();
-      const rest = input.slice(i);
-      const endMatch = OSC_END_RE.exec(rest);
-      if (!endMatch || endMatch.index === undefined) {
-        state.pendingOsc = rest;
-        return;
-      }
-      const end = i + endMatch.index + endMatch[0].length;
-      const oscPayload = input.slice(i + 2, i + endMatch.index);
+    flushTextRun();
+    const end = escapeSequenceEnd(input, i);
+    if (end < 0) {
+      state.pendingEscape = input.slice(i);
+      return;
+    }
+    if (input[i + 1] === "]") {
+      const terminatorLength = input[end - 1] === "\x07" ? 1 : 2;
+      const oscPayload = input.slice(i + 2, end - terminatorLength);
       if (oscPayload.startsWith("633;")) {
         handleOsc633(state, oscPayload.slice(4));
         if (state.done) return;
       }
-      i = end;
-      continue;
     }
-
-    if (ch === "\x1b" && input[i + 1] === "[") {
-      flushTextRun();
-      const next = skipCsiSequence(input, i);
-      if (next < 0) {
-        state.pendingOsc = input.slice(i);
-        return;
-      }
-      i = next;
-      continue;
-    }
-
-    textRun += ch;
-    i++;
+    i = end;
   }
 
   flushTextRun();

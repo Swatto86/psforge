@@ -8,6 +8,18 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 14 (v1.4.51) — terminal stream follow-ups
+
+Second pass over the Sweep 13 reports after they shipped in 1.4.50.
+
+- [x] **S14-1** — Copied run output still leaked escapes other than CSI/OSC: keypad mode (`ESC =`, `ESC >`), charset selection (`ESC ( B`), cursor save/restore (`ESC 7`/`ESC 8`) and DCS strings, which .NET's console emits around `Read-Host` and PSReadLine. `run-output-capture.ts` now parses every ECMA-48 form (CSI, OSC, DCS/SOS/PM/APC, nF, two-byte Fp/Fs/Fe) and retains an incomplete one across chunks; the separate `stripAnsi` pass on captured text is gone because the parser is the single owner.
+- [x] **S14-2** — A run cut short by Restart Session / Clear or by the PTY exiting left the run capture active, so the next shell's prompt and later commands were appended to "last run" output (Copy Last Run, debug bundle, AI context). `stopRunCapture` ends the capture on restart and on `terminal-exit`, keeping what the run printed.
+- [x] **S14-3** — Output side effects (completion markers, run capture, missing-command detection) ran inside the animation-frame flush. WebViews pause `requestAnimationFrame` while the window is hidden or minimised, so a run finishing then never resolved until the window was shown; that also blocked the automatic update install, which waits for an idle runner. `output-pump.ts` now runs side effects on push; the byte offset that S13-1 corrected no longer exists.
+
+Regression evidence: six new tests (every-split escape stripping, early stop, side effects before any frame, completion with frames paused, restart mid-run, PTY exit mid-run) fail on the 1.4.50 code and pass after the fixes. All 190 frontend tests, `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass locally. Native acceptance on a real PowerShell host was not possible in this environment (no PowerShell).
+
+---
+
 ## Sweep 13 — terminal streams and diagnostics lifecycle
 
 - [x] **S13-1** — Output batches larger than 256 KiB re-ran capture and completion side effects while painting the remaining frames. Preserve the processed offset when removing the painted prefix, including during teardown.
@@ -16,7 +28,7 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 - [x] **S13-4** — Capture continued after the completion marker when later text arrived in the same chunk. Stop parsing immediately at completion.
 - [x] **S13-5** — In-flight analysis could update Problems after diagnostics were disabled, the selected host was cleared, or the hook unmounted. Effect cleanup now invalidates pending responses.
 
-Regression evidence: all five defects were observed as failing tests before the fixes. All 179 frontend tests and `npm run build` pass. Tests cover output spanning frames, teardown, every two-chunk split of completion markers, copied output boundaries, and diagnostics lifecycle. `tauri dev --no-watch` cannot start because Cargo is unavailable; PowerShell is also absent. Native acceptance and local Rust checks remain unverified; no release has been cut.
+Regression evidence: all five defects were observed as failing tests before the fixes. All 179 frontend tests and `npm run build` pass. Tests cover output spanning frames, teardown, every two-chunk split of completion markers, copied output boundaries, and diagnostics lifecycle. `tauri dev --no-watch` cannot start because Cargo is unavailable; PowerShell is also absent. Native acceptance and local Rust checks remain unverified at the time of the sweep. Shipped in **1.4.50**; follow-ups in Sweep 14.
 
 ---
 
