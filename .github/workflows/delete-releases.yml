@@ -1,0 +1,44 @@
+name: delete-releases
+
+# Maintenance: delete releases by id, e.g. untagged drafts left behind by a
+# release run that failed before publishing. Deliberately takes explicit ids
+# rather than "all drafts" so it can never remove a draft another release run
+# is still uploading to.
+on:
+  workflow_dispatch:
+    inputs:
+      release_ids:
+        description: "Comma-separated release ids to delete (from the releases API)."
+        required: true
+        type: string
+
+jobs:
+  delete:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          RELEASE_IDS: ${{ github.event.inputs.release_ids }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ids = process.env.RELEASE_IDS.split(",")
+              .map((s) => s.trim())
+              .filter(Boolean);
+            if (ids.length === 0) {
+              core.setFailed("No release ids given.");
+              return;
+            }
+            for (const id of ids) {
+              if (!/^\d+$/.test(id)) {
+                core.setFailed(`Not a release id: ${id}`);
+                return;
+              }
+              const release_id = Number(id);
+              const { data } = await github.rest.repos.getRelease({ owner, repo, release_id });
+              await github.rest.repos.deleteRelease({ owner, repo, release_id });
+              core.info(`Deleted release ${release_id} (${data.tag_name}, draft=${data.draft})`);
+            }
