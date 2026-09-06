@@ -147,6 +147,7 @@ try {
   const recovery = await browser.$('[data-testid="scratch-recovery-dismiss"]');
   await recovery.waitForDisplayed({ timeout: 10000 });
   await recovery.click();
+  await browser.$('[data-testid="scratch-recovery-dialog"]').waitForDisplayed({ reverse: true, timeout: 10000 });
   const loaded = await invoke('load_settings');
   assert.equal(loaded.ok, true, loaded.message);
   assert.equal(loaded.value.recentRuns.length, settings.recentRuns.length);
