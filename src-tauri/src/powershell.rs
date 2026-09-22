@@ -22,6 +22,7 @@ use tokio::time::{sleep, timeout, Duration};
 use uuid::Uuid;
 
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const SESSION_GRACEFUL_EXIT_MS: u64 = 1_500;
 
