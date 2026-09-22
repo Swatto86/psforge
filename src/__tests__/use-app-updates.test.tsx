@@ -5,9 +5,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  INSTALL_IDLE_POLL_MS,
   useAppUpdates,
   waitUntilIdle,
   type AppUpdates,
+  type AppUpdatesOptions,
 } from "../use-app-updates";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -29,12 +31,12 @@ let latest: AppUpdates | undefined;
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function Harness(props: { autoCheckEnabled: boolean; isRunning: boolean }) {
+function Harness(props: AppUpdatesOptions) {
   latest = useAppUpdates(props);
   return null;
 }
 
-async function render(props: { autoCheckEnabled: boolean; isRunning: boolean }) {
+async function render(props: AppUpdatesOptions) {
   await act(async () => {
     root!.render(<Harness {...props} />);
   });
@@ -88,6 +90,32 @@ describe("useAppUpdates", () => {
     expect(check).toHaveBeenCalledTimes(1);
     expect(download).not.toHaveBeenCalled();
     expect(latest?.updateStatus).toEqual({ phase: "upToDate" });
+  });
+
+  it("waits for a busy console before installing", async () => {
+    vi.useFakeTimers();
+    try {
+      nextUpdate = { version: "9.9.9" };
+      let consoleBusy = true;
+      await render({
+        autoCheckEnabled: true,
+        isRunning: false,
+        isConsoleBusy: () => consoleBusy,
+      });
+      for (let i = 0; i < 5; i++) await flush();
+      expect(download).toHaveBeenCalledTimes(1);
+      expect(install).not.toHaveBeenCalled();
+
+      consoleBusy = false;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(INSTALL_IDLE_POLL_MS);
+      });
+      for (let i = 0; i < 5 && relaunch.mock.calls.length === 0; i++) await flush();
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(relaunch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a failed install is reported, not swallowed", async () => {

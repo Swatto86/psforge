@@ -190,3 +190,27 @@ describe("run output capture lifecycle", () => {
     expect(session!.readers.getRunScriptOutput()).toBe("bye");
   });
 });
+
+describe("console busy state", () => {
+  it("is busy from a submitted line until the next prompt", async () => {
+    await startSession();
+    const [typed] = terminal.onData.mock.calls[0] as unknown as [(data: string) => void];
+    expect(session!.isBusy()).toBe(false);
+    typed("Start-Sleep 30");
+    expect(session!.isBusy()).toBe(false);
+    typed("\r");
+    expect(session!.isBusy()).toBe(true);
+    output("still running\r\n");
+    expect(session!.isBusy()).toBe(true);
+    output("\x1b]633;D;0\x1b\\\x1b]633;A\x1b\\PS C:\\>\x1b]633;B\x1b\\");
+    expect(session!.isBusy()).toBe(false);
+  });
+
+  it("is busy while a PSForge run has not completed", async () => {
+    await startSession();
+    const run = session!.exec("./script.ps1");
+    expect(session!.isBusy()).toBe(true);
+    output("\x1b]633;D;0\x07");
+    await expect(run).resolves.toBe(0);
+  });
+});

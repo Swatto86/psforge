@@ -416,6 +416,8 @@ export interface ScriptRunRecord {
 export interface LastRunResult {
   exitCode: number | null;
   durationMs: number;
+  /** Editor tab whose script produced this result. */
+  tabId: string;
 }
 
 /** Theme names. */

@@ -17,7 +17,7 @@
  *  - PowerShell IntelliSense via TabExpansion2 (registered as a Monaco completion provider).
  */
 
-import React, { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect, useState } from "react";
 import Editor, { type OnMount, type BeforeMount } from "@monaco-editor/react";
 import type {
   editor as MonacoEditor,
@@ -241,6 +241,8 @@ export function EditorPane() {
   settingsRef.current = state.settings;
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
+  const tabsRef = useRef(state.tabs);
+  tabsRef.current = state.tabs;
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   // monacoRef is a plain ref, invisible to React. The IntelliSense effect
@@ -891,6 +893,8 @@ export function EditorPane() {
             changes: { content: code, isDirty: true },
           });
         },
+        getTabContent: (tabId) =>
+          tabsRef.current.find((tab) => tab.id === tabId)?.content,
         isAiEnabled: () => !settingsRef.current.disableAi,
       });
 

@@ -1,6 +1,6 @@
 /** PSScriptAnalyzer status + install controls (PS 5.1 and 7 hosts). */
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   checkPsScriptAnalyzer,
   installPsScriptAnalyzer,

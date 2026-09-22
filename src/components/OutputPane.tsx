@@ -2,7 +2,7 @@
  *  Hosts the integrated terminal plus debugger and variable inspector tools.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type {
@@ -19,7 +19,6 @@ import { HelpPane } from "./HelpPane";
 import { ReferencePane } from "./ReferencePane";
 import { AssistantPane } from "./AssistantPane";
 import { ProblemsPane } from "./ProblemsPane";
-import type { ReferenceSubview } from "../types";
 
 function breakpointLabel(bp: DebugBreakpoint): string {
   if (typeof bp.line === "number") return `Ln ${bp.line}`;
@@ -40,10 +39,6 @@ function summarizeBreakpointOptions(bp: DebugBreakpoint): string {
   if (bp.hitCount && bp.hitCount > 1) parts.push(`hit >= ${bp.hitCount}`);
   if (bp.command) parts.push("has action");
   return parts.join(" | ");
-}
-
-function formatCount(value: number, noun: string): string {
-  return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 }
 
 function problemSeverity(
@@ -111,6 +106,8 @@ export function OutputPane({
   onStop,
 }: OutputPaneProps) {
   const { state, dispatch, activeTab } = useAppState();
+  const tabsRef = useRef(state.tabs);
+  tabsRef.current = state.tabs;
   const [stdinInput, setStdinInput] = useState("");
   const [varFilter, setVarFilter] = useState("");
 
@@ -545,6 +542,9 @@ export function OutputPane({
                       changes: { content: code, isDirty: true },
                     });
                   }}
+                  getTabContent={(tabId) =>
+                    tabsRef.current.find((tab) => tab.id === tabId)?.content
+                  }
                   fontSize={state.settings.outputFontSize ?? 13}
                   fontFamily={
                     state.settings.outputFontFamily ??

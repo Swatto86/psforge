@@ -120,13 +120,13 @@ describe("System tray window lifecycle", () => {
     expect(store).not.toContain("win.destroy()");
   });
 
-  it("flushes pending settings before honoring the tray exit request", () => {
+  it("routes the tray exit request through the confirm, flush, exit flow", () => {
+    // The flow's ordering is exercised in exit-request.test.ts.
     const exitListener = store.indexOf('listen("psforge-exit-requested"');
     expect(exitListener).toBeGreaterThan(-1);
-    const flush = store.indexOf("await flushPendingSettings()", exitListener);
-    const exit = store.indexOf("await exit(0)", exitListener);
-    expect(flush).toBeGreaterThan(-1);
-    expect(exit).toBeGreaterThan(flush);
+    const handler = store.indexOf("handleExitRequest({", exitListener);
+    expect(handler).toBeGreaterThan(exitListener);
+    expect(store.indexOf("flushPendingSettings,", handler)).toBeGreaterThan(handler);
   });
 
   it("routes File > Exit through the exit flow, not window.close()", () => {

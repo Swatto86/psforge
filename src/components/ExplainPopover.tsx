@@ -4,7 +4,7 @@
  *  EditorPane so a popover unmount can't orphan an in-flight ask_ai call.
  */
 
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 export type ExplainStatus = "loading" | "done" | "error";
 

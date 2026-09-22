@@ -277,6 +277,8 @@ export function TerminalPane() {
       __psforge_terminal_get_run_script_output: () =>
         getRunHandle()?.getRunScriptOutput() ?? null,
       __psforge_terminal_is_ready: () => getActiveHandle()?.isReady() ?? false,
+      __psforge_terminal_any_busy: () =>
+        Object.values(sessionRefs.current).some((handle) => handle?.isBusy()),
       __psforge_terminal_submit_current_input: () =>
         getActiveHandle()?.submitCurrentInput(),
       __psforge_terminal_write_notice: (

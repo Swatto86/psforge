@@ -20,7 +20,7 @@ describe("buildDebugBundleMarkdown", () => {
   it("includes exit code and PSSA errors", () => {
     const md = buildDebugBundleMarkdown({
       tab,
-      lastRun: { exitCode: 1, durationMs: 120 },
+      lastRun: { exitCode: 1, durationMs: 120, tabId: "tab-1" },
       workingDir: "C:\\Scripts",
       problems: [
         {
@@ -61,12 +61,26 @@ describe("buildDebugBundleMarkdown", () => {
   });
 });
 
+describe("last run ownership", () => {
+  it("does not attribute another script's run to this one", () => {
+    const md = buildDebugBundleMarkdown({
+      tab,
+      lastRun: { exitCode: 7, durationMs: 90, tabId: "tab-2" },
+      workingDir: "C:\\Scripts",
+      problems: [],
+      getRunOutput: () => "",
+    });
+    expect(md).not.toContain("exit 7");
+    expect(md).toContain("(none yet");
+  });
+});
+
 describe("collectDebugBundleMarkdown", () => {
   it("includes script and last run even when terminal output is empty", () => {
     vi.stubGlobal("window", {});
     const md = collectDebugBundleMarkdown({
       tab,
-      lastRun: { exitCode: 0, durationMs: 50 },
+      lastRun: { exitCode: 0, durationMs: 50, tabId: "tab-1" },
       workingDir: "C:\\Scripts",
       problems: [],
     });

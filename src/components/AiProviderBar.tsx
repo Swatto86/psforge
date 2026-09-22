@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listAiModels } from "../commands";
 import {
   AI_PROVIDER_PRESET_MODELS,

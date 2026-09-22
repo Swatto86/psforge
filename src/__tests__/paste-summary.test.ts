@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { formatPasteSummaryMessage } from "../paste-summary";
-import type { PasteSanitizeSummary } from "../types";
 
 describe("formatPasteSummaryMessage", () => {
   it("reports unchanged paste", () => {

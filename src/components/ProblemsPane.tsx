@@ -6,6 +6,7 @@ import {
   applyAiFix,
   buildFixProblemQuestion,
   diagnosticToTarget,
+  sameScript,
 } from "../fix-problem";
 import { applyEditorTextForTab } from "../editor-fix-problem";
 import {
@@ -59,6 +60,7 @@ export function ProblemsPane({
   activeTab,
   onNavigate,
   onApplyFixedScript,
+  getTabContent,
   fontSize,
   fontFamily,
 }: {
@@ -71,6 +73,8 @@ export function ProblemsPane({
   activeTab?: EditorTab;
   onNavigate: (line: number, column: number) => void;
   onApplyFixedScript: (tabId: string, code: string) => void;
+  /** Live content of a tab, to avoid applying a fix over newer edits. */
+  getTabContent: (tabId: string) => string | undefined;
   fontSize: number;
   fontFamily: string;
 }) {
@@ -117,6 +121,7 @@ export function ProblemsPane({
     showAppToast(
       `Fixing ${diagnostics.length} problem${diagnostics.length === 1 ? "" : "s"} one at a time…`,
     );
+    const tabId = activeTab.id;
     try {
       const result = await fixAllProblemsSequentially({
         diagnostics,
@@ -126,12 +131,14 @@ export function ProblemsPane({
         settings,
         terminalOutput: captureLastRunOutput(),
         shouldCancel: () => cancelFixAllRef.current,
+        isScriptCurrent: (script) =>
+          sameScript(getTabContent(tabId) ?? "", script),
         onProgress: (progress) => {
           setBusyLabel(`Fixing ${progress.pass}…`);
           showAppToast(`Fix ${progress.pass}: ${progress.problemLabel}`);
         },
         onScriptUpdated: (script) => {
-          applyFixedCode(activeTab.id, script, onApplyFixedScript);
+          applyFixedCode(tabId, script, onApplyFixedScript);
         },
       });
       showAppToast(formatFixAllSequentialSummary(result));
@@ -149,6 +156,8 @@ export function ProblemsPane({
     setBusyLabel("Fixing…");
     setMenu(null);
     showAppToast("Asking AI to fix this problem…");
+    const tabId = activeTab.id;
+    const original = activeTab.content;
     try {
       const { question, diagnostics: diagnosticsText } =
         buildFixProblemQuestion(diagnosticToTarget(problem));
@@ -156,12 +165,16 @@ export function ProblemsPane({
         settings,
         question,
         diagnostics: diagnosticsText,
-        script: activeTab.content,
+        script: original,
         scriptPath: activeTab.filePath || activeTab.title,
         terminalOutput: captureLastRunOutput(),
       });
       if (result.ok && result.code) {
-        applyFixedCode(activeTab.id, result.code, onApplyFixedScript);
+        if (!sameScript(getTabContent(tabId) ?? "", original)) {
+          showAppToast("The script changed while the AI was working, so the fix was not applied.");
+          return;
+        }
+        applyFixedCode(tabId, result.code, onApplyFixedScript);
       }
       showAppToast(result.toast);
     } finally {

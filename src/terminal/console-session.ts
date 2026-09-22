@@ -48,6 +48,10 @@ export function createConsoleSession(
   let ready = false;
   let waitingForPrompt = true;
   const promptReady = createPromptReadyReader();
+  // Busy from a submitted line until the shell prints its next prompt, so
+  // Exit and the updater never cut short a command typed into the console.
+  let commandRunning = false;
+  const promptReturned = createPromptReadyReader();
   let startInFlight = false;
   let sessionId = 0;
   let startupSentForSession = 0;
@@ -117,6 +121,7 @@ export function createConsoleSession(
   const queueInput = (data: string, allowWhenNotReady = false) => {
     if (disposed || stopping) return;
     if (!allowWhenNotReady && !ready) return;
+    if (/[\r\n]/.test(data)) commandRunning = true;
     writeQueue += data;
     flushWriteQueue(allowWhenNotReady);
   };
@@ -135,6 +140,7 @@ export function createConsoleSession(
 
   const processOutputChunk = (chunk: string) => {
     readers.feed(chunk);
+    if (promptReturned.feed(chunk)) commandRunning = false;
     if (waitingForPrompt && promptReady.feed(chunk)) {
       waitingForPrompt = false;
       ready = true;
@@ -168,6 +174,8 @@ export function createConsoleSession(
     ready = false;
     waitingForPrompt = true;
     promptReady.reset();
+    commandRunning = false;
+    promptReturned.reset();
     writeQueue = "";
     writeInFlight = false;
     pump.reset();
@@ -257,6 +265,7 @@ export function createConsoleSession(
     if (event.payload.sessionId !== sessionId) return;
     ready = false;
     waitingForPrompt = false;
+    commandRunning = false;
     readers.stopRunCapture();
     rejectPendingExecutions("Terminal session ended before command completion.");
     if (stopping) return;
@@ -297,6 +306,7 @@ export function createConsoleSession(
     },
     isReady: () => ready,
     isStarting: () => !disposed && !stopping && (startInFlight || waitingForPrompt),
+    isBusy: () => !disposed && (commandRunning || pendingExecutions.length > 0),
     queueInput,
     exec: (command: string) => {
       if (disposed || stopping) {

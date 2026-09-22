@@ -5,12 +5,13 @@
  * only informs; the manual "Check for updates" item behaves identically.
  *
  * The one thing an install must not do is cut a running script short, so the
- * downloaded update waits until the runner is idle before it is applied.
+ * downloaded update waits until the runner and every console are idle.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { check as checkForAppUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { extractInvokeErrorMessage } from "./run-utils";
+import { isAnyConsoleBusy } from "./terminal-utils";
 import type { UpdateStatus } from "./types";
 
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
@@ -42,6 +43,9 @@ export interface AppUpdatesOptions {
   autoCheckEnabled: boolean;
   /** True while a script or debug session is executing; the install waits. */
   isRunning: boolean;
+  /** True while a command typed into a console is executing; the install
+   *  waits for that too. Defaults to the integrated terminal's state. */
+  isConsoleBusy?: () => boolean;
 }
 
 export interface AppUpdates {
@@ -54,6 +58,7 @@ export interface AppUpdates {
 export function useAppUpdates({
   autoCheckEnabled,
   isRunning,
+  isConsoleBusy = isAnyConsoleBusy,
 }: AppUpdatesOptions): AppUpdates {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     phase: "idle",
@@ -63,6 +68,8 @@ export function useAppUpdates({
   const autoCheckStartedRef = useRef(false);
   const isRunningRef = useRef(isRunning);
   isRunningRef.current = isRunning;
+  const isConsoleBusyRef = useRef(isConsoleBusy);
+  isConsoleBusyRef.current = isConsoleBusy;
 
   const clearResetTimer = useCallback(() => {
     if (resetTimerRef.current !== null) {
@@ -113,8 +120,11 @@ export function useAppUpdates({
               break;
           }
         });
-        // Downloaded. Do not replace the binary under a running script.
-        await waitUntilIdle(() => !isRunningRef.current, INSTALL_IDLE_POLL_MS);
+        // Downloaded. Do not replace the binary under a running command.
+        await waitUntilIdle(
+          () => !isRunningRef.current && !isConsoleBusyRef.current(),
+          INSTALL_IDLE_POLL_MS,
+        );
         setUpdateStatus({ phase: "installing", version: update.version });
         await update.install();
         await relaunch();

@@ -236,6 +236,12 @@ export interface ApplyAiFixRequest {
   debugBundle?: string;
 }
 
+/** Same script text ignoring line endings (Monaco may normalise EOLs when a
+ *  fix is applied, so an untouched buffer can differ only in CRLF vs LF). */
+export function sameScript(a: string, b: string): boolean {
+  return a.replace(/\r\n/g, "\n") === b.replace(/\r\n/g, "\n");
+}
+
 export interface ApplyAiFixResult {
   ok: boolean;
   code?: string;

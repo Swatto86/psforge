@@ -28,8 +28,13 @@ export function createPromptReadyReader() {
   return {
     feed(chunk: string): boolean {
       const input = pending + chunk;
-      pending = input.slice(-16);
-      return /\x1b]633;B(?:\x07|\x1b\\)/.test(input);
+      let consumed = 0;
+      for (const match of input.matchAll(/\x1b]633;B(?:\x07|\x1b\\)/g)) {
+        consumed = match.index! + match[0].length;
+      }
+      // Keep only a possibly split marker; a seen one must not match again.
+      pending = input.slice(Math.max(consumed, input.length - 16));
+      return consumed > 0;
     },
     reset() { pending = ""; },
   };

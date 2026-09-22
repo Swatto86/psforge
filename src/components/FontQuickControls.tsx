@@ -1,6 +1,6 @@
 /** Status bar quick controls for editor/terminal monospace fonts. */
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAppState } from "../store";
 import {
   MONOSPACE_FONT_PRESETS,

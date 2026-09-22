@@ -18,6 +18,8 @@ export type ConsoleSession = {
   restart: () => void;
   isReady: () => boolean;
   isStarting: () => boolean;
+  /** A command is executing: Enter was sent and no prompt has returned yet. */
+  isBusy: () => boolean;
   queueInput: (data: string, allowWhenNotReady?: boolean) => void;
   exec: (command: string) => Promise<number | null>;
   focus: () => void;

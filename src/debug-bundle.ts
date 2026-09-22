@@ -45,9 +45,12 @@ export function buildDebugBundleMarkdown(input: DebugBundleInput): string {
     `- **Working directory:** ${input.workingDir || "(unknown)"}`,
   ];
 
-  if (input.lastRun) {
+  // Only this script's own run describes it; another tab's result would
+  // mislead the model about what this script did.
+  const lastRun = input.lastRun?.tabId === tab?.id ? input.lastRun : null;
+  if (lastRun) {
     lines.push(
-      `- **Last run:** exit ${formatExitLabel(input.lastRun.exitCode)}, ${input.lastRun.durationMs} ms`,
+      `- **Last run:** exit ${formatExitLabel(lastRun.exitCode)}, ${lastRun.durationMs} ms`,
     );
   } else {
     lines.push("- **Last run:** (none yet — press F5)");

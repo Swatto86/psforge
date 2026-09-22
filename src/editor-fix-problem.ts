@@ -9,6 +9,7 @@ import {
   filterMarkersAtLine,
   markerToTarget,
   pickPrimaryMarker,
+  sameScript,
 } from "./fix-problem";
 
 declare global {
@@ -35,6 +36,8 @@ export interface FixProblemEditorDeps {
     filePath: string;
   } | null;
   applyFixedScript: (tabId: string, code: string) => void;
+  /** Live content of a tab, to avoid applying a fix over newer edits. */
+  getTabContent: (tabId: string) => string | undefined;
   isAiEnabled: () => boolean;
 }
 
@@ -77,14 +80,20 @@ export function registerFixProblemAction(
     );
     fixInFlight = true;
     showAppToast("Asking AI to fix this problem…");
+    const original = model.getValue();
     const result = await applyAiFix({
       settings: deps.getSettings(),
       question,
       diagnostics,
-      script: model.getValue(),
+      script: original,
       scriptPath: tab.filePath || tab.title,
     });
     if (result.ok && result.code) {
+      if (!sameScript(deps.getTabContent(tab.id) ?? "", original)) {
+        showAppToast("The script changed while the AI was working, so the fix was not applied.");
+        fixInFlight = false;
+        return;
+      }
       deps.applyFixedScript(tab.id, result.code);
       if (editor.getModel() === model) {
         model.setValue(result.code);

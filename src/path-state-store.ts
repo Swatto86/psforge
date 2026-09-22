@@ -28,8 +28,6 @@ interface PathState {
   breakpoints: Record<string, DebugBreakpoint[]>;
 }
 
-const EMPTY_STATE: PathState = { bookmarks: {}, breakpoints: {} };
-
 let cached: PathState | null = null;
 
 function isWindowsRuntime(): boolean {

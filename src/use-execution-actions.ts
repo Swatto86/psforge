@@ -939,7 +939,7 @@ export function useExecutionActions({
       );
       dispatch({
         type: "SET_LAST_RUN_RESULT",
-        result: { exitCode, durationMs },
+        result: { exitCode, durationMs, tabId: tab.id },
       });
       dispatch({
         type: "APPEND_RUN_RECORD",
@@ -1155,7 +1155,7 @@ export function useExecutionActions({
       );
       dispatch({
         type: "SET_LAST_RUN_RESULT",
-        result: { exitCode, durationMs },
+        result: { exitCode, durationMs, tabId: tab.id },
       });
     };
 
@@ -1368,7 +1368,7 @@ export function useExecutionActions({
       );
       dispatch({
         type: "SET_LAST_RUN_RESULT",
-        result: { exitCode, durationMs },
+        result: { exitCode, durationMs, tabId: tab.id },
       });
     };
 

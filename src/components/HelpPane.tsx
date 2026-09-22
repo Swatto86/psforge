@@ -2,7 +2,7 @@
  *  Resolves command help via Get-Help and renders it in a dedicated bottom tab.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { CommandHelpInfo } from "../types";

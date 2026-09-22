@@ -32,11 +32,7 @@ import {
 import { formatPasteSummaryMessage } from "./paste-summary";
 import { showAppToast, ToastStack } from "./components/ToastStack";
 import { useAppUpdates } from "./use-app-updates";
-import {
-  extractInvokeErrorMessage,
-  platformHomeFallback,
-  resolveExecutionWorkDirWithOverride,
-} from "./run-utils";
+import { extractInvokeErrorMessage } from "./run-utils";
 import {
   copyLastRunOutputToClipboard,
   copyTerminalSelectionToClipboard,

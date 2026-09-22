@@ -8,6 +8,7 @@ import {
   formatFixAllSequentialSummary,
 } from "../fix-all-sequential";
 import type { AiMode } from "../types";
+import { sameScript } from "../fix-problem";
 import { applyEditorTextForTab } from "../editor-fix-problem";
 import { useAppState, newTabId, untitledCounter } from "../store";
 
@@ -20,6 +21,8 @@ function modeQuestion(mode: AiMode, current: string): string {
 
 export function AssistantPane() {
   const { state, dispatch, activeTab } = useAppState();
+  const tabsRef = useRef(state.tabs);
+  tabsRef.current = state.tabs;
   const [mode, setMode] = useState<AiMode>("ask");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
@@ -113,6 +116,11 @@ export function AssistantPane() {
           settings: state.settings,
           terminalOutput: captureLastRunOutput(),
           shouldCancel: () => cancelFixAllRef.current,
+          isScriptCurrent: (script) =>
+            sameScript(
+              tabsRef.current.find((tab) => tab.id === codeTab.id)?.content ?? "",
+              script,
+            ),
           onProgress: (progress) => {
             setAnswer(
               `Fix ${progress.pass}/${progress.maxPasses}: ${progress.problemLabel}\n` +

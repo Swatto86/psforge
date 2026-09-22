@@ -4,7 +4,7 @@
 
 import { buildCommandPreview, sortParams } from "../command-preview";
 import { CommandPreview } from "./CommandPreview";
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { CommandInfo, CommandParameterInfo } from "../types";

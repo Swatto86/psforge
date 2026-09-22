@@ -1,6 +1,6 @@
 /** PSForge Welcome Pane — open-and-run, with paste as a secondary path. */
 
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import { useAppState, newTabId, untitledCounter } from "../store";
 import type { EditorTab } from "../types";
 import { isPowerShellScriptPath } from "../script-utils";

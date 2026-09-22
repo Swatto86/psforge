@@ -1,6 +1,6 @@
 /** Modal shown when editor diagnostics report errors before F5 (warn mode). */
 
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { PssaDiagnostic } from "../types";
 import { useFocusTrap } from "./use-focus-trap";
 
@@ -19,7 +19,7 @@ export function PssaRunGateDialog({
 }: Props) {
   const runButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(dialogRef, true);
+  useFocusTrap(dialogRef, true, onCancel);
 
   useEffect(() => {
     runButtonRef.current?.focus();

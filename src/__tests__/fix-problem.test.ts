@@ -6,7 +6,13 @@ import {
   pickPrimaryMarker,
   MAX_AI_QUESTION_CHARS,
   MAX_FIX_PROBLEM_CHARS,
+  sameScript,
+  type ApplyAiFixRequest,
 } from "../fix-problem";
+import {
+  fixAllProblemsSequentially,
+  formatFixAllSequentialSummary,
+} from "../fix-all-sequential";
 import type { editor as MonacoEditor } from "monaco-editor";
 import {
   applyEditorTextForTab,
@@ -280,6 +286,54 @@ describe("fix-problem helpers", () => {
     expect(result.fixedCount).toBe(1);
     expect(result.skippedCount).toBeGreaterThanOrEqual(1);
     expect(result.script).toContain("Write-Output");
+  });
+});
+
+describe("Fix All with concurrent edits", () => {
+  it("stops instead of overwriting edits made while the AI was working", async () => {
+    let live = "BAD()\nWrite-Host 1\n";
+    const applyFix = vi.fn(async (req: ApplyAiFixRequest) => {
+      // The user types in the tab while the second fix is in flight.
+      if (applyFix.mock.calls.length === 2) live += "# typed by the user\n";
+      return {
+        ok: true,
+        code: req.script.replace("BAD(", "OK(").replace("Write-Host", "Write-Output"),
+        toast: "Fixed",
+      };
+    });
+    const analyze = vi.fn(async (_ps: string, script: string) =>
+      script.includes("Write-Host")
+        ? [diag({ message: "Avoid Write-Host", line: 2, severity: "Warning" })]
+        : script.includes("BAD(")
+          ? [diag({ message: "Unexpected token", line: 1, severity: "ParseError" })]
+          : [diag({ message: "Still flagged", line: 1, severity: "Warning" })],
+    );
+    const applied: string[] = [];
+
+    const result = await fixAllProblemsSequentially({
+      diagnostics: [diag({ message: "Unexpected token", line: 1, severity: "ParseError" })],
+      script: live,
+      scriptPath: "t.ps1",
+      psPath: "pwsh",
+      settings: {} as never,
+      isScriptCurrent: (script) => sameScript(live, script),
+      onScriptUpdated: (script) => {
+        applied.push(script);
+        live = script;
+      },
+      deps: { applyFix, analyze },
+    });
+
+    expect(applyFix).toHaveBeenCalledTimes(2);
+    expect(applied).toHaveLength(1);
+    expect(live).toContain("# typed by the user");
+    expect(result.conflict).toBe(true);
+    expect(formatFixAllSequentialSummary(result)).toContain("script was edited");
+  });
+
+  it("treats CRLF and LF copies of a script as the same text", () => {
+    expect(sameScript("a\r\nb\r\n", "a\nb\n")).toBe(true);
+    expect(sameScript("a\nb\n", "a\nc\n")).toBe(false);
   });
 });
 

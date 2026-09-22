@@ -6,6 +6,13 @@ export function stripAnsi(text: string): string {
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
 }
 
+/** True while any console is executing a command (typed or run by PSForge). */
+export function isAnyConsoleBusy(): boolean {
+  const w = window as unknown as Record<string, unknown>;
+  const anyBusy = w.__psforge_terminal_any_busy as (() => boolean) | undefined;
+  return anyBusy?.() ?? false;
+}
+
 /** Selected text in the active integrated terminal ("" if none). */
 export function getTerminalSelection(): string {
   const w = window as unknown as Record<string, unknown>;

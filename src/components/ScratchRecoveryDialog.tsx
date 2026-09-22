@@ -1,6 +1,6 @@
 /** Offer to recover orphan scratch auto-saves after startup. */
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as cmd from "../commands";
 import { basename } from "../path-utils";
 import { useFocusTrap } from "./use-focus-trap";
@@ -27,7 +27,7 @@ export function ScratchRecoveryDialog({
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const primaryRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(dialogRef, true);
+  useFocusTrap(dialogRef, true, onDismiss);
 
   useEffect(() => {
     primaryRef.current?.focus();

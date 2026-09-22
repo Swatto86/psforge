@@ -7,6 +7,7 @@
  *   container instead of escaping to background app chrome.
  * - When `active` transitions to false, restores focus to whatever owned it
  *   when the trap was activated.
+ * - Escape calls `onEscape` when given, so every modal dismisses the same way.
  *
  * The hook is intentionally a few dozen lines of dependency-free code rather
  * than a full library import — accessibility for three modals does not
@@ -38,8 +39,11 @@ function getFocusable(container: HTMLElement): HTMLElement[] {
 export function useFocusTrap<T extends HTMLElement>(
   containerRef: RefObject<T | null>,
   active: boolean,
+  onEscape?: () => void,
 ): void {
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onEscapeRef = useRef(onEscape);
+  onEscapeRef.current = onEscape;
 
   useEffect(() => {
     if (!active) return;
@@ -65,6 +69,12 @@ export function useFocusTrap<T extends HTMLElement>(
     });
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && onEscapeRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        onEscapeRef.current();
+        return;
+      }
       if (e.key !== "Tab") return;
       const focusable = getFocusable(container);
       if (focusable.length === 0) {

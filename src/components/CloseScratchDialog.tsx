@@ -1,6 +1,6 @@
 /** Close confirmation for untitled / scratch-backed tabs. */
 
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useFocusTrap } from "./use-focus-trap";
 
 export type CloseScratchChoice = "save-as" | "discard" | "keep" | "cancel";
@@ -13,7 +13,7 @@ interface Props {
 export function CloseScratchDialog({ tabTitle, onChoice }: Props) {
   const saveRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(dialogRef, true);
+  useFocusTrap(dialogRef, true, () => onChoice("cancel"));
 
   useEffect(() => {
     saveRef.current?.focus();

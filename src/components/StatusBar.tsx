@@ -63,13 +63,19 @@ export function StatusBar({
   };
 
   const lastRun = state.lastRunResult;
+  // Name the script when the result belongs to a tab other than the one shown.
+  const lastRunOwner =
+    lastRun && lastRun.tabId !== activeTab?.id
+      ? `${state.tabs.find((tab) => tab.id === lastRun.tabId)?.title ?? "Closed tab"}: `
+      : "";
   const lastRunLabel =
     lastRun && !state.isRunning
-      ? lastRun.exitCode === null
-        ? `Failed · ${formatRunDuration(lastRun.durationMs)}`
-        : lastRun.exitCode === 0
-          ? `Exit 0 · ${formatRunDuration(lastRun.durationMs)}`
-          : `Exit ${lastRun.exitCode} · ${formatRunDuration(lastRun.durationMs)}`
+      ? lastRunOwner +
+        (lastRun.exitCode === null
+          ? `Failed · ${formatRunDuration(lastRun.durationMs)}`
+          : lastRun.exitCode === 0
+            ? `Exit 0 · ${formatRunDuration(lastRun.durationMs)}`
+            : `Exit ${lastRun.exitCode} · ${formatRunDuration(lastRun.durationMs)}`)
       : null;
 
   const runCwd =

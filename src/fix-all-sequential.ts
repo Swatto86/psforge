@@ -34,6 +34,8 @@ export interface FixAllSequentialResult {
   skippedCount: number;
   remainingCount: number;
   cancelled: boolean;
+  /** The user edited the script while a fix was in flight; stopped there. */
+  conflict: boolean;
   lastToast: string;
 }
 
@@ -55,6 +57,8 @@ export async function fixAllProblemsSequentially(args: {
   terminalOutput?: string;
   maxPasses?: number;
   shouldCancel?: () => boolean;
+  /** False when the tab no longer holds `script` (the user edited it). */
+  isScriptCurrent?: (script: string) => boolean;
   onProgress?: (progress: FixAllSequentialProgress) => void;
   onScriptUpdated?: (script: string) => void;
   deps?: Partial<FixAllSequentialDeps>;
@@ -73,6 +77,7 @@ export async function fixAllProblemsSequentially(args: {
   let skippedCount = 0;
   let lastToast = "";
   let cancelled = false;
+  let conflict = false;
 
   const nextOpen = (): PssaDiagnostic | undefined =>
     remaining.find((d) => !skipped.has(diagnosticKey(d)));
@@ -112,6 +117,12 @@ export async function fixAllProblemsSequentially(args: {
 
     if (args.shouldCancel?.()) {
       cancelled = true;
+      break;
+    }
+    // Each fix replaces the whole buffer; never discard what the user typed
+    // while the AI was working.
+    if (args.isScriptCurrent && !args.isScriptCurrent(script)) {
+      conflict = true;
       break;
     }
 
@@ -154,6 +165,7 @@ export async function fixAllProblemsSequentially(args: {
     skippedCount,
     remainingCount,
     cancelled,
+    conflict,
     lastToast,
   };
 }
@@ -166,5 +178,6 @@ export function formatFixAllSequentialSummary(
   if (result.skippedCount > 0) parts.push(`skipped ${result.skippedCount}`);
   if (result.remainingCount > 0) parts.push(`${result.remainingCount} left`);
   if (result.cancelled) parts.push("cancelled");
+  if (result.conflict) parts.push("stopped: the script was edited during the fix");
   return parts.join(" · ");
 }
