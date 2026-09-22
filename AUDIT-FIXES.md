@@ -8,6 +8,45 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 15 (v1.4.53) — correctness, security, contract, UX and gate
+
+Full sweep across the Rust backend, the frontend, the IPC contract and the gates.
+
+Security
+- [x] **S15-1** (HIGH) — Known-vulnerable dependencies: `dompurify` ≤3.4.12 (Monaco; override now 3.4.15), `rustls` 0.23.37 and `rustls-webpki` 0.103.10 (updater TLS; now 0.23.45 / 0.103.15), `quick-xml` 0.38 via `plist` 1.8 (now plist 1.10), `@vitest/mocker` path traversal (vitest 4.1.11). `extract-zip` inside the WebDriver tooling has no fixed release; it is test-only and stays.
+- [x] **S15-2** (MEDIUM) — AI CLI profile auto-detect took the first account under `C:\Users` with a Codex/Cursor/OpenCode install, so PSForge could run the CLI under another Windows user's saved sign-in. The current user's own profile now wins; other profiles remain only a fallback (elevated admin sessions).
+- [x] **S15-3** (LOW) — Concurrent Codex requests shared one workspace (`psforge-codex-ws-<pid>`) and the first to finish deleted it; Cursor used millisecond names. Every AI request now gets a sequence-numbered temp path.
+- [x] **S15-4** (LOW) — `opener:default` granted reveal-in-folder, which the frontend never uses. The capability now grants web-link opening only; the desktop journey asserts both sides.
+- [-] **S15-5** — `withGlobalTauri` left on: Tauri always injects `__TAURI_INTERNALS__.invoke`, so turning it off would not remove IPC access from injected script, and the desktop journey uses the global.
+
+Correctness
+- [x] **S15-6** (HIGH) — Stopping a debug run killed only the PowerShell host; a native command or nested `pwsh` it had started kept running (observed on Windows). Stop now ends the whole process tree (`taskkill /T`; a process group on Linux/macOS).
+- [x] **S15-7** (HIGH) — Exit (File menu or tray) silently killed a running script or console command, and the auto-updater only waited for F5 runs, not commands typed into a console. Consoles now report busy from Enter until the next prompt; Exit asks before stopping running work, and the updater waits for idle consoles. The frontend acknowledges tray Exit so the unresponsive-webview fallback no longer overrides the prompt.
+- [x] **S15-8** (MEDIUM) — AI Fix This / Fix All replaced the whole buffer with a result computed from older text, discarding anything typed meanwhile. Each fix now checks the tab still holds the text it was computed from; Fix All stops and says so.
+- [x] **S15-9** (MEDIUM) — The prompt-ready reader kept an already-seen prompt marker and matched it again on the next chunk (found by the new busy-state test). It now consumes matched markers.
+- [x] **S15-10** (MEDIUM) — File, settings, snippet and scratch commands did blocking disk I/O (with retry sleeps) on async runtime workers. They now run on the blocking pool.
+- [x] **S15-11** (LOW) — Console shells were only ended by OS teardown when PSForge exited. `RunEvent::Exit` now stops them explicitly; the desktop journey asserts the shell is gone.
+- [x] **S15-12** (LOW) — The last run result was global, so the status bar and the AI debug bundle attributed script A's exit code to script B. Results carry their tab; other tabs' results are labelled, and the bundle only includes the script's own run.
+
+Contract
+- [x] **S15-13** (LOW) — Removed three unreachable IPC commands (`get_variables_after_run`, `save_user_snippets`, `get_execution_policy`) and their wrappers.
+- [x] **S15-14** (LOW) — First-launch editor font lacked the emoji fallbacks the frontend default has.
+
+UX
+- [x] **S15-15** (LOW) — Scratch recovery, close-untitled and analyzer run-gate dialogs ignored Escape. The shared focus trap now handles it.
+
+Gate
+- [x] **S15-16** (HIGH) — A tag could publish (and auto-install) a commit CI never passed. The release workflow now requires a successful `ci` run on the tagged SHA.
+- [x] **S15-17** (HIGH) — macOS builds shipped untested. CI now lints and tests on macOS (WebDriver has no macOS driver; the journey stays on Linux and Windows).
+- [x] **S15-18** (MEDIUM) — `scripts/fastcheck.ps1` ignored native exit codes and always passed.
+- [x] **S15-19** (MEDIUM) — CI cargo steps lacked `--locked`; actions used mutable tags; `ci.yml` had default token permissions; a dispatch input was interpolated into shell; no dependency-advisory check. Fixed, with a new audit job (`cargo deny check advisories`, `npm audit --omit=dev`).
+- [x] **S15-20** (LOW) — `noUnusedLocals` was off, hiding dead imports and helpers. Enabled; the dead code is removed.
+- [-] **S15-21** — The elevated-only WebView2 test policy is not restored if the test process is killed outright. It applies only to elevated runs (ephemeral CI runners); restore manually with `scripts/webview-test-policy.ps1 -Mode Restore`.
+
+Regression evidence: these new tests were observed failing on the old code (or with the fix removed) and passing after it — process-tree Stop (live PowerShell), CLI profile preference, busy console holding the updater, busy state / prompt-marker consumption, Fix All conflict, dialog Escape, last-run ownership. The exit flow has new unit tests; the desktop journey gained opener-ACL and console-shutdown assertions.
+
+---
+
 ## Sweep 14 (v1.4.51) — terminal stream follow-ups
 
 Second pass over the Sweep 13 reports after they shipped in 1.4.50.

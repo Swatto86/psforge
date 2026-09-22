@@ -15,9 +15,12 @@ and other trusted I/O.
    route from frontend workflows to Tauri commands.
 5. `src-tauri/src/lib.rs` is the backend composition root. It registers plugins,
    command handlers, startup cleanup, and window/tray lifecycle behavior. Closing
-   the main window hides it. The tray's Exit action asks the frontend to flush
-   pending settings and exit (with a backend force-exit timeout if the webview
-   is unresponsive). On macOS, clicking the Dock icon reopens the hidden window;
+   the main window hides it. Exit (File menu or tray) runs through the
+   frontend (`exit-request.ts`): it acknowledges the request, asks before
+   stopping a running script or console command, flushes pending settings and
+   exits. The backend forces the exit only when the webview never
+   acknowledges, and stops console shells and a running debug host (with its
+   child processes) on `RunEvent::Exit`. On macOS, clicking the Dock icon reopens the hidden window;
    on Linux, appindicators emit no click events so the tray menu's Show item is
    the restore path.
 6. Backend modules own their I/O concerns: `powershell.rs` and `terminal.rs`
