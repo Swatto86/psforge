@@ -41,6 +41,7 @@ Gate
 - [x] **S15-18** (MEDIUM) — `scripts/fastcheck.ps1` ignored native exit codes and always passed.
 - [x] **S15-19** (MEDIUM) — CI cargo steps lacked `--locked`; actions used mutable tags; `ci.yml` had default token permissions; a dispatch input was interpolated into shell; no dependency-advisory check. Fixed, with a new audit job (`cargo deny check advisories`, `npm audit --omit=dev`).
 - [x] **S15-20** (LOW) — `noUnusedLocals` was off, hiding dead imports and helpers. Enabled; the dead code is removed.
+- [x] **S15-23** (HIGH) — The debug/run-selection host never started on Linux or macOS: it was launched with `-WindowStyle Hidden`, which pwsh rejects outside Windows ("not implemented on this platform", exit 64; reproduced with pwsh 7.6.6 on Linux). Found by the new live Stop test in the new macOS and existing Linux CI jobs. The flag is now Windows-only. The desktop journey also re-finds an element when a click hits a stale reference (a WebView2 race seen once in CI).
 - [x] **S15-22** (LOW) — With PSForge already open, the desktop journey failed with "launcher exited before webview startup" because the single-instance lock hands the test app off. The suite now stops first and names the running PID, without touching that app.
 - [-] **S15-21** — The elevated-only WebView2 test policy is not restored if the test process is killed outright. It applies only to elevated runs (ephemeral CI runners); restore manually with `scripts/webview-test-policy.ps1 -Mode Restore`.
 

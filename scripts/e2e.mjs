@@ -95,9 +95,16 @@ const deleteSession = async () => {
   catch (error) { if (!sessionClosed(error)) throw error; }
   browser = undefined;
 };
+// A re-render can replace a node between lookup and click; look it up again.
+const click = async (selector) => {
+  for (let attempt = 1; ; attempt++) {
+    try { return await browser.$(selector).click(); }
+    catch (error) { if (!/stale element reference/i.test(error.message ?? '') || attempt === 3) throw error; }
+  }
+};
 const exitApp = async () => {
-  await browser.$('[data-testid="menubar-file"]').click();
-  await browser.$('button=Exit').click();
+  await click('[data-testid="menubar-file"]');
+  await click('button=Exit');
   if (windowsApp) {
     await windowsApp.waitForExit();
     await deleteSession();
@@ -137,7 +144,7 @@ try {
   const pasteRun = async (script, result) => {
     const written = await invoke('plugin:clipboard-manager|write_text', { text: script });
     assert.equal(written.ok, true, written.message);
-    await browser.$('[data-testid="toolbar-paste-run"]').click();
+    await click('[data-testid="toolbar-paste-run"]');
     await waitFor(() => existsSync(result), `Script did not write ${result}`);
     await waitFor(async () => !(await browser.$('[data-testid="toolbar-stop"]').isEnabled()), 'Run never completed');
     assert.ok((await browser.execute(() => window.__psforge_getEditorText())).includes(result));
@@ -154,7 +161,7 @@ try {
   assert.deepEqual(JSON.parse(readFileSync(second, 'utf8').replace(/^\uFEFF/, '')), expected);
   // F5 reruns the now scratch-backed file through the disk runner.
   rmSync(second);
-  await browser.$('[data-testid="toolbar-run"]').click();
+  await click('[data-testid="toolbar-run"]');
   await waitFor(() => existsSync(second), 'Saved-script rerun did not finish');
   await waitFor(async () => !(await browser.$('[data-testid="toolbar-stop"]').isEnabled()), 'Rerun never completed');
   assert.deepEqual(JSON.parse(readFileSync(second, 'utf8').replace(/^\uFEFF/, '')), expected);

@@ -538,8 +538,12 @@ impl ProcessManager {
         })?;
 
         let mut ps_args: Vec<String> = vec!["-NoLogo".to_string(), "-NoProfile".to_string()];
-        ps_args.push("-WindowStyle".to_string());
-        ps_args.push("Hidden".to_string());
+        // pwsh on Linux/macOS rejects -WindowStyle ("not implemented on this
+        // platform", exit 64), which stopped the host from ever starting there.
+        if cfg!(windows) {
+            ps_args.push("-WindowStyle".to_string());
+            ps_args.push("Hidden".to_string());
+        }
         if exec_policy != "Default" {
             ps_args.push("-ExecutionPolicy".to_string());
             ps_args.push(exec_policy.to_string());
