@@ -1,6 +1,6 @@
 // Drives the shipped webview and real PowerShell with isolated application state.
 import { remote } from 'webdriverio';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,20 @@ import assert from 'node:assert/strict';
 import { launchWindowsApp } from './e2e-windows.mjs';
 import { prepareConfig } from './e2e-config.mjs';
 
+// A running PSForge holds the single-instance lock, so the app this suite
+// launches would hand off to it and exit. Report that; never touch that app.
+const runningPsforge = () => {
+  if (process.platform === 'win32') {
+    const out = execFileSync('tasklist', ['/FI', 'IMAGENAME eq psforge.exe', '/FO', 'CSV', '/NH'], { encoding: 'utf8' });
+    return out.split(/\r?\n/).filter(line => /^"psforge\.exe"/i.test(line)).map(line => line.split('","')[1]);
+  }
+  try { return execFileSync('pgrep', ['-x', 'psforge'], { encoding: 'utf8' }).split('\n').filter(Boolean); }
+  catch (error) { if (error.status === 1) return []; throw error; } // 1 = no match
+};
+const alreadyRunning = runningPsforge();
+if (alreadyRunning.length > 0) {
+  throw new Error(`PSForge is already running (pid ${alreadyRunning.join(', ')}). Close it before the desktop tests: its single-instance lock makes the test app exit at launch.`);
+}
 const state = realpathSync.native(mkdtempSync(join(tmpdir(), 'psforge-e2e-')));
 const configState = prepareConfig(state);
 const config = configState.config;

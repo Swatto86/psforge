@@ -41,6 +41,7 @@ Gate
 - [x] **S15-18** (MEDIUM) — `scripts/fastcheck.ps1` ignored native exit codes and always passed.
 - [x] **S15-19** (MEDIUM) — CI cargo steps lacked `--locked`; actions used mutable tags; `ci.yml` had default token permissions; a dispatch input was interpolated into shell; no dependency-advisory check. Fixed, with a new audit job (`cargo deny check advisories`, `npm audit --omit=dev`).
 - [x] **S15-20** (LOW) — `noUnusedLocals` was off, hiding dead imports and helpers. Enabled; the dead code is removed.
+- [x] **S15-22** (LOW) — With PSForge already open, the desktop journey failed with "launcher exited before webview startup" because the single-instance lock hands the test app off. The suite now stops first and names the running PID, without touching that app.
 - [-] **S15-21** — The elevated-only WebView2 test policy is not restored if the test process is killed outright. It applies only to elevated runs (ephemeral CI runners); restore manually with `scripts/webview-test-policy.ps1 -Mode Restore`.
 
 Regression evidence: these new tests were observed failing on the old code (or with the fix removed) and passing after it — process-tree Stop (live PowerShell), CLI profile preference, busy console holding the updater, busy state / prompt-marker consumption, Fix All conflict, dialog Escape, last-run ownership. The exit flow has new unit tests; the desktop journey gained opener-ACL and console-shutdown assertions.
