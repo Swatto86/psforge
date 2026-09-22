@@ -1,7 +1,7 @@
 //! Cursor Agent CLI (`agent`) provider for the in-app assistant.
 use crate::ai_cli::{
     apply_user_profile_env, attach_cli_stdio, blank_as_none, cli_error, normalize_configured_path,
-    preview_cli_error, wait_capped,
+    preview_cli_error, resolve_cli_profile, unique_temp_path, wait_capped,
 };
 use crate::ai_ollama::{AiModelChoice, AiModelList};
 use crate::errors::AppError;
@@ -22,14 +22,7 @@ pub async fn run_cursor(
         blank_as_none(&settings.ai_cursor_cli_path),
         profile.as_deref(),
     );
-    let workspace = std::env::temp_dir().join(format!(
-        "psforge-cursor-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
+    let workspace = unique_temp_path("psforge-cursor");
     let _ = std::fs::create_dir_all(&workspace);
 
     let mut cmd = tokio::process::Command::new(&binary);
@@ -139,19 +132,9 @@ pub(crate) fn parse_cursor_model_list(stdout: &str) -> Vec<AiModelChoice> {
 }
 
 fn resolve_cursor_profile(configured: Option<&str>) -> Option<String> {
-    if let Some(value) = configured {
-        return Some(normalize_configured_path(value));
-    }
-    let users = std::fs::read_dir("C:\\Users").ok()?;
-    for entry in users.flatten() {
-        let dir = entry.path();
-        if dir.join(".cursor").is_dir()
-            || dir.join(".local").join("bin").join("agent.cmd").is_file()
-        {
-            return Some(dir.to_string_lossy().into_owned());
-        }
-    }
-    None
+    resolve_cli_profile(configured, |dir| {
+        dir.join(".cursor").is_dir() || dir.join(".local").join("bin").join("agent.cmd").is_file()
+    })
 }
 
 pub(crate) fn resolve_cursor_binary(

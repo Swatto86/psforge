@@ -3,6 +3,8 @@ use crate::errors::AppError;
 use crate::utils::char_preview;
 #[cfg(not(windows))]
 use crate::win_compat::CommandExt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub(crate) const CLI_TIMEOUT_SECS: u64 = 300;
@@ -31,6 +33,56 @@ pub(crate) fn blank_as_none(value: &str) -> Option<&str> {
     } else {
         Some(trimmed)
     }
+}
+
+/// Per-request path under the system temp directory. The sequence number keeps
+/// concurrent requests in one process from sharing, and then deleting, each
+/// other's workspace or output file.
+pub(crate) fn unique_temp_path(prefix: &str) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("{prefix}-{}-{seq}", std::process::id()))
+}
+
+/// Windows profile an AI CLI is installed under: the configured profile, else
+/// the current user's own profile, else another profile on the machine (an
+/// elevated PSForge running as an admin account can still use the signed-in
+/// user's install). The current user always wins over another account.
+pub(crate) fn resolve_cli_profile(
+    configured: Option<&str>,
+    has_install: impl Fn(&Path) -> bool,
+) -> Option<String> {
+    resolve_cli_profile_in(
+        configured,
+        dirs::home_dir(),
+        Path::new("C:\\Users"),
+        has_install,
+    )
+}
+
+fn resolve_cli_profile_in(
+    configured: Option<&str>,
+    current: Option<PathBuf>,
+    users_root: &Path,
+    has_install: impl Fn(&Path) -> bool,
+) -> Option<String> {
+    if let Some(value) = configured {
+        return Some(normalize_configured_path(value));
+    }
+    if let Some(home) = current.filter(|home| has_install(home)) {
+        return Some(home.to_string_lossy().into_owned());
+    }
+    let mut profiles: Vec<PathBuf> = std::fs::read_dir(users_root)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|dir| has_install(dir))
+        .collect();
+    profiles.sort();
+    profiles
+        .into_iter()
+        .next()
+        .map(|dir| dir.to_string_lossy().into_owned())
 }
 
 pub(crate) fn normalize_configured_path(value: &str) -> String {
@@ -134,6 +186,39 @@ pub(crate) fn preview_cli_error(stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_profile_prefers_current_user_over_other_accounts() {
+        let root = unique_temp_path("psforge-profile-test");
+        let other = root.join("aaa-other");
+        let me = root.join("zzz-me");
+        for dir in [&other, &me] {
+            std::fs::create_dir_all(dir.join(".codex")).unwrap();
+        }
+        let has_install = |dir: &Path| dir.join(".codex").is_dir();
+        let found = resolve_cli_profile_in(None, Some(me.clone()), &root, has_install);
+        let fallback =
+            resolve_cli_profile_in(None, Some(root.join("no-install")), &root, has_install);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(found.as_deref(), Some(me.to_string_lossy().as_ref()));
+        assert_eq!(fallback.as_deref(), Some(other.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn cli_profile_uses_configured_value_first() {
+        let found = resolve_cli_profile_in(
+            Some(r#""D:\Profiles\me""#),
+            None,
+            Path::new("Z:\\missing"),
+            |_| true,
+        );
+        assert_eq!(found.as_deref(), Some(r"D:\Profiles\me"));
+    }
+
+    #[test]
+    fn unique_temp_paths_differ_within_one_process() {
+        assert_ne!(unique_temp_path("psforge-x"), unique_temp_path("psforge-x"));
+    }
 
     #[test]
     fn effort_variant_maps_known_values() {

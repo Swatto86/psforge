@@ -751,8 +751,9 @@ pub async fn stop_terminal(session_id: Option<u64>) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Stops all sessions.
-fn stop_all_sessions() {
+/// Stops all sessions. Also called on app exit so console shells end with
+/// PSForge rather than whenever the OS tears down their pseudo-terminal.
+pub fn stop_all_sessions() {
     let ids: Vec<u64> = {
         let guard = match get_terminals().lock() {
             Ok(g) => g,

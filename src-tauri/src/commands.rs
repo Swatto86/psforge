@@ -5,7 +5,7 @@ use crate::errors::{AppError, BatchResult};
 use crate::powershell::OutputLine;
 use crate::powershell::{self, ProcessManager};
 use crate::settings::{self, AppSettings};
-use crate::utils::{atomic_write, char_preview, with_retry, write_secure_temp_file};
+use crate::utils::{atomic_write, char_preview, run_blocking, with_retry, write_secure_temp_file};
 #[cfg(not(windows))]
 use crate::win_compat::CommandExt;
 use log::{debug, error, info, warn};
@@ -277,7 +277,6 @@ pub async fn execute_script_debug(
             Some(&breakpoints),
             move |line: OutputLine| {
                 if let Some(json) = variables_marker_payload(&line.text) {
-                    pm().cache_last_variables_json(json.to_string());
                     let variables = parse_variable_info_json(json);
                     if let Err(e) = win.emit("ps-variables", &variables) {
                         error!("Failed to emit ps-variables event: {}", e);
@@ -587,16 +586,18 @@ pub async fn get_ps_versions() -> Result<Vec<powershell::PsVersion>, AppError> {
     info!("get_ps_versions called");
     // The saved host decides which spelling of a multiply-aliased install is
     // listed, so the selector never ends up pointing at a path it dropped.
-    let preferred = settings::load()
-        .ok()
-        .map(|saved| saved.default_ps_version)
-        .filter(|host| !host.trim().is_empty() && host != "auto");
-    tokio::task::spawn_blocking(move || powershell::discover_ps_versions(preferred.as_deref()))
-        .await
-        .map_err(|e| AppError {
-            code: "PS_DISCOVERY_FAILED".to_string(),
-            message: format!("PowerShell discovery task panicked: {}", e),
-        })
+    tokio::task::spawn_blocking(|| {
+        let preferred = settings::load()
+            .ok()
+            .map(|saved| saved.default_ps_version)
+            .filter(|host| !host.trim().is_empty() && host != "auto");
+        powershell::discover_ps_versions(preferred.as_deref())
+    })
+    .await
+    .map_err(|e| AppError {
+        code: "PS_DISCOVERY_FAILED".to_string(),
+        message: format!("PowerShell discovery task panicked: {}", e),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1103,23 +1104,6 @@ fn parse_variable_info_json(json_str: &str) -> Vec<VariableInfo> {
     }
 }
 
-/// Returns the last variable snapshot captured from the live run/debug session.
-///
-/// This command no longer re-executes the user script. It simply returns the
-/// most recent snapshot emitted by the PowerShell host after a successful run.
-#[cfg_attr(not(test), tauri::command)]
-pub async fn get_variables_after_run(
-    _ps_path: String,
-    _script: String,
-    _working_dir: String,
-) -> Result<Vec<VariableInfo>, AppError> {
-    info!("get_variables_after_run called");
-    Ok(pm()
-        .last_variables_json()
-        .map(|json| parse_variable_info_json(&json))
-        .unwrap_or_default())
-}
-
 /// Finds the last top-level JSON array or object in a string.
 ///
 /// Scans backwards from the end, using bracket depth counting to skip
@@ -1201,6 +1185,13 @@ pub struct FileContent {
 /// Reads a file's content, detecting encoding.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn read_file_content(path: String) -> Result<FileContent, AppError> {
+    run_blocking("read_file_content", move || {
+        read_file_content_blocking(path)
+    })
+    .await
+}
+
+fn read_file_content_blocking(path: String) -> Result<FileContent, AppError> {
     debug!("read_file_content: {}", path);
 
     // Pre-flight validation (Rule 17 + Rule 11).
@@ -1253,6 +1244,17 @@ pub async fn read_file_content(path: String) -> Result<FileContent, AppError> {
 /// surfaces it; a silent lossy save is permanent, invisible corruption.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn save_file_content(
+    path: String,
+    content: String,
+    encoding: String,
+) -> Result<Option<String>, AppError> {
+    run_blocking("save_file_content", move || {
+        save_file_content_blocking(path, content, encoding)
+    })
+    .await
+}
+
+fn save_file_content_blocking(
     path: String,
     content: String,
     encoding: String,
@@ -1470,13 +1472,13 @@ fn decode_no_bom_fallback(bytes: &[u8]) -> (String, String, Option<String>) {
 /// Loads user settings from disk.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn load_settings() -> Result<AppSettings, AppError> {
-    settings::load()
+    run_blocking("load_settings", settings::load).await
 }
 
 /// Saves user settings to disk.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn save_settings(settings: AppSettings) -> Result<(), AppError> {
-    settings::save(&settings)
+    run_blocking("save_settings", move || settings::save(&settings)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -2045,8 +2047,10 @@ pub struct Snippet {
 /// Returns built-in snippets plus any user-defined snippets.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn get_snippets() -> Result<Vec<Snippet>, AppError> {
-    let user_path = settings::snippets_path()?;
-    get_snippets_from(user_path)
+    run_blocking("get_snippets", || {
+        get_snippets_from(settings::snippets_path()?)
+    })
+    .await
 }
 
 /// Loads snippets from an explicit user-snippets path (for testing).
@@ -2090,24 +2094,6 @@ pub fn get_snippets_from(user_path: std::path::PathBuf) -> Result<Vec<Snippet>, 
         }
     }
     Ok(snippets)
-}
-
-/// Saves user-defined snippets to disk.
-#[cfg_attr(not(test), tauri::command)]
-pub async fn save_user_snippets(snippets: Vec<Snippet>) -> Result<(), AppError> {
-    let dir = settings::settings_dir()?;
-    if !dir.exists() {
-        std::fs::create_dir_all(&dir)?;
-    }
-    let path = settings::snippets_path()?;
-    save_user_snippets_to(&path, &snippets)
-}
-
-/// Saves user snippets to an explicit path (for testing).
-pub fn save_user_snippets_to(path: &std::path::Path, snippets: &[Snippet]) -> Result<(), AppError> {
-    let json = serde_json::to_string_pretty(snippets)?;
-    with_retry("save_user_snippets", || atomic_write(path, json.as_bytes()))?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2615,63 +2601,6 @@ const ALLOWED_POLICIES: &[&str] = &[
     "Restricted",
 ];
 
-/// Returns the current PowerShell execution policy for the current user scope.
-/// Silently returns "Unknown" when the ps_path is inaccessible or PS fails.
-#[cfg_attr(not(test), tauri::command)]
-pub async fn get_execution_policy(ps_path: String) -> Result<String, AppError> {
-    info!("get_execution_policy called");
-    let ps_path = ps_path.trim();
-    if ps_path.is_empty() {
-        return Ok("Unknown".to_string());
-    }
-    if let Err(err) = powershell::validate_ps_path(ps_path) {
-        debug!("get_execution_policy: invalid PowerShell path: {}", err);
-        return Ok("Unknown".to_string());
-    }
-
-    let output = match ps_command(ps_path)
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-        ])
-        .arg(ps_utf8_script("Get-ExecutionPolicy -Scope CurrentUser"))
-        .creation_flags(0x08000000)
-        .output()
-        .await
-    {
-        Ok(o) => o,
-        Err(e) => {
-            debug!(
-                "get_execution_policy: query failed (returning Unknown): {}",
-                e
-            );
-            return Ok("Unknown".to_string());
-        }
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        debug!(
-            "get_execution_policy: PowerShell exit={:?}, stderr='{}' (returning Unknown)",
-            output.status.code(),
-            stderr.trim()
-        );
-        return Ok("Unknown".to_string());
-    }
-
-    let policy = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    debug!("get_execution_policy result: {}", policy);
-    Ok(if policy.is_empty() {
-        "Unknown".to_string()
-    } else {
-        policy
-    })
-}
-
 /// Sets the PowerShell execution policy for the current user scope (HKCU -- no admin needed).
 /// Only the values in ALLOWED_POLICIES are accepted (Rule 11 -- input validation).
 #[cfg_attr(not(test), tauri::command)]
@@ -2946,11 +2875,14 @@ pub async fn get_ps_profile_path(ps_path: String) -> Result<String, AppError> {
 /// Returns the scratch directory path for auto-saved untitled scripts, creating it if needed.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn get_scratch_dir() -> Result<String, AppError> {
-    let dir = settings::scratch_dir()?;
-    if !dir.exists() {
-        std::fs::create_dir_all(&dir)?;
-    }
-    Ok(dir.to_string_lossy().into())
+    run_blocking("get_scratch_dir", || {
+        let dir = settings::scratch_dir()?;
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir)?;
+        }
+        Ok(dir.to_string_lossy().into())
+    })
+    .await
 }
 
 /// Metadata for a scratch auto-save file on disk.
@@ -2964,6 +2896,10 @@ pub struct ScratchFileInfo {
 /// Lists `.ps1` scratch files (tab id is the filename stem).
 #[cfg_attr(not(test), tauri::command)]
 pub async fn list_scratch_files() -> Result<Vec<ScratchFileInfo>, AppError> {
+    run_blocking("list_scratch_files", list_scratch_files_blocking).await
+}
+
+fn list_scratch_files_blocking() -> Result<Vec<ScratchFileInfo>, AppError> {
     let dir = settings::scratch_dir()?;
     if !dir.exists() {
         return Ok(Vec::new());
@@ -3025,15 +2961,18 @@ fn scratch_delete_target(path: &str, scratch_dir: &std::path::Path) -> Option<st
 /// Deletes a scratch file when the user discards an untitled buffer.
 #[cfg_attr(not(test), tauri::command)]
 pub async fn delete_scratch_file(path: String) -> Result<(), AppError> {
-    let scratch_dir = settings::scratch_dir()?;
-    let target = scratch_delete_target(&path, &scratch_dir).ok_or_else(|| AppError {
-        code: "SCRATCH_PATH_OUTSIDE_DIR".to_string(),
-        message: "Scratch file path is outside the scratch directory.".to_string(),
-    })?;
-    if target.exists() {
-        std::fs::remove_file(target)?;
-    }
-    Ok(())
+    run_blocking("delete_scratch_file", move || {
+        let scratch_dir = settings::scratch_dir()?;
+        let target = scratch_delete_target(&path, &scratch_dir).ok_or_else(|| AppError {
+            code: "SCRATCH_PATH_OUTSIDE_DIR".to_string(),
+            message: "Scratch file path is outside the scratch directory.".to_string(),
+        })?;
+        if target.exists() {
+            std::fs::remove_file(target)?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -3251,10 +3190,6 @@ $sig.Status.ToString()",
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::LazyLock;
-
-    static CACHED_VARIABLES_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-        LazyLock::new(|| tokio::sync::Mutex::new(()));
 
     // ----- launch_path_from_args tests -----
 
@@ -3431,28 +3366,6 @@ mod tests {
         let vars = parse_variable_info_json(r#"{"Name":"Count","Value":"1","TypeName":"Int32"}"#);
         assert_eq!(vars.len(), 1);
         assert_eq!(vars[0].type_name, "Int32");
-    }
-
-    #[tokio::test]
-    async fn get_variables_after_run_returns_cached_snapshot_without_using_script_input() {
-        let _guard = CACHED_VARIABLES_TEST_LOCK.lock().await;
-
-        pm().cache_last_variables_json(
-            r#"[{"Name":"E2ENoRerunVar","Value":"snapshot","TypeName":"String"}]"#.to_string(),
-        );
-
-        let vars = get_variables_after_run(
-            "not-a-real-ps-path.exe".to_string(),
-            "Write-Error 'this script must not run'".to_string(),
-            r#"C:\definitely-not-used"#.to_string(),
-        )
-        .await
-        .expect("cached variable lookup must succeed");
-
-        assert_eq!(vars.len(), 1);
-        assert_eq!(vars[0].name, "E2ENoRerunVar");
-        assert_eq!(vars[0].value, "snapshot");
-        assert_eq!(vars[0].type_name, "String");
     }
 
     #[tokio::test]

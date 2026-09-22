@@ -1,14 +1,14 @@
 //! OpenCode CLI provider, including local Ollama models.
 use crate::ai_cli::{
     apply_user_profile_env, attach_cli_stdio, blank_as_none, cli_error, effort_variant,
-    normalize_configured_path, preview_cli_error, wait_capped,
+    normalize_configured_path, preview_cli_error, resolve_cli_profile, unique_temp_path,
+    wait_capped,
 };
 use crate::ai_ollama::{fetch_ollama_tags, normalize_ollama_base_url};
 use crate::errors::AppError;
 use crate::settings::AppSettings;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 const QUALIFIED_MODEL_PREFIXES: &[&str] = &[
     "ollama/",
@@ -39,10 +39,7 @@ pub async fn run_opencode(
     requested_model: &str,
     prompt: &str,
 ) -> Result<OpenCodeOutcome, AppError> {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let workspace =
-        std::env::temp_dir().join(format!("psforge-opencode-{}-{seq}", std::process::id()));
+    let workspace = unique_temp_path("psforge-opencode");
     let _ = std::fs::create_dir_all(&workspace);
     let result = run_opencode_inner(settings, requested_model, prompt, &workspace).await;
     let _ = std::fs::remove_dir_all(&workspace);
@@ -228,17 +225,7 @@ pub(crate) fn opencode_ollama_inline_config(ollama_base: &str, model_id: &str) -
 }
 
 pub(crate) fn resolve_opencode_profile(configured: Option<&str>) -> Option<String> {
-    if let Some(value) = configured {
-        return Some(normalize_configured_path(value));
-    }
-    let users = std::fs::read_dir("C:\\Users").ok()?;
-    for entry in users.flatten() {
-        let dir = entry.path();
-        if opencode_marker_exists(&dir) {
-            return Some(dir.to_string_lossy().into_owned());
-        }
-    }
-    None
+    resolve_cli_profile(configured, opencode_marker_exists)
 }
 
 fn opencode_marker_exists(profile: &Path) -> bool {

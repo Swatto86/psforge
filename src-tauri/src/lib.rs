@@ -52,18 +52,29 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+/// Set when the webview acknowledges an exit request. A responsive webview
+/// may be asking whether to stop running work, so only an unacknowledged
+/// request falls back to a forced exit.
+#[cfg(not(test))]
+static EXIT_ACKNOWLEDGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Exit via the frontend so it can flush debounced state (settings) that
 /// would otherwise be lost — `app.exit()` skips the window-close path where
 /// that flush normally runs. A watchdog force-exits if the webview is dead
-/// or never responds.
+/// or never acknowledges the request.
 #[cfg(not(test))]
 fn request_exit(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
     use tauri::Emitter;
+    EXIT_ACKNOWLEDGED.store(false, Ordering::SeqCst);
     if app.get_webview_window("main").is_some() && app.emit("psforge-exit-requested", ()).is_ok() {
         let handle = app.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            warn!("Frontend did not exit within 2s of tray Exit; forcing exit");
+            if EXIT_ACKNOWLEDGED.load(Ordering::SeqCst) {
+                return;
+            }
+            warn!("Frontend did not acknowledge tray Exit within 2s; forcing exit");
             handle.exit(0);
         });
     } else {
@@ -147,7 +158,6 @@ pub fn run() {
             commands::get_module_commands,
             commands::get_command_parameters,
             commands::get_command_help,
-            commands::get_variables_after_run,
             commands::read_file_content,
             commands::save_file_content,
             commands::load_settings,
@@ -161,14 +171,12 @@ pub fn run() {
             commands::unregister_context_menu,
             commands::get_context_menu_status,
             commands::get_snippets,
-            commands::save_user_snippets,
             commands::reveal_in_explorer,
             ps_analyze::analyze_script,
             ps_pssa_install::check_psscriptanalyzer,
             ps_pssa_install::install_psscriptanalyzer,
             commands::get_completions,
             commands::suggest_modules_for_command,
-            commands::get_execution_policy,
             commands::set_execution_policy,
             commands::get_launch_path,
             commands::format_script,
@@ -245,6 +253,9 @@ pub fn run() {
             // either too short on slow boxes or wastes time on fast ones).
             let handle = app.handle().clone();
             let listener_handle = handle.clone();
+            listener_handle.listen("psforge-exit-ack", |_event| {
+                EXIT_ACKNOWLEDGED.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
             let listener_id = listener_handle.listen("psforge-ready", move |_event| {
                 if let Some(win) = handle.get_webview_window("main") {
                     let _ = win.show();
@@ -276,6 +287,7 @@ pub fn run() {
                 // Kill a persistent host that is still mid-script (S6-19);
                 // idle hosts self-terminate when their stdin pipe closes.
                 tauri::async_runtime::block_on(commands::kill_active_run_on_exit());
+                terminal::stop_all_sessions();
             }
             // macOS: Dock icon clicked while the window is hidden in the tray.
             #[cfg(target_os = "macos")]

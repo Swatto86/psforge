@@ -23,7 +23,6 @@ import type {
   PsVersion,
   ScriptParameterInspectResult,
   Snippet,
-  VariableInfo,
 } from "./types";
 
 /** Ask the configured AI provider for script help/code. */
@@ -189,19 +188,6 @@ export async function getCommandHelp(
   });
 }
 
-/** Get the cached variable snapshot from the most recent completed run. */
-export async function getVariablesAfterRun(
-  psPath: string,
-  script: string,
-  workingDir: string,
-): Promise<VariableInfo[]> {
-  return invoke<VariableInfo[]>("get_variables_after_run", {
-    psPath,
-    script,
-    workingDir,
-  });
-}
-
 /** Read a file with encoding detection. */
 export async function readFileContent(path: string): Promise<FileContent> {
   return invoke<FileContent>("read_file_content", { path });
@@ -310,11 +296,6 @@ export async function getContextMenuStatus(): Promise<boolean> {
 /** Get all snippets (built-in + user). */
 export async function getSnippets(): Promise<Snippet[]> {
   return invoke<Snippet[]>("get_snippets");
-}
-
-/** Save user-defined snippets. */
-export async function saveUserSnippets(snippets: Snippet[]): Promise<void> {
-  return invoke("save_user_snippets", { snippets });
 }
 
 // ---------------------------------------------------------------------------
@@ -445,14 +426,6 @@ export async function suggestModulesForCommand(
 // ---------------------------------------------------------------------------
 // Execution Policy
 // ---------------------------------------------------------------------------
-
-/**
- * Returns the current PowerShell execution policy for the current user scope.
- * Returns "Unknown" when the query fails.
- */
-export async function getExecutionPolicy(psPath: string): Promise<string> {
-  return invoke<string>("get_execution_policy", { psPath });
-}
 
 /**
  * Sets the PowerShell execution policy for the current user scope (no admin required).

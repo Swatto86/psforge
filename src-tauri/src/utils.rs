@@ -1,5 +1,6 @@
 /// Shared I/O utility functions for PSForge.
 /// Provides retry logic for transient I/O failures (Rule 11 - Resilience).
+use crate::errors::AppError;
 use log::warn;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,22 @@ where
     // (attempt + 1 < MAX_IO_RETRIES) is false when attempt == MAX_IO_RETRIES - 1,
     // so the Err arm returns unconditionally.
     unreachable!("retry loop exited unexpectedly")
+}
+
+/// Runs blocking filesystem work on the blocking thread pool so an async
+/// command never parks a runtime worker: disk calls can stall on antivirus
+/// scans or network shares, and `with_retry` sleeps between attempts.
+pub(crate) async fn run_blocking<T, F>(label: &'static str, op: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(op)
+        .await
+        .map_err(|e| AppError {
+            code: "TASK_FAILED".to_string(),
+            message: format!("{} did not complete: {}", label, e),
+        })?
 }
 
 /// First `max_chars` characters of `value` — safe to call on any UTF-8 string,

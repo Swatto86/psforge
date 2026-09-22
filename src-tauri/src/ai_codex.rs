@@ -1,7 +1,7 @@
 //! OpenAI Codex CLI (`codex exec`) provider for the in-app assistant.
 use crate::ai_cli::{
     apply_user_profile_env, attach_cli_stdio, blank_as_none, cli_error, normalize_configured_path,
-    preview_cli_error, wait_capped,
+    preview_cli_error, resolve_cli_profile, unique_temp_path, wait_capped,
 };
 use crate::errors::AppError;
 use crate::settings::AppSettings;
@@ -23,15 +23,8 @@ pub async fn run_codex(
         blank_as_none(&settings.ai_codex_cli_path),
         profile.as_deref(),
     );
-    let out_path = std::env::temp_dir().join(format!(
-        "psforge-codex-out-{}-{}.txt",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
-    let workspace = std::env::temp_dir().join(format!("psforge-codex-ws-{}", std::process::id()));
+    let out_path = unique_temp_path("psforge-codex-out").with_extension("txt");
+    let workspace = unique_temp_path("psforge-codex-ws");
     let _ = std::fs::create_dir_all(&workspace);
 
     let mut cmd = tokio::process::Command::new(&binary);
@@ -125,17 +118,7 @@ fn read_codex_output(out_path: &PathBuf, stdout: Option<&str>) -> String {
 }
 
 fn resolve_codex_profile(configured: Option<&str>) -> Option<String> {
-    if let Some(value) = configured {
-        return Some(normalize_configured_path(value));
-    }
-    let users = std::fs::read_dir("C:\\Users").ok()?;
-    for entry in users.flatten() {
-        let dir = entry.path();
-        if dir.join(".codex").is_dir() {
-            return Some(dir.to_string_lossy().into_owned());
-        }
-    }
-    None
+    resolve_cli_profile(configured, |dir| dir.join(".codex").is_dir())
 }
 
 pub(crate) fn resolve_codex_binary(configured: Option<&str>, user_profile: Option<&str>) -> String {

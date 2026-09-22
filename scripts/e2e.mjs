@@ -109,6 +109,14 @@ try {
     catch { return false; } // Startup only: the listener has not bound yet.
   }, 'WebDriver did not start');
   await connect();
+  // Least privilege: the opener grant covers web links only.
+  const reveal = await invoke('plugin:opener|reveal_item_in_dir', { paths: [state] });
+  assert.equal(reveal.ok, false, 'Revealing files must not be permitted');
+  assert.match(reveal.message, /not allowed/i);
+  const offScope = await invoke('plugin:opener|open_url', { url: 'psforge-test://denied' });
+  assert.equal(offScope.ok, false, 'Non-web URLs must be refused');
+  assert.doesNotMatch(offScope.message, /Permissions associated with this command/i,
+    'open_url itself must stay permitted for web links');
   const clipboard = await invoke('plugin:clipboard-manager|read_text');
   if (clipboard.ok) previousClipboard = clipboard.value;
   const quote = value => `'${value.replaceAll("'", "''")}'`;
@@ -121,7 +129,9 @@ try {
     assert.ok((await browser.execute(() => window.__psforge_getEditorText())).includes(result));
   };
   const first = join(state, 'first.txt');
-  await pasteRun(`$global:PsforgeLeak=42; $env:PSFORGE_E2E_LEAK='dirty'; function global:PsforgeLeakFn { 1 }; 'first' | Set-Content ${quote(first)}`, first);
+  // The run's parent is the console's shell; Exit must not leave it running.
+  const shellFile = join(state, 'shell.txt');
+  await pasteRun(`$global:PsforgeLeak=42; $env:PSFORGE_E2E_LEAK='dirty'; function global:PsforgeLeakFn { 1 }; $shell=(Get-Process -Id $PID).Parent; "$($shell.Id) $($shell.ProcessName)" | Set-Content ${quote(shellFile)}; 'first' | Set-Content ${quote(first)}`, first);
   assert.equal(readFileSync(first, 'utf8').trim(), 'first');
   const second = join(state, 'second.json');
   const cleanScript = `[pscustomobject]@{ variable=$null -ne (Get-Variable PsforgeLeak -ErrorAction SilentlyContinue); environment=$env:PSFORGE_E2E_LEAK; fn=$null -ne (Get-Command PsforgeLeakFn -ErrorAction SilentlyContinue); cwd=$PWD.Path } | ConvertTo-Json -Compress | Set-Content ${quote(second)}`;
@@ -139,6 +149,10 @@ try {
     previousClipboard = undefined;
   }
   await exitApp();
+  const [shellPid, shellName] = readFileSync(shellFile, 'utf8').replace(/^\uFEFF/, '').trim().split(' ');
+  assert.match(shellName, /^(pwsh|powershell)$/i, `Run parent was ${shellName}, not the console shell`);
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+  await waitFor(() => !alive(Number(shellPid)), `Console shell ${shellPid} outlived the app`, 3000);
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   assert.ok(settings.recentRuns.length >= 3, 'Exit must flush run history');
   // Seed a genuine orphan: ordinary open tabs may already restore automatically.

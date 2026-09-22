@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc, Mutex as StdMutex,
+    Arc,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -22,6 +22,7 @@ use tokio::time::{sleep, timeout, Duration};
 use uuid::Uuid;
 
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const SESSION_GRACEFUL_EXIT_MS: u64 = 1_500;
 
 /// Maximum number of output lines to buffer per process (memory bound).
@@ -250,8 +251,6 @@ pub struct ProcessManager {
     execution_lock: Arc<Mutex<()>>,
     /// Kill-signal channel for the currently active execute() call.
     kill_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>,
-    /// Cached variable snapshot from the last completed run/debug/selection.
-    last_variables_json: Arc<StdMutex<Option<String>>>,
 }
 
 impl ProcessManager {
@@ -262,7 +261,6 @@ impl ProcessManager {
             active_command: Arc::new(Mutex::new(None)),
             execution_lock: Arc::new(Mutex::new(())),
             kill_sender: Arc::new(Mutex::new(None)),
-            last_variables_json: Arc::new(StdMutex::new(None)),
         }
     }
 
@@ -282,30 +280,6 @@ impl ProcessManager {
             let mut active = self.active_command.lock().await;
             *active = None;
         }
-    }
-
-    pub fn clear_last_variables_json(&self) {
-        let mut guard = self
-            .last_variables_json
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        *guard = None;
-    }
-
-    pub fn cache_last_variables_json(&self, json: String) {
-        let mut guard = self
-            .last_variables_json
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        *guard = Some(json);
-    }
-
-    pub fn last_variables_json(&self) -> Option<String> {
-        let guard = self
-            .last_variables_json
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        guard.clone()
     }
 
     async fn shutdown_session(session: Arc<PersistentSession>, graceful: bool) {
@@ -345,6 +319,9 @@ impl ProcessManager {
         {
             let mut child_guard = session.child.lock().await;
             if let Some(ref mut child) = *child_guard {
+                if let Some(pid) = child.id() {
+                    kill_process_tree(pid).await;
+                }
                 if let Err(e) = child.kill().await {
                     debug!("Failed to kill persistent session process: {}", e);
                 }
@@ -569,7 +546,12 @@ impl ProcessManager {
         ps_args.push("-File".to_string());
         ps_args.push(bootstrap_script_path.to_string_lossy().into_owned());
 
-        let mut child = Command::new(&ps_path)
+        let mut command = Command::new(&ps_path);
+        // Lead a process group on Unix so Stop can end everything the script
+        // started (see kill_process_tree).
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command
             .args(ps_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -764,7 +746,6 @@ impl ProcessManager {
         validate_ps_path(ps_path)?;
         let ps_path = normalize_ps_path(ps_path);
         let _exec_guard = self.execution_lock.lock().await;
-        self.clear_last_variables_json();
         info!(
             "Executing script with persistent session {} in {}",
             ps_path, working_dir
@@ -1164,6 +1145,34 @@ fn resolve_working_dir(working_dir: &str) -> Result<String, AppError> {
 /// Accepts both absolute paths and bare command names that resolve through
 /// PATH. Bare-name lookup is done by scanning `$PATH` directly so the check
 /// works on Linux/macOS where `where.exe` does not exist.
+/// Ends `pid` and every process it started. Killing only the host would leave a
+/// native command the script launched (robocopy, a nested pwsh) running after
+/// Stop. On Unix the host leads its own process group, created at spawn.
+async fn kill_process_tree(pid: u32) {
+    #[cfg(windows)]
+    let status = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
+    #[cfg(not(windows))]
+    let status = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
+    match status {
+        Ok(status) if !status.success() => {
+            debug!("Process tree of {} was not fully ended ({})", pid, status)
+        }
+        Err(e) => warn!("Failed to end process tree of {}: {}", pid, e),
+        Ok(_) => {}
+    }
+}
+
 pub fn validate_ps_path(ps_path: &str) -> Result<(), AppError> {
     let normalized = normalize_ps_path(ps_path);
     let trimmed = normalized.as_str();
@@ -1452,6 +1461,97 @@ fn chrono_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn process_alive(pid: u32) -> bool {
+        #[cfg(windows)]
+        let alive = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .await
+            .map(|out| {
+                String::from_utf8_lossy(&out.stdout)
+                    .split_whitespace()
+                    .any(|word| word == pid.to_string())
+            })
+            .unwrap_or(false);
+        #[cfg(not(windows))]
+        let alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map(|status| status.success())
+            .unwrap_or(false);
+        alive
+    }
+
+    async fn wait_until(mut check: impl AsyncFnMut() -> bool, seconds: u64) -> bool {
+        for _ in 0..seconds * 10 {
+            if check().await {
+                return true;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        false
+    }
+
+    /// Live: Stop ends processes the script started, not only the host.
+    #[tokio::test]
+    async fn stop_ends_processes_started_by_the_script() {
+        let Some(ps) = ["pwsh", "powershell"]
+            .into_iter()
+            .find(|candidate| validate_ps_path(candidate).is_ok())
+        else {
+            eprintln!("skip: PowerShell not on PATH");
+            return;
+        };
+        let pid_file = std::env::temp_dir().join(format!("psforge_tree_{}.txt", Uuid::new_v4()));
+        let script = format!(
+            "$child = Start-Process -FilePath (Get-Process -Id $PID).Path \
+             -ArgumentList '-NoProfile','-Command','Start-Sleep 120' -NoNewWindow -PassThru; \
+             $child.Id | Set-Content -LiteralPath '{}'; Start-Sleep 120",
+            pid_file.to_string_lossy().replace('\'', "''")
+        );
+        let manager = Arc::new(ProcessManager::new());
+        let runner = manager.clone();
+        let run = tokio::spawn(async move {
+            runner
+                .execute(ps, &script, "", "Bypass", false, &[], None, |_| {})
+                .await
+        });
+
+        let started = wait_until(
+            async || {
+                std::fs::read_to_string(&pid_file)
+                    .is_ok_and(|text| text.trim().parse::<u32>().is_ok())
+            },
+            60,
+        )
+        .await;
+        assert!(started, "script never recorded its child process");
+        let child_pid: u32 = std::fs::read_to_string(&pid_file)
+            .expect("pid file")
+            .trim()
+            .parse()
+            .expect("child pid");
+        let _ = std::fs::remove_file(&pid_file);
+        assert!(
+            process_alive(child_pid).await,
+            "child must be running before Stop"
+        );
+
+        manager.stop().await.expect("stop");
+        let _ = run.await;
+        let ended = wait_until(async || !process_alive(child_pid).await, 10).await;
+        if !ended {
+            kill_process_tree(child_pid).await;
+        }
+        assert!(
+            ended,
+            "process {child_pid} started by the script outlived Stop"
+        );
+    }
 
     #[test]
     fn resolve_working_dir_uses_current_dir_when_empty() {

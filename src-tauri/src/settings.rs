@@ -315,7 +315,7 @@ fn default_font_size() -> u32 {
 }
 
 fn default_font_family() -> String {
-    "Cascadia Code, Consolas, monospace".to_string()
+    "Cascadia Code, Consolas, 'Segoe UI Emoji', 'Segoe UI Symbol', 'Apple Color Emoji', 'Noto Color Emoji', monospace".to_string()
 }
 
 fn default_tab_size() -> u32 {
