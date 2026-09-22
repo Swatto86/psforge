@@ -19,6 +19,7 @@ jobs:
   # latest.json (see tauri-apps/tauri-action#1270).
   create-release:
     permissions:
+      actions: read
       contents: write
     runs-on: ubuntu-latest
     outputs:
@@ -26,13 +27,16 @@ jobs:
       tag: ${{ steps.resolve-tag.outputs.tag }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Resolve release tag
         id: resolve-tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ github.event.inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
             tag="${GITHUB_REF#refs/tags/}"
           fi
@@ -46,8 +50,10 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Verify tag matches manifest version
+        env:
+          RELEASE_TAG: ${{ steps.resolve-tag.outputs.tag }}
         run: |
-          tag="${{ steps.resolve-tag.outputs.tag }}"
+          tag="$RELEASE_TAG"
           tag_version="${tag#v}"
           conf_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           pkg_version="$(node -p "require('./package.json').version")"
@@ -58,9 +64,31 @@ jobs:
             exit 1
           fi
 
+      # A tag must not publish (and auto-install on every client) a commit
+      # the CI gate never passed. Push the release commit to main, wait for
+      # ci to go green on it, then tag that same commit.
+      - name: Require green CI on the release commit
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const sha = context.sha;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              head_sha: sha,
+              status: 'success',
+              per_page: 1,
+            });
+            if (data.total_count === 0) {
+              core.setFailed(`No successful ci run for ${sha}. Push it to main and wait for ci to pass before tagging.`);
+            } else {
+              core.info(`ci passed for ${sha}: ${data.workflow_runs[0].html_url}`);
+            }
+
       - name: Create or reuse draft release
         id: create-release
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           RELEASE_TAG: ${{ steps.resolve-tag.outputs.tag }}
         with:
@@ -155,7 +183,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       CARGO_INCREMENTAL: "0"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.create-release.outputs.tag }}
 
@@ -170,25 +198,25 @@ jobs:
             patchelf \
             pkg-config
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22'
           cache: 'npm'
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: ./src-tauri -> target
 
       - name: Install frontend dependencies
         run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -219,7 +247,7 @@ jobs:
 
       - name: Upload portable exe to release
         if: matrix.platform == 'windows-latest'
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
           PORTABLE_EXE: ${{ env.portable_exe }}
@@ -255,7 +283,7 @@ jobs:
           gh release upload "$RELEASE_TAG" SHA256SUMS --clobber
 
       - name: Publish release
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         with:

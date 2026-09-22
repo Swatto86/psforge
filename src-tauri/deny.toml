@@ -1,0 +1,6 @@
+# cargo deny check advisories (CI audit job).
+# Vulnerabilities always fail. Unmaintained notices fail only for crates this
+# workspace depends on directly; the transitive ones come from Tauri's own
+# dependency tree and are outside this project's control.
+[advisories]
+unmaintained = "workspace"
