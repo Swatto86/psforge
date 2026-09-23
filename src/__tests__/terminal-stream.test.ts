@@ -191,6 +191,46 @@ describe("run output capture lifecycle", () => {
   });
 });
 
+describe("console focus on start", () => {
+  async function startActive() {
+    session = createConsoleSession(container, {}, {
+      shellPath: () => "", loadProfile: () => false,
+      startupCommand: () => "", isActive: () => true,
+    });
+    await vi.waitFor(() => expect(commands.startTerminal).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let i = 0; i < 3; i++) frame();
+  }
+
+  it("does not take focus from another control when the first shell starts", async () => {
+    const menu = document.createElement("button");
+    document.body.append(menu);
+    menu.focus();
+    await startActive();
+    expect(terminal.focus).not.toHaveBeenCalled();
+    menu.remove();
+  });
+
+  it("takes focus on first start when nothing else has it", async () => {
+    await startActive();
+    expect(terminal.focus).toHaveBeenCalled();
+  });
+
+  it("returns focus to the console after a restart", async () => {
+    const clearButton = document.createElement("button");
+    document.body.append(clearButton);
+    clearButton.focus();
+    await startActive();
+    terminal.focus.mockClear();
+    session!.restart();
+    await vi.waitFor(() => expect(commands.startTerminal).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let i = 0; i < 3; i++) frame();
+    expect(terminal.focus).toHaveBeenCalled();
+    clearButton.remove();
+  });
+});
+
 describe("console busy state", () => {
   it("is busy from a submitted line until the next prompt", async () => {
     await startSession();

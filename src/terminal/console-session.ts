@@ -165,6 +165,12 @@ export function createConsoleSession(
 
   const pump = createOutputPump(term, processOutputChunk);
 
+  let startedOnce = false;
+  const focusIsElsewhere = () => {
+    const active = document.activeElement;
+    return !!active && active !== document.body && !container.contains(active);
+  };
+
   const startSession = async () => {
     if (startInFlight) return;
     startInFlight = true;
@@ -222,10 +228,16 @@ export function createConsoleSession(
 
       resizeBackend();
       scheduleFit();
+      const firstStart = !startedOnce;
+      startedOnce = true;
       if (context.isActive()) {
         requestAnimationFrame(() => {
           scheduleFit();
           if (term.rows > 0) term.refresh(0, term.rows - 1);
+          // The first shell starts while the app is loading; taking focus then
+          // would close a menu or pull the caret out of the editor. A restart
+          // (Clear / Restart Session) always returns focus here.
+          if (firstStart && focusIsElsewhere()) return;
           focus();
         });
       }
