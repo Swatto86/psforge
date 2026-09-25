@@ -123,7 +123,7 @@ npm run tauri build    # desktop installers
 ./scripts/ci-local.sh  # fmt, clippy, tests, build (matches CI)
 ```
 
-Machine-readable architecture notes for agents: [`AI_CONTEXT.md`](AI_CONTEXT.md).
+Agent context, loaded by every coding agent: [`AGENTS.md`](AGENTS.md); detailed architecture notes for agents: [`AI_CONTEXT.md`](AI_CONTEXT.md).
 
 ## Possible next steps
 

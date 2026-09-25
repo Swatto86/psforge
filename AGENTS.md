@@ -1,4 +1,7 @@
-# CONTEXT — psforge
+# psforge — agent context
+
+Every agent loads this file itself. `ARCHITECTURE.md` explains the structure; `AI_CONTEXT.md`
+holds the component map, data flows and decision history (read the section a task needs).
 
 ## Operational notes
 
