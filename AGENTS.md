@@ -9,6 +9,7 @@ holds the component map, data flows and decision history (read the section a tas
 - Verification: `pwsh scripts/fastcheck.ps1` for iteration; `scripts/verify.sh` or `scripts/verify.ps1` for the full gate. On Windows the gate needs `tauri-driver` and an `msedgedriver.exe` matching the installed WebView2 Runtime on PATH. Release via tag after CI green on the release commit — `release.yml` refuses a tag whose SHA has no successful `ci` run. CI covers Linux and Windows (with the desktop journey), macOS (clippy + tests) and an advisory audit (`cargo deny check advisories` with `src-tauri/deny.toml`, `npm audit --omit=dev`).
 - Exit and updates respect running work: consoles are busy from Enter until the next OSC 633 prompt marker; Exit asks before stopping a running script or console command, and the auto-updater waits for idle consoles. Debug-host Stop ends the host's whole process tree.
 - Local unsigned NSIS: `npx tauri build --bundles nsis --config src-tauri/tauri.local-nsis.json` (disables updater signing artifacts).
+- Linux releases are `.AppImage`, `.deb` and `.rpm`. The updater replaces the AppImage in place, so install it unextracted at a stable version-less path (an extracted tree makes updates a no-op). Release `.sig` files are minisign (BLAKE2b-512 prehash, alg `ED`), checked against `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
 
 ## Operational notes (migrated from mem0, 2026-07-23)
 
