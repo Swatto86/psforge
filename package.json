@@ -42,7 +42,7 @@
   },
   "overrides": {
     "serialize-javascript": "7.0.4",
-    "dompurify": "3.4.15",
+    "dompurify": "3.4.16",
     "fast-xml-parser": "5.5.7"
   }
 }
