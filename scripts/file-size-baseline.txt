@@ -1,0 +1,25 @@
+# Code files over 400 lines when the size check was adopted, with their size then.
+# They may not grow: split one, or give it a "size-exception: <reason>" line, to take it off this list.
+# pwsh ~/.agents/scripts/check-file-size.ps1 -WriteBaseline tightens it; it never adds a file or raises a size.
+src-tauri/src/commands.rs	3525
+src-tauri/src/powershell.rs	1713
+src-tauri/src/ps_analyze.rs	524
+src-tauri/src/settings.rs	921
+src-tauri/src/terminal.rs	885
+src-tauri/src/utils.rs	466
+src/App.tsx	1959
+src/__tests__/use-execution-actions.test.tsx	456
+src/commands.ts	496
+src/components/CommandPalette.tsx	411
+src/components/EditorPane.tsx	1155
+src/components/KeyboardShortcutPanel.tsx	415
+src/components/OutputPane.tsx	1823
+src/components/ParamPromptDialog.tsx	493
+src/components/ScriptSigningDialog.tsx	467
+src/components/SettingsPanel.tsx	2004
+src/components/Sidebar.tsx	730
+src/components/Toolbar.tsx	567
+src/store.tsx	1471
+src/terminal/console-session.ts	401
+src/types.ts	588
+src/use-execution-actions.ts	1454

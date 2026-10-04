@@ -15,6 +15,16 @@ try {
         cargo check --locked -p $Package --all-targets
         if ($LASTEXITCODE -ne 0) { throw 'Rust check failed.' }
     } else {
+        # File-size guideline (the agent-standards engineering skill): a code file over 400 lines
+        # needs a reason on record or a split; files already over it are listed in
+        # scripts/file-size-baseline.txt and may not grow.
+        $sizeCheck = Join-Path $HOME '.agents/scripts/check-file-size.ps1'
+        if (Test-Path -LiteralPath $sizeCheck) {
+            pwsh -NoProfile -File $sizeCheck -Root $root
+            if ($LASTEXITCODE -ne 0) { throw 'File size check failed.' }
+        } else {
+            Write-Host 'skip - file size check: ~/.agents/scripts/check-file-size.ps1 not found'
+        }
         Push-Location $root
         try {
             npx --yes tsc --noEmit
