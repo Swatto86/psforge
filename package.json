@@ -2,6 +2,7 @@
   "name": "psforge",
   "private": true,
   "version": "1.4.53",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
