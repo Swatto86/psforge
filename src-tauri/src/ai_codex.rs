@@ -195,7 +195,7 @@ mod tests {
         .unwrap();
         #[cfg(not(windows))]
         {
-            use std::os::unix::permissions::PermissionsExt;
+            use std::os::unix::fs::PermissionsExt;
             std::fs::write(
                 &script,
                 concat!(
