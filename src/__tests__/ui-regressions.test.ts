@@ -25,6 +25,7 @@ import toolbar from "../components/Toolbar.tsx?raw";
 import terminalPane from "../components/TerminalPane.tsx?raw";
 import consoleSession from "../terminal/console-session.ts?raw";
 import executionActionsSource from "../use-execution-actions.ts?raw";
+import scratchSaveScheduler from "../scratch-save-scheduler.ts?raw";
 import xtermSetup from "../terminal/xterm-setup.ts?raw";
 
 describe("Integrated terminal stability", () => {
@@ -197,7 +198,7 @@ describe("Batch tab closing", () => {
 
   it("keeps scratch auto-save pending when Save As is cancelled", () => {
     expect(app).toMatch(
-      /if \(choice === "save-as"\)[\s\S]*?if \(!result\.saved\) return false;[\s\S]*?const pendingTimer/,
+      /if \(choice === "save-as"\)[\s\S]*?if \(!result\.saved\) return false;[\s\S]*?scratchSaveSchedulerRef\.current\.discard/,
     );
   });
 });
@@ -215,7 +216,7 @@ describe("Paste Clean + Format editor bridge (S10-1)", () => {
     expect(editorPane).toContain(
       "if (tabId && activeTabRef.current?.id !== tabId) return false;",
     );
-    expect(app).toContain("diskWriteTabChanges");
+    expect(scratchSaveScheduler).toContain("diskWriteTabChanges");
     expect(executionActions).toContain("diskWriteTabChanges");
   });
 });

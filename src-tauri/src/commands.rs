@@ -75,7 +75,7 @@ fn ps_single_quoted(value: &str) -> String {
 /// `kill_on_drop` set. tokio defaults to leaving the child running when its
 /// future is dropped, so every helper wrapped in `tokio::time::timeout` would
 /// otherwise be orphaned (a live pwsh.exe, forever) each time it timed out.
-fn ps_command(ps_path: &str) -> tokio::process::Command {
+pub(crate) fn ps_command(ps_path: &str) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(powershell::normalize_ps_path(ps_path));
     cmd.kill_on_drop(true);
     cmd
@@ -87,7 +87,7 @@ fn ps_command(ps_path: &str) -> tokio::process::Command {
 /// non-ASCII character into U+FFFD — corrupting help text, param messages,
 /// module paths with non-ASCII usernames, and PSSA messages (S6-13). Same fix
 /// as the persistent host (powershell.rs) and terminal bootstrap (terminal.rs).
-fn ps_utf8_script(script: &str) -> String {
+pub(crate) fn ps_utf8_script(script: &str) -> String {
     format!(
         "$psforgeUtf8 = [System.Text.UTF8Encoding]::new($false); \
          [Console]::OutputEncoding = $psforgeUtf8; \
@@ -121,10 +121,9 @@ fn resolve_terminal_working_dir(working_dir: &str) -> Result<String, AppError> {
 // Script Execution
 // ---------------------------------------------------------------------------
 
-/// Prepares a terminal run: stages a wrapper script at the fixed
-/// PSFORGE_RUN_FILE path and returns the short command to type into the
-/// terminal (`psrun 'DisplayName'`), so the echoed line shows only the
-/// script's name instead of the full temp-file plumbing.
+/// Prepares a terminal run: stages a wrapper script at a unique path and
+/// returns a command that selects it before calling `psrun 'DisplayName'`.
+/// Unique paths keep overlapping runs from overwriting or deleting each other.
 ///
 /// The staged wrapper:
 /// - launches the selected PowerShell executable as a child process,
@@ -166,7 +165,11 @@ pub async fn prepare_terminal_script_command(
     let invoke_wrapper_path = write_secure_temp_file(
         "psforge_terminal_invoke",
         ".ps1",
-        crate::ps_invoke::build_terminal_invoke_wrapper(&user_script_path_ps).as_bytes(),
+        crate::ps_invoke::build_terminal_invoke_wrapper(
+            &user_script_path_ps,
+            script_args.as_deref().unwrap_or_default(),
+        )
+        .as_bytes(),
     )
     .map_err(|e| {
         let _ = std::fs::remove_file(&user_script_path);
@@ -189,18 +192,7 @@ pub async fn prepare_terminal_script_command(
     wrapper.push_str("Push-Location -LiteralPath '");
     wrapper.push_str(&work_dir_ps);
     wrapper.push_str("'\n");
-    wrapper.push_str("try { $__psforge_script_args = @(");
-    if let Some(args) = script_args.as_deref() {
-        for (index, arg) in args.iter().enumerate() {
-            if index > 0 {
-                wrapper.push_str(", ");
-            }
-            wrapper.push('\'');
-            wrapper.push_str(&ps_single_quoted(arg));
-            wrapper.push('\'');
-        }
-    }
-    wrapper.push_str("); & '");
+    wrapper.push_str("try { & '");
     wrapper.push_str(&ps_path_ps);
     wrapper.push_str("' -NoLogo -NoProfile ");
     if exec_policy != "Default" {
@@ -210,8 +202,7 @@ pub async fn prepare_terminal_script_command(
     }
     wrapper.push_str("-File '");
     wrapper.push_str(&invoke_wrapper_path_ps);
-    wrapper
-        .push_str("' @__psforge_script_args } finally { Pop-Location; Remove-Item -LiteralPath '");
+    wrapper.push_str("' } finally { Pop-Location; Remove-Item -LiteralPath '");
     wrapper.push_str(&user_script_path_ps);
     wrapper.push_str("' -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '");
     wrapper.push_str(&invoke_wrapper_path_ps);
@@ -236,10 +227,11 @@ pub async fn prepare_terminal_script_command(
         .filter(|c| !c.is_control())
         .collect::<String>();
     let display = display.trim();
+    let select_run = format!("$env:PSFORGE_RUN_FILE='{}'; ", pending_path_ps);
     if display.is_empty() {
-        Ok("psrun".to_string())
+        Ok(format!("{select_run}psrun"))
     } else {
-        Ok(format!("psrun '{}'", ps_single_quoted(display)))
+        Ok(format!("{select_run}psrun '{}'", ps_single_quoted(display)))
     }
 }
 
@@ -1113,15 +1105,24 @@ fn parse_variable_info_json(json_str: &str) -> Vec<VariableInfo> {
 fn find_last_json(s: &str) -> Option<&str> {
     let bytes = s.as_bytes();
 
-    // Try to find a top-level '[' first (most PS commands return arrays).
-    if let Some((start, end)) = find_balanced_span(bytes, b'[', b']') {
-        return Some(&s[start..=end]);
-    }
-    // Fall back to a top-level '{'.
-    if let Some((start, end)) = find_balanced_span(bytes, b'{', b'}') {
-        return Some(&s[start..=end]);
-    }
-    None
+    let array = find_balanced_span(bytes, b'[', b']');
+    let object = find_balanced_span(bytes, b'{', b'}');
+    let (start, end) = match (array, object) {
+        (Some(array), Some(object)) => {
+            // The value whose closing bracket comes last contains the other
+            // value (or is the later standalone result). In particular, do
+            // not select an aliases array nested inside a parameter object.
+            if object.1 > array.1 {
+                object
+            } else {
+                array
+            }
+        }
+        (Some(array), None) => array,
+        (None, Some(object)) => object,
+        (None, None) => return None,
+    };
+    Some(&s[start..=end])
 }
 
 /// Scans `bytes` backwards for the last balanced `open`/`close` pair,
@@ -1296,8 +1297,13 @@ fn save_file_content_blocking(
         "windows1252" => {
             // Round-trip files originally detected as Windows-1252 (the common
             // legacy Notepad/ANSI encoding on en-US Windows) without forcing a
-            // conversion to UTF-8 the user did not ask for.
-            let (encoded, _, had_unmappable) = encoding_rs::WINDOWS_1252.encode(content.as_str());
+            // conversion to UTF-8 the user did not ask for. An invalid UTF-8
+            // body behind a UTF-8 BOM retains U+FEFF in the editor buffer so
+            // this otherwise-lossless save can restore the original signature.
+            let (has_bom, text) = content
+                .strip_prefix('\u{FEFF}')
+                .map_or((false, content.as_str()), |text| (true, text));
+            let (encoded, _, had_unmappable) = encoding_rs::WINDOWS_1252.encode(text);
             if had_unmappable {
                 let message = "Some characters are not representable in Windows-1252 and were \
                      saved as '?'. Change the encoding to UTF-8 to keep them."
@@ -1305,7 +1311,12 @@ fn save_file_content_blocking(
                 warn!("save_file_content: {}", message);
                 warning = Some(message);
             }
-            encoded.into_owned()
+            let mut bytes = Vec::with_capacity(encoded.len().saturating_add(3));
+            if has_bom {
+                bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+            }
+            bytes.extend_from_slice(&encoded);
+            bytes
         }
         _ => content.into_bytes(), // utf8 (no BOM)
     };
@@ -1344,7 +1355,11 @@ fn detect_and_decode(bytes: &[u8]) -> (String, String, Option<String>) {
         if let Ok(s) = std::str::from_utf8(&bytes[3..]) {
             (s.to_string(), "utf8bom".to_string(), None)
         } else {
-            decode_no_bom_fallback(&bytes[3..])
+            let (body, encoding, warning) = decode_no_bom_fallback(&bytes[3..]);
+            // Keep the signature in the lossless legacy representation. The
+            // Windows-1252 save path turns this leading U+FEFF back into the
+            // exact original EF BB BF bytes instead of silently dropping them.
+            (format!("\u{FEFF}{body}"), encoding, warning)
         }
     } else if bytes.len() >= 4
         && bytes[0] == 0xFF
@@ -1728,25 +1743,7 @@ pub async fn unregister_file_association(extension: String) -> Result<(), AppErr
 
     #[cfg(target_os = "windows")]
     {
-        use winreg::enums::*;
-        use winreg::RegKey;
-
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let prog_id = format!("PSForge{}", extension.replace('.', "_"));
-
-        // Delete ProgID
-        let prog_id_path = format!(r"Software\Classes\{}", prog_id);
-        let _ = hkcu.delete_subkey_all(&prog_id_path);
-
-        // Remove our extension association if it points to our ProgID
-        let ext_path = format!(r"Software\Classes\{}", extension);
-        if let Ok(ext_key) = hkcu.open_subkey(&ext_path) {
-            let current: String = ext_key.get_value("").unwrap_or_default();
-            if current == prog_id {
-                let _ = hkcu.delete_subkey_all(&ext_path);
-            }
-        }
-
+        crate::file_association::unregister(&extension)?;
         notify_shell_assoc_changed();
         info!("File association unregistered for {}", extension);
     }
@@ -1946,9 +1943,9 @@ fn notify_shell_assoc_changed() {
     }
 }
 
-/// Helper to convert a winreg error to AppError.
-#[cfg(target_os = "windows")]
-fn reg_err(e: std::io::Error) -> AppError {
+/// Helper to convert a registry error to AppError.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn reg_err(e: std::io::Error) -> AppError {
     AppError {
         code: "REGISTRY_ERROR".to_string(),
         message: format!("Registry operation failed: {}", e),
@@ -2637,30 +2634,12 @@ pub async fn set_execution_policy(ps_path: String, policy: String) -> Result<(),
         canonical
     );
 
-    let output = ps_command(&ps_path)
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-        ])
-        .arg(ps_utf8_script(&script))
-        .creation_flags(0x08000000)
-        .output()
-        .await
-        .map_err(|e| AppError {
-            code: "EXEC_POLICY_SET_FAILED".to_string(),
-            message: format!("Failed to set execution policy: {}", e),
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError {
-            code: "EXEC_POLICY_SET_FAILED".to_string(),
-            message: format!("Set-ExecutionPolicy failed: {}", stderr.trim()),
-        });
-    }
+    crate::execution_policy::run(
+        &ps_path,
+        &script,
+        std::time::Duration::from_secs(crate::execution_policy::TIMEOUT_SECS),
+    )
+    .await?;
 
     info!("Execution policy set to {}", policy);
     Ok(())
@@ -3186,6 +3165,9 @@ $sig.Status.ToString()",
         status
     })
 }
+
+#[cfg(test)]
+mod regression_tests;
 
 #[cfg(test)]
 mod tests {

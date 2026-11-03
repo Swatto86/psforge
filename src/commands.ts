@@ -193,6 +193,11 @@ export async function readFileContent(path: string): Promise<FileContent> {
   return invoke<FileContent>("read_file_content", { path });
 }
 
+/** List PowerShell scripts directly inside a native-dialog-selected folder. */
+export async function listScriptFiles(directory: string): Promise<string[]> {
+  return invoke<string[]>("list_script_files", { directory });
+}
+
 /** Save file content with specified encoding.
  *  Resolves to a warning message when the save was lossy (e.g. characters not
  *  representable in Windows-1252 were replaced with '?'), else null. */
@@ -423,10 +428,6 @@ export async function suggestModulesForCommand(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Execution Policy
-// ---------------------------------------------------------------------------
-
 /**
  * Sets the PowerShell execution policy for the current user scope (no admin required).
  * Pass "Default" to leave the system setting unchanged.
@@ -438,10 +439,6 @@ export async function setExecutionPolicy(
 ): Promise<void> {
   return invoke("set_execution_policy", { psPath, policy });
 }
-// ---------------------------------------------------------------------------
-// Script Formatter
-// ---------------------------------------------------------------------------
-
 /**
  * Formats a PowerShell script using PSScriptAnalyzer Invoke-Formatter.
  * Returns the formatted content.  Falls back to the original content when

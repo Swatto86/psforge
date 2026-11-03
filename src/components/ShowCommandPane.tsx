@@ -1,10 +1,11 @@
 /** PSForge Show Command pane.
  *  ISE-style command builder: pick a module + command, fill parameters, and insert the generated command text.
+ *  size-exception: the builder and its dependent parameter form share one local selection lifecycle.
  */
 
 import { buildCommandPreview, sortParams } from "../command-preview";
 import { CommandPreview } from "./CommandPreview";
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useAppState } from "../store";
 import * as cmd from "../commands";
 import type { CommandInfo, CommandParameterInfo } from "../types";
@@ -25,29 +26,35 @@ export function ShowCommandPane() {
   >({});
   const [commandParams, setCommandParams] = useState<CommandParameterInfo[]>([]);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  const moduleLoadGenRef = useRef(0);
 
   const loadModules = useCallback(async () => {
     if (!state.selectedPsPath) return;
+    const generation = ++moduleLoadGenRef.current;
     setModuleError("");
     dispatch({ type: "SET_MODULES_LOADING", loading: true });
     try {
       const modules = await cmd.getInstalledModules(state.selectedPsPath);
+      if (moduleLoadGenRef.current !== generation) return;
       dispatch({ type: "SET_MODULES", modules });
     } catch (err) {
+      if (moduleLoadGenRef.current !== generation) return;
       const message =
         err && typeof err === "object" && "message" in err
           ? String((err as { message: unknown }).message)
           : String(err);
       setModuleError(message);
     } finally {
-      dispatch({ type: "SET_MODULES_LOADING", loading: false });
+      if (moduleLoadGenRef.current === generation) {
+        dispatch({ type: "SET_MODULES_LOADING", loading: false });
+      }
     }
   }, [state.selectedPsPath, dispatch]);
 
   useEffect(() => {
-    // Reset this pane's local selection when the PS version changes. The shared
-    // module list is invalidated centrally in the SET_SELECTED_PS reducer so it
-    // works even while this pane is unmounted (S3-27).
+    // Invalidate in-flight module loads immediately, even if no replacement
+    // load starts (for example after switching away from this pane).
+    ++moduleLoadGenRef.current;
     setSelectedModule("");
     setSelectedCommand("");
     setCommandsByModule({});

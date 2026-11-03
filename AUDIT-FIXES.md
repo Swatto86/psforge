@@ -8,6 +8,50 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` fixed · `[-]` won't 
 
 ---
 
+## Sweep 16 (v1.4.54) — concurrency, protocol fidelity, permissions and release integrity
+
+Fresh regressions were added before each fix. The release also clears every open production advisory.
+
+Dependencies and release
+- [x] **S16-1** (HIGH) — Production advisories: bumped DOMPurify to 3.4.17 and the affected dev-tool tree; both `npm audit --omit=dev` and the full audit are clean. Updated rustls/webpki/tokio/clipboard-win and pinned `tauri-plugin-updater` to the upstream v2 fix that uses zip 9, clearing RUSTSEC-2026-0367/0368/0369/0429. `cargo deny check advisories` is clean.
+- [x] **S16-2** (HIGH) — Manual `workflow_dispatch` could certify one SHA but build another when the tag already existed. The release now peels and compares the tag target to `context.sha` before reusing, creating or modifying a release.
+- [x] **S16-3** (MEDIUM) — A release rerun could include the previous `SHA256SUMS` inside the new checksum file. The checksum job removes the downloaded copy first.
+- [x] **S16-4** (MEDIUM) — The portable build reused a corrupt WebView2 CAB and accepted an incomplete extraction; it also failed when the requested output directory did not exist. Downloads now verify into a temporary file, extraction is staged and marker-checked, interrupted state recovers, and the output parent is created.
+- [x] **S16-5** (MEDIUM) — The README advertised Node 18 although the locked toolchain requires Node 22.
+
+Verification: 235 frontend tests and 107 Rust tests pass; `scripts/verify.ps1` passes the real WebDriver desktop journey; `npm audit --omit=dev` reports 0 vulnerabilities; `cargo deny check` passes advisories, bans, licenses and sources; the local NSIS and portable builds launch, and the installed unsigned 1.4.54 build opens from `%LOCALAPPDATA%\PSForge`.
+
+Frontend concurrency and state
+- [x] **S16-6** (HIGH) — With Auto-Save on Run disabled, F5 still overwrote a dirty file. User files now run from the in-memory buffer; scratch backing still flushes.
+- [x] **S16-7** (HIGH) — A slow format result replaced text typed after the request started. Format and paste-clean results are accepted only if the source tab still holds the submitted text.
+- [x] **S16-8** (HIGH) — Discarding a scratch tab could race an in-flight save and recreate the discarded file. Scratch writes are serialized per tab and discard waits for the queue.
+- [x] **S16-9** (HIGH) — Switching away from the AI tab unmounted the assistant and lost an in-flight answer. The assistant now stays mounted while hidden.
+- [x] **S16-10** (MEDIUM) — Slow module-list requests could populate the Show Command pane or sidebar from the previous PowerShell host. Requests are generation-scoped, including hidden/Outline and expanded-command loads.
+- [x] **S16-11** (MEDIUM) — A stale model-list response could replace the current provider's models or loading state. AI model requests are generation-scoped.
+- [x] **S16-12** (MEDIUM) — Disabling editor diagnostics left existing problems and markers visible. Disabling now clears the tab's problems and ignores late analysis.
+- [x] **S16-13** (MEDIUM) — An AI debug bundle could combine tab B's metadata with tab A's last output. Captured output is included only for the owning tab.
+- [x] **S16-14** (MEDIUM) — Native directory pickers restored a whole settings snapshot captured before the dialog, dropping interim changes. Pickers now patch only their directory field.
+- [x] **S16-15** (MEDIUM) — Debounced settings writes could let an older snapshot finish last, including during close flushing. All settings writes share one ordered queue.
+
+Backend protocol, process and filesystem
+- [x] **S16-16** (HIGH) — Invalid UTF-8 ended persistent output reading and could hang a run waiting for DONE; output without a final newline could also glue the completion marker to user text or lose it past the line cap. A bounded lossy reader now drains to EOF, separates embedded markers, preserves marker detection after truncation, and handles later runs.
+- [x] **S16-17** (HIGH) — Script arguments lost empty/whitespace values and string booleans through the terminal `-File` command line. Tokens are embedded as literals in the invoke wrapper and arrays are passed without dash-token reinterpretation.
+- [x] **S16-18** (HIGH) — An Ollama URL with userinfo and a loopback-looking prefix could pass validation while targeting a remote host. The actual parsed scheme, host and port are checked, with userinfo, remote and prefix-domain authorities rejected.
+- [x] **S16-19** (HIGH) — `/tmp/psforge` was shared across Unix users and its scripts were too permissive. The temp directory is per-UID with 0700 and files 0600; atomic saves preserve an existing destination's mode.
+- [x] **S16-20** (MEDIUM) — Unregistering a file association deleted foreign registry values. Only PSForge's ProgID, default value and OpenWith entry are removed, and real deletion failures are surfaced.
+- [x] **S16-21** (MEDIUM) — A single command-parameter object containing an aliases array was extracted as the inner array. The outer JSON span is selected by its later closing bracket.
+- [x] **S16-22** (MEDIUM) — Overlapping terminal runs shared one staged wrapper path. Every staged run now has a unique path selected by its own command.
+- [x] **S16-23** (MEDIUM) — `Set-ExecutionPolicy` had no timeout and could hang the IPC call. It now runs under a bounded child lifetime with process-tree termination.
+- [x] **S16-24** (MEDIUM) — Codex CLI returned success with partial output after a nonzero exit. Any nonzero exit is now an error.
+- [x] **S16-25** (LOW) — Unix PowerShell paths were compared case-insensitively. Executable matching is case-insensitive only on Windows.
+- [x] **S16-26** (LOW) — No-newline output could make the variables-inspector marker unparseable. The emitter starts a fresh protocol line before JSON.
+- [x] **S16-27** (LOW) — An invalid-UTF-8 file behind a UTF-8 BOM lost the BOM on an unchanged Windows-1252 save. The legacy representation retains U+FEFF and round-trips the original bytes.
+
+Security boundary
+- [x] **S16-28** (HIGH) — The main window could enumerate any directory through `fs:allow-read-dir` with path `**`. Folder opening now uses a typed backend command returning only direct PowerShell script paths; the frontend filesystem plugin permissions are removed and the desktop journey asserts `read_dir` is denied.
+
+---
+
 ## Sweep 15 (v1.4.53) — correctness, security, contract, UX and gate
 
 Full sweep across the Rust backend, the frontend, the IPC contract and the gates.

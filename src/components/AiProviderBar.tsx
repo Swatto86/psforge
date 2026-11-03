@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listAiModels } from "../commands";
 import {
   AI_PROVIDER_PRESET_MODELS,
@@ -17,10 +17,13 @@ export function AiProviderBar() {
   const [liveModels, setLiveModels] = useState<AiModelChoice[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const requestGenRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const generation = ++requestGenRef.current;
     if (provider !== "opencode_cli" && provider !== "cursor_cli") {
       setLiveModels([]);
+      setLoading(false);
       setWarning(
         provider === "codex_cli"
           ? "Set a Codex model in Settings, or leave blank for the CLI default."
@@ -31,13 +34,15 @@ export function AiProviderBar() {
     setLoading(true);
     try {
       const list = await listAiModels(settings);
+      if (requestGenRef.current !== generation) return;
       setLiveModels(list.models);
       setWarning(list.warning ?? null);
     } catch (err) {
+      if (requestGenRef.current !== generation) return;
       setLiveModels([]);
       setWarning(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestGenRef.current === generation) setLoading(false);
     }
   }, [
     provider,

@@ -70,10 +70,12 @@ const waitFor = async (check, message, timeout = 30000) => {
 let browser;
 let windowsApp;
 let previousClipboard;
-const invoke = (command, args = {}) => browser.executeAsync((command, args, done) => {
-  window.__TAURI__.core.invoke(command, args).then(
-    value => done({ ok: true, value }), error => done({ ok: false, message: String(error) }),
-  );
+const invoke = (command, args = {}) => browser.execute(async (command, args) => {
+  try {
+    return { ok: true, value: await window.__TAURI__.core.invoke(command, args) };
+  } catch (error) {
+    return { ok: false, message: String(error) };
+  }
 }, command, args);
 const connect = async () => {
   if (process.platform === 'win32') {
@@ -138,6 +140,14 @@ try {
   assert.equal(offScope.ok, false, 'Non-web URLs must be refused');
   assert.doesNotMatch(offScope.message, /Permissions associated with this command/i,
     'open_url itself must stay permitted for web links');
+  const deniedReadDir = await invoke('plugin:fs|read_dir', { path: state });
+  assert.equal(deniedReadDir.ok, false, 'The webview must not have unrestricted directory enumeration');
+  writeFileSync(join(state, 'b.PS1'), '');
+  writeFileSync(join(state, 'a.psm1'), '');
+  writeFileSync(join(state, 'ignore.txt'), '');
+  const folder = await invoke('list_script_files', { directory: state });
+  assert.equal(folder.ok, true, folder.message);
+  assert.deepEqual(folder.value.map(path => path.split(/[\\/]/).pop()), ['a.psm1', 'b.PS1']);
   const clipboard = await invoke('plugin:clipboard-manager|read_text');
   if (clipboard.ok) previousClipboard = clipboard.value;
   const quote = value => `'${value.replaceAll("'", "''")}'`;

@@ -137,12 +137,14 @@ function appState(tabs: EditorTab[], activeTabId: string): AppState {
 function Harness({
   state,
   activeTab,
+  scratchDir = "",
 }: {
   state: AppState;
   activeTab: EditorTab | undefined;
+  scratchDir?: string;
 }) {
   const activeTabRef = useRef<EditorTab | undefined>(activeTab);
-  const scratchDirRef = useRef("");
+  const scratchDirRef = useRef(scratchDir);
   const runWorkingDirOverrideRef = useRef<string | null>(null);
   actions = useExecutionActions({
     state,
@@ -158,7 +160,11 @@ function Harness({
   return null;
 }
 
-async function renderHarness(state: AppState, activeTab: EditorTab | undefined) {
+async function renderHarness(
+  state: AppState,
+  activeTab: EditorTab | undefined,
+  scratchDir = "",
+) {
   if (!container) {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -166,7 +172,9 @@ async function renderHarness(state: AppState, activeTab: EditorTab | undefined) 
   }
 
   await act(async () => {
-    root!.render(<Harness state={state} activeTab={activeTab} />);
+    root!.render(
+      <Harness state={state} activeTab={activeTab} scratchDir={scratchDir} />,
+    );
   });
 }
 
@@ -190,6 +198,7 @@ beforeEach(() => {
   vi.mocked(commands.prepareTerminalScriptCommand).mockResolvedValue(
     "prepared-command",
   );
+  vi.mocked(commands.saveFileContent).mockResolvedValue(null);
   runCommandInTerminal.mockResolvedValue(0);
   writeTerminalNotice.mockResolvedValue(undefined);
 });
@@ -426,31 +435,4 @@ describe("useExecutionActions", () => {
     });
   });
 
-  it("falls back to psrun when auto-save before run fails", async () => {
-    const tab = codeTab();
-    tab.isDirty = true;
-    tab.content = "Write-Host 'from buffer'";
-    vi.mocked(commands.saveFileContent).mockRejectedValue(new Error("disk full"));
-
-    await renderHarness(appState([tab], tab.id), tab);
-    await act(async () => {
-      await getActions().runScript();
-      await flushPromises();
-    });
-
-    expect(commands.prepareTerminalScriptCommand).toHaveBeenCalledTimes(1);
-    expect(commands.prepareTerminalScriptCommand).toHaveBeenCalledWith(
-      expect.any(String),
-      "Write-Host 'from buffer'",
-      expect.any(String),
-      expect.any(String),
-      [],
-      tab.title,
-    );
-    expect(runCommandInTerminal).toHaveBeenCalledWith("prepared-command", {
-      clearBeforeRun: false,
-      reveal: true,
-      newConsole: false,
-    });
-  });
 });

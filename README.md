@@ -14,7 +14,7 @@ Pre-built installers are published on [GitHub Releases](https://github.com/Swatt
 | macOS | Universal `.dmg` |
 | Linux | `.deb`, `.rpm`, AppImage |
 
-**Current version:** [1.4.53](https://github.com/Swatto86/psforge/releases/tag/v1.4.53)
+**Current version:** [1.4.54](https://github.com/Swatto86/psforge/releases/tag/v1.4.54)
 
 ## AI-assisted workflow (paste → run → debug)
 
@@ -107,7 +107,7 @@ More shortcuts: **Help → Keyboard Shortcuts** (`Ctrl+F1`).
 
 ### Prerequisites
 
-- Node.js 18+ (22 in CI)
+- Node.js 22 (used in CI; required by the locked development toolchain)
 - Rust stable ([`src-tauri/rust-toolchain.toml`](src-tauri/rust-toolchain.toml))
 - PowerShell (Windows PowerShell and/or PowerShell 7)
 - Linux builds: WebKit/GTK dev packages (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml))

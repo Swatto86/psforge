@@ -11,11 +11,13 @@
 /// values the PowerShell parameter binder accepts.
 pub(crate) const PSFORGE_COERCE_ARG_VALUE_FN: &str = r#"
 function __psforge_coerce_arg_value {
-    param([object]$Raw)
+    param([object]$Raw, [bool]$CoerceBoolean = $false)
     if ($null -eq $Raw) { return $null }
     $__psforge_text = [string]$Raw
-    if ($__psforge_text -match '^(?i)\$?true$') { return $true }
-    if ($__psforge_text -match '^(?i)\$?false$') { return $false }
+    if ($CoerceBoolean) {
+        if ($__psforge_text -match '^(?i)\$?true$') { return $true }
+        if ($__psforge_text -match '^(?i)\$?false$') { return $false }
+    }
     if ($__psforge_text.StartsWith('__psforge_securestring__')) {
         # SecureString sentinel emitted by the frontend ParamPromptDialog so
         # plain-text values typed into the dialog can satisfy a script
@@ -47,6 +49,9 @@ function __psforge_coerce_arg_value {
 /// Emits the variable-inspector JSON marker after a persistent-host run.
 pub(crate) const PSFORGE_EMIT_VARIABLES_FN: &str = r#"
 function __psforge_emit_variables {
+    # A script may use [Console]::Out.Write() without a trailing newline.
+    # Start a fresh line so the protocol marker is never glued to user output.
+    [Console]::Out.WriteLine()
     try {
         $__psforge_value_max = 4096
         $__psforge_vars = @(
@@ -91,17 +96,23 @@ pub(crate) const PSFORGE_INVOKE_USER_SCRIPT_FN: &str = r#"
 function __psforge_invoke_user_script {
     param([object[]]$__psforge_input_args)
 
+    $__psforge_command = Get-Command -Name $__psforge_script_path -ErrorAction Stop
+    function __psforge_is_boolean_parameter {
+        param($Command, [string]$Name)
+        $__psforge_parameter = $Command.Parameters.Values |
+            Where-Object { $_.Name -eq $Name -or $_.Aliases -contains $Name } |
+            Select-Object -First 1
+        return ($null -ne $__psforge_parameter -and
+            ($__psforge_parameter.ParameterType -eq [System.Management.Automation.SwitchParameter] -or
+             $__psforge_parameter.ParameterType -eq [bool]))
+    }
+
     $__psforge_named = @{}
     $__psforge_positional = [System.Collections.Generic.List[object]]::new()
     $__psforge_i = 0
     while ($__psforge_i -lt $__psforge_input_args.Count) {
         $__psforge_token_obj = $__psforge_input_args[$__psforge_i]
         $__psforge_token = if ($null -eq $__psforge_token_obj) { '' } else { [string]$__psforge_token_obj }
-        if ([string]::IsNullOrWhiteSpace($__psforge_token)) {
-            $__psforge_i++
-            continue
-        }
-
         if ($__psforge_token.StartsWith('-')) {
             $__psforge_body = $__psforge_token.Substring(1)
             $__psforge_colon_idx = $__psforge_body.IndexOf(':')
@@ -109,18 +120,30 @@ function __psforge_invoke_user_script {
                 $__psforge_name = $__psforge_body.Substring(0, $__psforge_colon_idx).Trim()
                 if ($__psforge_name.Length -gt 0) {
                     $__psforge_value_text = $__psforge_body.Substring($__psforge_colon_idx + 1)
-                    $__psforge_named[$__psforge_name] = __psforge_coerce_arg_value $__psforge_value_text
+                    $__psforge_coerce_boolean = __psforge_is_boolean_parameter $__psforge_command $__psforge_name
+                    $__psforge_named[$__psforge_name] = __psforge_coerce_arg_value -Raw $__psforge_value_text -CoerceBoolean:$__psforge_coerce_boolean
                     $__psforge_i++
                     continue
                 }
             } else {
                 $__psforge_name = $__psforge_body.Trim()
                 if ($__psforge_name.Length -gt 0) {
-                    if (($__psforge_i + 1) -lt $__psforge_input_args.Count) {
-                        # Always coerce so SecureString/bool tokens bind even
-                        # when emitted in space form (-Name value) rather than
-                        # colon form (-Name:value).
-                        $__psforge_named[$__psforge_name] = __psforge_coerce_arg_value $__psforge_input_args[$__psforge_i + 1]
+                    $__psforge_coerce_boolean = __psforge_is_boolean_parameter $__psforge_command $__psforge_name
+                    $__psforge_is_switch = $__psforge_coerce_boolean -and
+                        $__psforge_command.Parameters[$__psforge_name].ParameterType -eq [System.Management.Automation.SwitchParameter]
+                    $__psforge_has_next = ($__psforge_i + 1) -lt $__psforge_input_args.Count
+                    $__psforge_next_is_named = $__psforge_has_next -and
+                        ([string]$__psforge_input_args[$__psforge_i + 1]).StartsWith('-')
+                    if ($__psforge_is_switch -and (-not $__psforge_has_next -or $__psforge_next_is_named)) {
+                        $__psforge_named[$__psforge_name] = $true
+                        $__psforge_i++
+                        continue
+                    }
+                    if ($__psforge_has_next) {
+                        # Coerce SecureString always, but booleans only for a
+                        # declared bool/switch parameter. String parameters
+                        # must receive tokens such as 'true' and '$false' intact.
+                        $__psforge_named[$__psforge_name] = __psforge_coerce_arg_value -Raw $__psforge_input_args[$__psforge_i + 1] -CoerceBoolean:$__psforge_coerce_boolean
                         $__psforge_i += 2
                         continue
                     }
@@ -146,7 +169,7 @@ function __psforge_invoke_user_script {
 /// Built with format! (not concat!) so const &str fragments compile on stable.
 pub(crate) fn persistent_host_invoke_block() -> String {
     format!(
-        "{coerce}\n{emit}\n{invoke}\nfunction __psforge_invoke_user_script_with_emit {{\n    param([object[]]$__psforge_input_args)\n    try {{\n        __psforge_invoke_user_script @__psforge_input_args\n    }} finally {{\n        __psforge_emit_variables\n    }}\n}}\n",
+        "{coerce}\n{emit}\n{invoke}\nfunction __psforge_invoke_user_script_with_emit {{\n    param([object[]]$__psforge_input_args)\n    try {{\n        __psforge_invoke_user_script -__psforge_input_args $__psforge_input_args\n    }} finally {{\n        __psforge_emit_variables\n    }}\n}}\n",
         coerce = PSFORGE_COERCE_ARG_VALUE_FN,
         emit = PSFORGE_EMIT_VARIABLES_FN,
         invoke = PSFORGE_INVOKE_USER_SCRIPT_FN,
@@ -154,140 +177,18 @@ pub(crate) fn persistent_host_invoke_block() -> String {
 }
 
 /// Builds the child-process invoke script used by the integrated terminal psrun
-/// wrapper. Arguments arrive via `$args` when the file is launched with
-/// `pwsh -File invoke.ps1 @frontendTokens`.
-pub(crate) fn build_terminal_invoke_wrapper(user_script_path_ps: &str) -> String {
+/// wrapper. Frontend tokens are embedded as literals, not passed through the
+/// native `-File` command line where empty/whitespace/colon tokens lose fidelity.
+pub(crate) fn build_terminal_invoke_wrapper(user_script_path_ps: &str, args: &[String]) -> String {
+    let args = args
+        .iter()
+        .map(|arg| format!("'{}'", arg.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
-        "$__psforge_script_path = '{user_script_path_ps}'\n{PSFORGE_COERCE_ARG_VALUE_FN}\n{PSFORGE_INVOKE_USER_SCRIPT_FN}\n__psforge_invoke_user_script @args\n"
+        "$__psforge_script_path = '{user_script_path_ps}'\n{PSFORGE_COERCE_ARG_VALUE_FN}\n{PSFORGE_INVOKE_USER_SCRIPT_FN}\n$__psforge_args = @({args})\n__psforge_invoke_user_script -__psforge_input_args $__psforge_args\n"
     )
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn terminal_invoke_wrapper_includes_shared_binders() {
-        let script = build_terminal_invoke_wrapper("C:\\temp\\run.ps1");
-        assert!(script.contains("__psforge_coerce_arg_value"));
-        assert!(script.contains("__psforge_invoke_user_script"));
-        assert!(script.contains("__psforge_invoke_user_script @args"));
-        assert!(script.contains("$__psforge_script_path = 'C:\\temp\\run.ps1'"));
-        assert!(
-            script.contains("& $__psforge_script_path @__psforge_named @__psforge_positional"),
-            "user script must use the call operator, not dot-source"
-        );
-        assert!(
-            script.contains("NetworkCredential"),
-            "PS 5.1 SecureString path must be present"
-        );
-        assert!(
-            script.contains("__psforge_coerce_arg_value $__psforge_input_args[$__psforge_i + 1]"),
-            "space-form tokens must be coerced"
-        );
-    }
-
-    #[test]
-    fn persistent_host_block_includes_emit_wrapper() {
-        let block = persistent_host_invoke_block();
-        assert!(block.contains("__psforge_invoke_user_script_with_emit"));
-        assert!(block.contains("__psforge_emit_variables"));
-        assert!(block.contains("NetworkCredential"));
-    }
-
-    /// Live gate: the shared invoke wrapper must run the coverage fixture end
-    /// to end under real pwsh (same binder path as untitled/selection psrun).
-    #[test]
-    fn invoke_wrapper_runs_runner_coverage_fixture() {
-        let pwsh = find_pwsh();
-        let Some(pwsh) = pwsh else {
-            eprintln!("skip: pwsh not on PATH");
-            return;
-        };
-
-        let fixture = coverage_fixture_path();
-        assert!(
-            fixture.is_file(),
-            "missing coverage fixture at {}",
-            fixture.display()
-        );
-        let fixture_text = std::fs::read_to_string(&fixture).expect("read coverage fixture");
-        assert!(
-            fixture_text.contains("PSFORGE_COVERAGE_OK"),
-            "fixture must emit a known-present success marker"
-        );
-        assert!(
-            !fixture_text.contains("$$(") && !fixture_text.contains("Item-$$_"),
-            "fixture must not contain the $$ mangling patterns that break parsing"
-        );
-
-        let fixture_ps = fixture.to_string_lossy().replace('\'', "''");
-        let invoke = build_terminal_invoke_wrapper(&fixture_ps);
-        let invoke_path = std::env::temp_dir().join(format!(
-            "psforge_coverage_invoke_{}.ps1",
-            std::process::id()
-        ));
-        std::fs::write(&invoke_path, invoke).expect("write invoke wrapper");
-
-        let output = std::process::Command::new(&pwsh)
-            .args(["-NoLogo", "-NoProfile", "-File"])
-            .arg(&invoke_path)
-            .output()
-            .expect("spawn pwsh");
-        let _ = std::fs::remove_file(&invoke_path);
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "coverage fixture failed via invoke wrapper.\nstatus={:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
-            output.status.code()
-        );
-        assert!(
-            stdout.contains("PSFORGE_COVERAGE_OK sections=13"),
-            "expected coverage marker in stdout, got:\n{stdout}"
-        );
-    }
-
-    fn coverage_fixture_path() -> std::path::PathBuf {
-        // src-tauri/ -> repo root
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("fixtures")
-            .join("runner-coverage.ps1")
-    }
-
-    fn find_pwsh() -> Option<std::path::PathBuf> {
-        let candidates = if cfg!(windows) {
-            vec![
-                std::path::PathBuf::from(r"C:\Program Files\PowerShell\7\pwsh.exe"),
-                std::path::PathBuf::from(r"C:\Program Files\PowerShell\7-preview\pwsh.exe"),
-            ]
-        } else {
-            Vec::new()
-        };
-        for path in candidates {
-            if path.is_file() {
-                return Some(path);
-            }
-        }
-        which_on_path("pwsh")
-    }
-
-    fn which_on_path(name: &str) -> Option<std::path::PathBuf> {
-        let path = std::env::var_os("PATH")?;
-        for dir in std::env::split_paths(&path) {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-            if cfg!(windows) {
-                let exe = dir.join(format!("{name}.exe"));
-                if exe.is_file() {
-                    return Some(exe);
-                }
-            }
-        }
-        None
-    }
-}
+mod tests;

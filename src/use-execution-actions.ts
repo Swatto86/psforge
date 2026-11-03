@@ -726,19 +726,19 @@ export function useExecutionActions({
     let recordTabTitle = tab.title;
     let runDiskPath = recordScriptPath;
 
-    // Flush dirty buffer before a live-console `& path` run (including scratch).
-    // Untitled tabs pick up a scratch path when auto-scratch is on.
-    const shouldFlushForRun =
-      tab.isDirty &&
-      (current.settings.autoSaveOnRun ||
-        !!tab.filePath ||
-        current.settings.autoSaveScratchScripts !== false);
+    // Without auto-save, run edited user files from memory rather than stale disk.
+    const isScratchBacked = !!scratchDirRef.current && !!tab.filePath &&
+      isScratchBackedTab(tab, scratchDirRef.current);
+    if (tab.isDirty && tab.filePath && !isScratchBacked && !current.settings.autoSaveOnRun) runDiskPath = "";
+    const shouldFlushForRun = tab.isDirty && (current.settings.autoSaveOnRun ||
+      isScratchBacked || (!tab.filePath && current.settings.autoSaveScratchScripts !== false));
     if (shouldFlushForRun) {
       let savePath = tab.filePath;
       if (!savePath && current.settings.autoSaveScratchScripts !== false) {
         const scratchDir = scratchDirRef.current;
         if (scratchDir) savePath = scratchPathForTab(scratchDir, tab.id);
       }
+
       if (
         savePath &&
         savePath === tab.filePath &&

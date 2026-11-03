@@ -30,7 +30,17 @@ export function useEditorDiagnostics(opts: {
 
   useEffect(() => {
     const tab = opts.activeTab;
-    if (!opts.enabled || !tab || tab.tabType === "welcome") return;
+    if (!opts.enabled) {
+      if (tab && tab.tabType !== "welcome") {
+        opts.dispatch({
+          type: "SET_PROBLEMS",
+          tabId: tab.id,
+          diagnostics: [],
+        });
+      }
+      return;
+    }
+    if (!tab || tab.tabType === "welcome") return;
 
     const psPath = opts.selectedPsPath.trim();
     if (!psPath) return;

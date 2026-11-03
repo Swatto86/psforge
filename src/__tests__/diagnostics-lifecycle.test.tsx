@@ -43,11 +43,23 @@ describe("diagnostics lifecycle", () => {
     });
   });
 
-  it.each(["disabled", "host removed", "unmounted"])("ignores an in-flight response after %s", async (change) => {
+  it.each(["host removed", "unmounted"])("ignores an in-flight response after %s", async (change) => {
     await act(async () => {
-      root.render(change === "unmounted" ? null : <Harness enabled={change !== "disabled"} psPath={change === "host removed" ? "" : "pwsh"} />);
+      root.render(change === "unmounted" ? null : <Harness psPath={change === "host removed" ? "" : "pwsh"} />);
     });
     await act(async () => finish([]));
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("clears the affected tab and invalidates an in-flight response when disabled", async () => {
+    await act(async () => root.render(<Harness enabled={false} />));
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({
+      type: "SET_PROBLEMS", tabId: tab.id, diagnostics: [],
+    });
+
+    await act(async () => finish([]));
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({
+      type: "SET_PROBLEMS", tabId: tab.id, diagnostics: [],
+    });
   });
 });

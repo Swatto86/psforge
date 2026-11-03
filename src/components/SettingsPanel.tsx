@@ -238,10 +238,7 @@ export function SettingsPanel() {
         next = { ...next, fontFamily: value as string };
       }
     }
-    dispatch({
-      type: "SET_SETTINGS",
-      settings: next,
-    });
+    dispatch({ type: "SET_SETTINGS", settings: next });
   };
 
   const applyMonospacePreset = (family: string, target: "editor" | "output") => {
@@ -252,11 +249,7 @@ export function SettingsPanel() {
     if (linked) {
       dispatch({
         type: "SET_SETTINGS",
-        settings: {
-          ...state.settings,
-          fontFamily: family,
-          outputFontFamily: family,
-        },
+        settings: { ...state.settings, fontFamily: family, outputFontFamily: family },
       });
       return;
     }
@@ -270,7 +263,13 @@ export function SettingsPanel() {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, multiple: false });
       if (typeof selected === "string" && selected.trim()) {
-        updateSetting(field, selected);
+        dispatch({
+          type: "UPDATE_SETTINGS",
+          settings:
+            field === "customWorkingDir"
+              ? { customWorkingDir: selected }
+              : { pinnedRunDir: selected },
+        });
       }
     } catch {
       // ignore

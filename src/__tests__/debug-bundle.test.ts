@@ -62,16 +62,28 @@ describe("buildDebugBundleMarkdown", () => {
 });
 
 describe("last run ownership", () => {
-  it("does not attribute another script's run to this one", () => {
+  it("does not attribute another script's run or output to this one", () => {
+    const getOtherTabOutput = vi.fn(() => "output from tab A");
     const md = buildDebugBundleMarkdown({
       tab,
       lastRun: { exitCode: 7, durationMs: 90, tabId: "tab-2" },
       workingDir: "C:\\Scripts",
       problems: [],
-      getRunOutput: () => "",
+      getRunOutput: getOtherTabOutput,
     });
     expect(md).not.toContain("exit 7");
     expect(md).toContain("(none yet");
+    expect(md).not.toContain("output from tab A");
+    expect(getOtherTabOutput).not.toHaveBeenCalled();
+
+    const ownMd = buildDebugBundleMarkdown({
+      tab,
+      lastRun: { exitCode: 0, durationMs: 90, tabId: tab.id },
+      workingDir: "C:\\Scripts",
+      problems: [],
+      getRunOutput: () => "output from this tab",
+    });
+    expect(ownMd).toContain("output from this tab");
   });
 });
 

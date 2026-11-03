@@ -90,23 +90,48 @@ fn is_transient(e: &std::io::Error) -> bool {
 }
 
 fn psforge_temp_dir() -> std::io::Result<PathBuf> {
+    #[cfg(unix)]
+    let dir = {
+        use std::os::unix::fs::MetadataExt;
+
+        let home = dirs::home_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Cannot determine the current user's home directory",
+            )
+        })?;
+        let user_id = std::fs::metadata(home)?.uid();
+        std::env::temp_dir().join(format!("{PSFORGE_TEMP_DIR_NAME}-{user_id}"))
+    };
+    #[cfg(not(unix))]
     let dir = std::env::temp_dir().join(PSFORGE_TEMP_DIR_NAME);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)?;
+        // Also restrict a directory left behind with more permissive modes.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
     std::fs::create_dir_all(&dir)?;
+
     Ok(dir)
 }
 
-/// Fixed per-app-process path where the next terminal run's wrapper script is
-/// staged. PTY sessions receive it via the PSFORGE_RUN_FILE env var so the
-/// bootstrap's `psrun` function can execute it, keeping the echoed command
-/// line down to `psrun 'ScriptName.ps1'` instead of the full wrapper text.
-/// The `psforge_terminal_run_` prefix keeps it covered by stale-file cleanup.
-// ponytail: one staged run per app process; per-terminal-session files if
-// concurrent runs across terminal tabs ever become a thing (runs are
-// currently serialized by SET_RUNNING).
+/// Unique path for one staged terminal run. The prepared command selects this
+/// path in the terminal before calling `psrun`, so overlapping runs cannot
+/// overwrite or delete each other's wrappers. The `psforge_terminal_run_`
+/// prefix keeps it covered by stale-file cleanup.
 pub(crate) fn pending_terminal_run_path() -> std::io::Result<PathBuf> {
     Ok(psforge_temp_dir()?.join(format!(
-        "psforge_terminal_run_pending_{}.ps1",
-        std::process::id()
+        "psforge_terminal_run_pending_{}_{}.ps1",
+        std::process::id(),
+        Uuid::new_v4()
     )))
 }
 
@@ -120,11 +145,14 @@ pub(crate) fn write_secure_temp_file(
     let temp_dir = psforge_temp_dir()?;
     for _ in 0..16 {
         let path = temp_dir.join(format!("{prefix}_{}{}", Uuid::new_v4(), suffix));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
             Ok(mut f) => {
                 // Windows PowerShell 5.1 (powershell.exe) parses a BOM-less file
                 // using the system ANSI code page, silently corrupting any
@@ -190,16 +218,31 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .and_then(|name| name.to_str())
         .unwrap_or("psforge_atomic");
 
+    // Preserve an existing destination's permissions across the rename; new
+    // files default to owner-only access on Unix.
+    #[cfg(unix)]
+    let destination_mode = match std::fs::metadata(path) {
+        Ok(metadata) => {
+            use std::os::unix::fs::PermissionsExt;
+            Some(metadata.permissions().mode() & 0o777)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+
     // Pick a unique sibling temp file. Sibling (not /tmp) so the rename is
     // guaranteed to be on the same filesystem and therefore atomic.
     let mut last_err: Option<std::io::Error> = None;
     for _ in 0..16 {
         let tmp_path = parent.join(format!(".{}.psforge_tmp_{}", file_name, Uuid::new_v4()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(destination_mode.unwrap_or(0o600));
+        }
+        match options.open(&tmp_path) {
             Ok(mut f) => {
                 if let Err(e) = f.write_all(bytes) {
                     let _ = std::fs::remove_file(&tmp_path);
@@ -300,167 +343,4 @@ pub(crate) fn cleanup_psforge_temp_files() -> std::io::Result<usize> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-
-    #[test]
-    fn with_retry_succeeds_on_first_attempt() {
-        let result: std::io::Result<i32> = with_retry("test", || Ok(42));
-        assert_eq!(result.unwrap(), 42);
-    }
-
-    /// This test sleeps ~150 ms (50 ms + 100 ms backoff) intentionally.
-    /// That is well within the 5x CI timeout margin required by Rule 3.
-    #[test]
-    fn with_retry_eventually_succeeds_after_transient_errors() {
-        // First two calls fail with Interrupted (transient); third succeeds.
-        let attempts = Arc::new(AtomicU32::new(0));
-        let attempts_clone = Arc::clone(&attempts);
-        let result: std::io::Result<i32> = with_retry("test", move || {
-            let n = attempts_clone.fetch_add(1, Ordering::SeqCst);
-            if n < 2 {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
-                    "interrupted",
-                ))
-            } else {
-                Ok(99)
-            }
-        });
-        assert_eq!(result.unwrap(), 99);
-        assert_eq!(attempts.load(Ordering::SeqCst), 3);
-    }
-
-    #[test]
-    fn with_retry_does_not_retry_permanent_errors() {
-        let attempts = Arc::new(AtomicU32::new(0));
-        let attempts_clone = Arc::clone(&attempts);
-        let result: std::io::Result<i32> = with_retry("test", move || {
-            attempts_clone.fetch_add(1, Ordering::SeqCst);
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "not found",
-            ))
-        });
-        assert!(result.is_err());
-        // Must have given up immediately -- no retry on a permanent error.
-        assert_eq!(attempts.load(Ordering::SeqCst), 1);
-    }
-
-    /// This test sleeps ~150 ms (50 ms + 100 ms backoff) intentionally.
-    /// That is well within the 5x CI timeout margin required by Rule 3.
-    #[test]
-    fn with_retry_exhausts_all_attempts_for_persistent_transient_error() {
-        let attempts = Arc::new(AtomicU32::new(0));
-        let attempts_clone = Arc::clone(&attempts);
-        let result: std::io::Result<i32> = with_retry("test", move || {
-            attempts_clone.fetch_add(1, Ordering::SeqCst);
-            Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "busy"))
-        });
-        assert!(result.is_err());
-        assert_eq!(attempts.load(Ordering::SeqCst), MAX_IO_RETRIES);
-    }
-
-    #[test]
-    fn is_transient_classifies_correctly() {
-        assert!(is_transient(&std::io::Error::new(
-            std::io::ErrorKind::Interrupted,
-            ""
-        )));
-        assert!(is_transient(&std::io::Error::new(
-            std::io::ErrorKind::WouldBlock,
-            ""
-        )));
-        assert!(is_transient(&std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            ""
-        )));
-        assert!(!is_transient(&std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            ""
-        )));
-        assert!(!is_transient(&std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            ""
-        )));
-        assert!(!is_transient(&std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            ""
-        )));
-    }
-
-    #[test]
-    fn write_secure_temp_file_uses_psforge_temp_dir() {
-        let path = write_secure_temp_file("psforge_test_dir", ".txt", b"ok")
-            .expect("temp file must be created");
-        let parent = path.parent().expect("temp file must have parent");
-        assert_eq!(
-            parent.file_name().and_then(|name| name.to_str()),
-            Some(PSFORGE_TEMP_DIR_NAME)
-        );
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn write_secure_temp_file_prepends_bom_only_for_ps1() {
-        let ps1 = write_secure_temp_file("psforge_test_bom", ".ps1", b"$x = 1")
-            .expect("temp file must be created");
-        let ps1_bytes = std::fs::read(&ps1).expect("temp file must be readable");
-        assert_eq!(
-            &ps1_bytes[..3],
-            &[0xEF, 0xBB, 0xBF],
-            ".ps1 temp file must start with a UTF-8 BOM"
-        );
-        assert_eq!(&ps1_bytes[3..], b"$x = 1");
-        let _ = std::fs::remove_file(ps1);
-
-        let txt = write_secure_temp_file("psforge_test_bom", ".txt", b"$x = 1")
-            .expect("temp file must be created");
-        let txt_bytes = std::fs::read(&txt).expect("temp file must be readable");
-        assert_eq!(
-            txt_bytes, b"$x = 1",
-            "non-.ps1 temp file must not gain a BOM"
-        );
-        let _ = std::fs::remove_file(txt);
-
-        // Content that already begins with a BOM must not be double-BOM'd (R-2).
-        let with_bom = write_secure_temp_file("psforge_test_bom", ".ps1", b"\xEF\xBB\xBF$x = 1")
-            .expect("temp file must be created");
-        let with_bom_bytes = std::fs::read(&with_bom).expect("temp file must be readable");
-        assert_eq!(
-            with_bom_bytes, b"\xEF\xBB\xBF$x = 1",
-            ".ps1 content that already has a BOM must not gain a second one"
-        );
-        let _ = std::fs::remove_file(with_bom);
-    }
-
-    #[test]
-    fn char_preview_never_splits_multibyte_chars() {
-        // A byte-index slice would panic here: byte 200 lands mid-codepoint.
-        let s = "é".repeat(150); // 300 bytes, 150 chars
-        assert_eq!(char_preview(&s, 200).chars().count(), 150);
-        assert_eq!(char_preview(&s, 100).chars().count(), 100);
-        assert_eq!(char_preview("abc", 200), "abc");
-    }
-
-    #[test]
-    fn cleanup_psforge_temp_files_removes_stale_matching_files() {
-        let path = write_secure_temp_file("psforge_tmp", ".txt", b"stale")
-            .expect("temp file must be created");
-        let stale_time = SystemTime::now()
-            .checked_sub(Duration::from_secs(STALE_TEMP_FILE_MAX_AGE_SECS + 60))
-            .expect("stale timestamp must be representable");
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .expect("temp file must be reopenable");
-        file.set_times(std::fs::FileTimes::new().set_modified(stale_time))
-            .expect("test must be able to age temp file");
-
-        let removed = cleanup_psforge_temp_files().expect("cleanup must succeed");
-        assert!(removed >= 1, "cleanup must remove the stale test file");
-        assert!(!path.exists(), "cleanup must delete the stale temp file");
-    }
-}
+mod tests;

@@ -484,6 +484,7 @@ export type Action =
   | { type: "SET_SELECTED_PS"; path: string }
   | { type: "SET_WORKING_DIR"; dir: string }
   | { type: "SET_SETTINGS"; settings: AppSettings }
+  | { type: "UPDATE_SETTINGS"; settings: Partial<AppSettings> }
   | { type: "MERGE_RECENT_FILES"; paths: string[] }
   | { type: "APPLY_PROJECT_CONFIG"; config: ProjectConfig }
   | { type: "APPEND_RUN_RECORD"; record: ScriptRunRecord }
@@ -619,6 +620,11 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "SET_SETTINGS":
       return { ...state, settings: action.settings };
+
+    // Async completions patch only their own fields against current settings,
+    // rather than restoring a whole snapshot captured before the await.
+    case "UPDATE_SETTINGS":
+      return { ...state, settings: { ...state.settings, ...action.settings } };
 
     // Merges against the CURRENT settings rather than a caller-supplied
     // snapshot: multi-file opens (folder open, drag-drop) call back-to-back
@@ -1203,55 +1209,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
     state.settingsLoaded,
   ]);
 
-  // Persist settings whenever they change (after initial load).
-  // Failures used to be swallowed silently; route them to the integrated
-  // terminal so the user knows their changes did not stick to disk
-  // (e.g. AppData unwritable, disk full). We dedupe the notice so a
-  // recurring failure does not spam the terminal on every change.
+  // Persist changes after initial load; dedupe terminal notices for write failures.
   const lastSettingsErrorRef = useRef<string | null>(null);
-  // Latest settings object not yet confirmed written to disk. The close
-  // handler below flushes it: without that, any change made within the 1 s
-  // debounce window before quitting was silently dropped (S6-12).
+  // Close flushes the newest settings even if their debounce has not fired (S6-12).
   const pendingSettingsRef = useRef<AppSettings | null>(null);
+  // Serialize normal and close-flush writes so older snapshots cannot win.
+  const settingsWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const queueSettingsSave = useCallback((s: AppSettings): Promise<void> => {
+    const write = settingsWriteQueueRef.current.then(() => cmd.saveSettings(s));
+    settingsWriteQueueRef.current = write.then(
+      () => {
+        lastSettingsErrorRef.current = null;
+        if (pendingSettingsRef.current === s) pendingSettingsRef.current = null;
+      },
+      (err) => {
+        const message =
+          err && typeof err === "object" && "message" in err
+            ? String((err as { message: unknown }).message)
+            : String(err);
+        if (lastSettingsErrorRef.current === message) return;
+        lastSettingsErrorRef.current = message;
+
+        const writeNotice = (
+          window as unknown as Record<string, unknown>
+        ).__psforge_terminal_write_notice as
+          | ((
+              text: string,
+              options?: { reveal?: boolean },
+            ) => Promise<void>)
+          | undefined;
+        if (writeNotice) {
+          void writeNotice(
+            `[PSForge] Could not save settings: ${message}\n`,
+            { reveal: false },
+          );
+        } else {
+          console.error("Settings save failed:", err);
+        }
+      },
+    );
+    return settingsWriteQueueRef.current;
+  }, []);
   const saveSettingsDebounced = useCallback(
     debounce((s: AppSettings) => {
-      cmd
-        .saveSettings(s)
-        .then(() => {
-          lastSettingsErrorRef.current = null;
-          // Only clear when no newer change superseded this one.
-          if (pendingSettingsRef.current === s) {
-            pendingSettingsRef.current = null;
-          }
-        })
-        .catch((err) => {
-          const message =
-            err && typeof err === "object" && "message" in err
-              ? String((err as { message: unknown }).message)
-              : String(err);
-          if (lastSettingsErrorRef.current === message) return;
-          lastSettingsErrorRef.current = message;
-
-          const writeNotice = (
-            window as unknown as Record<string, unknown>
-          ).__psforge_terminal_write_notice as
-            | ((
-                text: string,
-                options?: { reveal?: boolean },
-              ) => Promise<void>)
-            | undefined;
-          if (writeNotice) {
-            void writeNotice(
-              `[PSForge] Could not save settings: ${message}\n`,
-              { reveal: false },
-            );
-          } else {
-            console.error("Settings save failed:", err);
-          }
-        });
+      void queueSettingsSave(s);
     }, 1000),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce returns a stable function; settings are passed as argument
-    [],
+    [queueSettingsSave],
   );
 
   useEffect(() => {
@@ -1264,20 +1267,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const executionBusyRef = useRef(false);
   executionBusyRef.current = state.isRunning || state.isDebugging;
 
-  // Flush any pending (debounced, not-yet-written) settings when the window
-  // is asked to close (the backend owns the close lifecycle and hides the
-  // window to the system tray, so these handlers must never destroy it) and
-  // when Exit (File menu or tray) asks us to shut down — running work is
-  // confirmed first, then we flush and terminate ourselves.
+  // Flush pending settings before close-to-tray and confirmed Exit; never destroy
+  // the window in these handlers because the backend owns its lifecycle.
   useEffect(() => {
     let disposed = false;
     const stops: (() => void)[] = [];
     const flushPendingSettings = async () => {
       const pending = pendingSettingsRef.current;
-      if (!pending) return;
-      pendingSettingsRef.current = null;
       try {
-        await cmd.saveSettings(pending);
+        if (pending) await queueSettingsSave(pending);
+        else await settingsWriteQueueRef.current;
       } catch (err) {
         // Best effort — never hold the window hostage over a failed save.
         console.error("Failed to save settings before close/exit:", err);
@@ -1330,7 +1329,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       disposed = true;
       for (const stop of stops) stop();
     };
-  }, []);
+  }, [queueSettingsSave]);
 
   // Keep selected shell valid when the available PowerShell list changes.
   useEffect(() => {

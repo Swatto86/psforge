@@ -10,19 +10,48 @@ if (-not $IsWindows) { throw 'The portable Windows build must run on Windows.' }
 $metadata = Get-Content (Join-Path $PSScriptRoot 'webview2-runtime.json') -Raw | ConvertFrom-Json
 $binary = (Resolve-Path -LiteralPath $AppBinary).Path
 $output = if ([IO.Path]::IsPathRooted($OutputFile)) { $OutputFile } else { Join-Path $PWD.Path $OutputFile }
+$outputParent = Split-Path -Parent $output
+if ($outputParent) { New-Item -ItemType Directory -Path $outputParent -Force | Out-Null }
 $cache = Join-Path ([IO.Path]::GetTempPath()) "psforge-webview2-$($metadata.version)"
 New-Item -ItemType Directory -Path $cache -Force | Out-Null
 $archive = Join-Path $cache 'runtime.cab'
-if (-not (Test-Path -LiteralPath $archive)) {
-    Invoke-WebRequest -Uri $metadata.url -OutFile $archive
+if ((Test-Path -LiteralPath $archive) -and
+    ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $metadata.sha256)) {
+    # A partial or corrupt cache entry must not poison every later build.
+    Remove-Item -LiteralPath $archive -Force
 }
-if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $metadata.sha256) {
-    throw "WebView2 archive hash mismatch: $archive"
+if (-not (Test-Path -LiteralPath $archive)) {
+    $download = "$archive.download"
+    Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
+    try {
+        Invoke-WebRequest -Uri $metadata.url -OutFile $download
+        if ((Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash -ne $metadata.sha256) {
+            throw 'Downloaded WebView2 archive hash mismatch.'
+        }
+        Move-Item -LiteralPath $download -Destination $archive -Force
+    } finally {
+        Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
+    }
 }
 $runtime = Join-Path $cache "Microsoft.WebView2.FixedVersionRuntime.$($metadata.version).x64"
-if (-not (Test-Path -LiteralPath (Join-Path $runtime 'msedgewebview2.exe'))) {
-    & expand.exe '-F:*' $archive $cache > $null
-    if ($LASTEXITCODE -ne 0) { throw "WebView2 extraction failed: $LASTEXITCODE" }
+$completionMarker = Join-Path $runtime '.psforge-extraction-complete'
+if (-not (Test-Path -LiteralPath $completionMarker)) {
+    $staging = Join-Path $cache 'runtime.extracting'
+    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+    try {
+        & expand.exe '-F:*' $archive $staging > $null
+        if ($LASTEXITCODE -ne 0) { throw "WebView2 extraction failed: $LASTEXITCODE" }
+        $stagedRuntime = Join-Path $staging (Split-Path $runtime -Leaf)
+        if (-not (Test-Path -LiteralPath (Join-Path $stagedRuntime 'msedgewebview2.exe'))) {
+            throw 'WebView2 extraction is incomplete.'
+        }
+        Remove-Item -LiteralPath $runtime -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType File -Path (Join-Path $stagedRuntime '.psforge-extraction-complete') -Force | Out-Null
+        Move-Item -LiteralPath $stagedRuntime -Destination $runtime
+    } finally {
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 $runtimeExe = Join-Path $runtime 'msedgewebview2.exe'
 $signature = Get-AuthenticodeSignature -FilePath $runtimeExe

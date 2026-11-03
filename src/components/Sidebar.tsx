@@ -154,21 +154,20 @@ export function Sidebar() {
   >({});
   const [loadingCommands, setLoadingCommands] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  /** Tracks the previously selected PS path so we can reset modules on change. */
+  /** Previous PS path for resetting module data on shell changes. */
   const prevPsPathRef = React.useRef(state.selectedPsPath);
-  /** Monotonic counter that invalidates stale module-load results when the
-   *  selected PS version changes mid-flight. */
+  /** Invalidates in-flight module and command results from a previous shell. */
   const loadGenRef = React.useRef(0);
   const outlineItems = React.useMemo(() => {
     if (!activeTab || activeTab.tabType === "welcome") return [];
     return parseOutline(activeTab.content);
   }, [activeTab?.id, activeTab?.content, activeTab?.tabType]);
 
-  // Reset module data when the selected PS version changes so the sidebar
-  // fetches the module list for the new installation automatically.
+  // Reset module data and invalidate every in-flight request on shell change.
   useEffect(() => {
     if (prevPsPathRef.current !== state.selectedPsPath) {
       prevPsPathRef.current = state.selectedPsPath;
+      ++loadGenRef.current;
       dispatch({ type: "SET_MODULES", modules: [] });
       // Also cancel any in-flight load so the !state.modulesLoading guard in
       // the load effect does not block the new fetch for the switched version.
@@ -179,13 +178,7 @@ export function Sidebar() {
     }
   }, [state.selectedPsPath, dispatch]);
 
-  // Load modules lazily: only when the sidebar is first made visible and no
-  // module data exists yet. This avoids an unnecessary Get-Module -ListAvailable
-  // call (which can take several seconds) when the user never opens the sidebar.
-  // NOTE: state.modulesLoading is intentionally NOT in the dependency array.
-  // Including it caused an infinite reload loop: when loading finished with an
-  // empty result (or an error), the effect re-triggered because modulesLoading
-  // changed to false, saw modules.length===0 again, and started another load.
+  // Lazy load when visible; modulesLoading is excluded to avoid reload loops.
   useEffect(() => {
     if (
       viewMode === "modules" &&
@@ -255,24 +248,20 @@ export function Sidebar() {
       }
 
       setExpandedModule(mod.name);
+      const generation = loadGenRef.current;
+      const path = state.selectedPsPath;
 
       if (!moduleCommands[mod.name]) {
         setLoadingCommands(mod.name);
         try {
-          const commands = await cmd.getModuleCommands(
-            state.selectedPsPath,
-            mod.name,
-          );
+          const commands = await cmd.getModuleCommands(path, mod.name);
+          if (loadGenRef.current !== generation) return;
           setModuleCommands((prev) => ({ ...prev, [mod.name]: commands }));
         } catch {
+          if (loadGenRef.current !== generation) return;
           setModuleCommands((prev) => ({ ...prev, [mod.name]: [] }));
         }
-        // Only clear loading indicator if this module is still the one loading.
-        // Prevents a race where clicking module B while A is loading causes A's
-        // completion to clear B's loading spinner.
-        setLoadingCommands((current) =>
-          current === mod.name ? null : current,
-        );
+        if (loadGenRef.current === generation) setLoadingCommands(null);
       }
     },
     [expandedModule, moduleCommands, state.selectedPsPath],

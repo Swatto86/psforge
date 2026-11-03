@@ -505,11 +505,14 @@ export function OutputPane({
           </div>
         )}
 
-        {/* aiEnabled gate: session restore can set the assistant tab before
-            settings (and disableAi) have loaded; the effect above corrects the
-            tab, this prevents the one-frame mount in the meantime. */}
-        {state.bottomPanelTab === "assistant" && aiEnabled && (
-          <div className="flex-1 min-h-0 overflow-hidden">
+        {/* Keep the assistant mounted so an in-flight answer survives tab changes. */}
+        {aiEnabled && (
+          <div
+            data-testid="assistant-panel"
+            hidden={state.bottomPanelTab !== "assistant"}
+            className="flex-1 min-h-0 overflow-hidden"
+            style={{ display: state.bottomPanelTab === "assistant" ? "flex" : "none" }}
+          >
             <AssistantPane />
           </div>
         )}
@@ -617,12 +620,8 @@ export function OutputPane({
           </div>
         )}
 
-        {/* TerminalPane is always mounted (never conditionally removed) so the
-            xterm.js instance and PS session survive tab switches.
-            When hidden: display:none removes it from layout without unmounting.
-            When visible: flex:1 + minHeight:0 gives xterm an explicit height so
-            FitAddon can calculate rows/cols correctly — display:contents caused
-            height to collapse to 0 which prevented keyboard input. */}
+        {/* TerminalPane stays mounted so its xterm instance and PS session survive
+            tab switches. Hidden tabs use display:none; visible uses flex:1 + minHeight:0. */}
         <div
           data-testid="terminal-panel"
           style={{

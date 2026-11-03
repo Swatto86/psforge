@@ -80,7 +80,7 @@ export function buildDebugBundleMarkdown(input: DebugBundleInput): string {
     }
   }
 
-  const output = input.getRunOutput().trim();
+  const output = lastRun ? input.getRunOutput().trim() : "";
   lines.push("", "### Terminal output (last run)", "");
   if (output) {
     const fence = fenceFor(output);
@@ -120,9 +120,8 @@ export function captureLastRunOutput(): string {
 export function collectDebugBundleMarkdown(
   input: Omit<DebugBundleInput, "getRunOutput">,
 ): string {
-  const output = captureLastRunOutput();
   return buildDebugBundleMarkdown({
     ...input,
-    getRunOutput: () => output,
+    getRunOutput: captureLastRunOutput,
   });
 }

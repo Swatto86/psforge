@@ -9,10 +9,15 @@ pub mod ai_opencode;
 pub mod ai_opencode_list;
 pub mod commands;
 pub mod errors;
+pub mod execution_policy;
+#[cfg(any(target_os = "windows", test))]
+pub mod file_association;
+pub mod output_reader;
 pub mod powershell;
 pub mod ps_analyze;
 pub mod ps_invoke;
 pub mod ps_pssa_install;
+pub mod script_folder;
 pub mod settings;
 #[cfg(not(test))]
 pub mod terminal;
@@ -172,6 +177,7 @@ pub fn run() {
             commands::get_context_menu_status,
             commands::get_snippets,
             commands::reveal_in_explorer,
+            script_folder::list_script_files,
             ps_analyze::analyze_script,
             ps_pssa_install::check_psscriptanalyzer,
             ps_pssa_install::install_psscriptanalyzer,

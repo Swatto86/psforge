@@ -43,8 +43,8 @@ import {
   isScratchBackedTab,
   isUntitledScratchCandidate,
   recoveredScratchTitle,
-  diskWriteTabChanges,
 } from "./scratch-utils";
+import { ScratchSaveScheduler } from "./scratch-save-scheduler";
 import { findProjectConfig } from "./project-config";
 import { useClipboardScript } from "./use-clipboard-script";
 import { useExecutionActions } from "./use-execution-actions";
@@ -139,7 +139,7 @@ function AppInner() {
   const scratchDirRef = useRef("");
   const tabsRef = useRef(state.tabs);
   tabsRef.current = state.tabs;
-  const scratchSaveTimersRef = useRef<Map<string, number>>(new Map());
+  const scratchSaveSchedulerRef = useRef(new ScratchSaveScheduler());
   const scratchRecoveryCheckedRef = useRef(false);
   const runWorkingDirOverrideRef = useRef<string | null>(null);
   const [closeScratchPrompt, setCloseScratchPrompt] = React.useState<{
@@ -524,17 +524,10 @@ function AppInner() {
   const openScriptFolder = useCallback(async () => {
     try {
       const { open, message } = await import("@tauri-apps/plugin-dialog");
-      const { readDir } = await import("@tauri-apps/plugin-fs");
       const selected = await open({ directory: true, multiple: false });
       if (!selected || typeof selected !== "string") return;
 
-      const base = selected.replace(/[/\\]+$/, "");
-      const entries = await readDir(selected);
-      const scriptPaths = entries
-        .filter((entry) => entry.isFile)
-        .map((entry) => `${base}/${entry.name}`.replace(/\\/g, "/"))
-        .filter((path) => /\.(ps1|psm1|psd1)$/i.test(path))
-        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+      const scriptPaths = await cmd.listScriptFiles(selected);
 
       if (scriptPaths.length === 0) {
         await message(
@@ -556,7 +549,7 @@ function AppInner() {
       dispatch({ type: "SET_WORKING_DIR", dir: selected });
 
       const project = await findProjectConfig(
-        scriptPaths[0] ?? `${base}/.psforge.json`,
+        scriptPaths[0] ?? `${selected.replace(/[/\\]+$/, "")}/.psforge.json`,
       );
       if (project) {
         dispatch({ type: "APPLY_PROJECT_CONFIG", config: project.config });
@@ -677,13 +670,8 @@ function AppInner() {
         savedPath = result.path;
       }
 
-      // Cancel any pending scratch auto-save for this tab so a late debounced
-      // write can't resurrect content the user is discarding/closing (S3-16).
-      const pendingTimer = scratchSaveTimersRef.current.get(tab.id);
-      if (pendingTimer !== undefined) {
-        window.clearTimeout(pendingTimer);
-        scratchSaveTimersRef.current.delete(tab.id);
-      }
+      // Wait for any in-flight write before deleting so discard is final.
+      await scratchSaveSchedulerRef.current.discard(tab.id);
 
       if (choice === "save-as") {
         if (scratchPath && savedPath && savedPath !== scratchPath) {
@@ -854,18 +842,22 @@ function AppInner() {
   const formatCurrentScript = useCallback(async () => {
     if (!activeTab || activeTab.tabType === "welcome" || !state.selectedPsPath)
       return;
+    const submittedTabId = activeTab.id;
+    const submittedContent = activeTab.content;
     try {
       const formatted = await cmd.formatScript(
         state.selectedPsPath,
-        activeTab.content,
+        submittedContent,
       );
-      if (formatted !== activeTab.content) {
+      const live = tabsRef.current.find((tab) => tab.id === submittedTabId);
+      if (!live || live.content !== submittedContent) return;
+      if (formatted !== submittedContent) {
         dispatch({
           type: "UPDATE_TAB",
-          id: activeTab.id,
+          id: submittedTabId,
           changes: {
             content: formatted,
-            isDirty: formatted !== activeTab.savedContent,
+            isDirty: formatted !== live.savedContent,
           },
         });
       }
@@ -909,18 +901,24 @@ function AppInner() {
       | undefined;
     if (!insert?.(cleaned)) return;
 
-    const buffer =
+    const submittedTabId = activeTab.id;
+    const submittedContent =
       (w.__psforge_getEditorText as (() => string) | undefined)?.() ??
       activeTab.content;
     try {
-      const formatted = await cmd.formatScript(state.selectedPsPath, buffer);
-      if (formatted !== buffer) {
+      const formatted = await cmd.formatScript(
+        state.selectedPsPath,
+        submittedContent,
+      );
+      const live = tabsRef.current.find((tab) => tab.id === submittedTabId);
+      if (!live || live.content !== submittedContent) return;
+      if (formatted !== submittedContent) {
         dispatch({
           type: "UPDATE_TAB",
-          id: activeTab.id,
+          id: submittedTabId,
           changes: {
             content: formatted,
-            isDirty: formatted !== activeTab.savedContent,
+            isDirty: formatted !== live.savedContent,
           },
         });
       }
@@ -1025,54 +1023,20 @@ function AppInner() {
     const activeCandidates = new Set<string>();
     for (const tab of state.tabs) {
       if (tab.tabType === "welcome" || !tab.isDirty) continue;
-      // Untitled tabs and tabs already backed by a scratch file both need
-      // continuous protection; skipping any tab with a filePath made the
-      // auto-save a one-shot — everything typed after the first save was
-      // never written to disk again (S6-1).
       if (tab.filePath && !isScratchBackedTab(tab, scratchDir)) continue;
       activeCandidates.add(tab.id);
-
-      const existing = scratchSaveTimersRef.current.get(tab.id);
-      if (existing) window.clearTimeout(existing);
-
-      const timer = window.setTimeout(() => {
-        scratchSaveTimersRef.current.delete(tab.id);
-        const path = scratchPathForTab(scratchDir, tab.id);
-        void cmd
-          .saveFileContent(path, tab.content, tab.encoding)
-          .then(() => {
-            const live = tabsRef.current.find((t) => t.id === tab.id);
-            const changes = diskWriteTabChanges(
-              path,
-              tab.content,
-              live?.content,
-            );
-            if (!changes) return;
-            dispatch({
-              type: "UPDATE_TAB",
-              id: tab.id,
-              changes: {
-                // Do NOT overwrite the friendly "Untitled-N" title with the
-                // UUID-based scratch filename — this is an internal backing
-                // store, not a user-chosen save location (S3-17).
-                ...changes,
-              },
-            });
-          })
-          .catch(() => {});
-      }, 1200);
-      scratchSaveTimersRef.current.set(tab.id, timer);
+      scratchSaveSchedulerRef.current.schedule(tab.id, {
+        path: scratchPathForTab(scratchDir, tab.id),
+        content: tab.content,
+        encoding: tab.encoding,
+        save: cmd.saveFileContent,
+        getLiveContent: () =>
+          tabsRef.current.find((candidate) => candidate.id === tab.id)?.content,
+        onSaved: (changes) =>
+          dispatch({ type: "UPDATE_TAB", id: tab.id, changes }),
+      });
     }
-
-    // Cancel timers for tabs that are no longer autosave candidates (closed,
-    // discarded, or reverted to clean) so a discarded scratch is not written
-    // to disk after the fact and resurrected on next launch (S3-16).
-    for (const [id, timer] of scratchSaveTimersRef.current) {
-      if (!activeCandidates.has(id)) {
-        window.clearTimeout(timer);
-        scratchSaveTimersRef.current.delete(id);
-      }
-    }
+    scratchSaveSchedulerRef.current.cancelUnlisted(activeCandidates);
   }, [
     state.tabs,
     state.settings.autoSaveScratchScripts,

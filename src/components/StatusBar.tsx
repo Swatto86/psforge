@@ -267,9 +267,8 @@ export function StatusBar({
                         });
                         if (typeof selected === "string" && selected.trim()) {
                           dispatch({
-                            type: "SET_SETTINGS",
+                            type: "UPDATE_SETTINGS",
                             settings: {
-                              ...state.settings,
                               workingDirMode: "pinned",
                               pinnedRunDir: selected,
                             },

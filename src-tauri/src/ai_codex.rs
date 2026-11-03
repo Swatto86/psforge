@@ -56,7 +56,7 @@ pub async fn run_codex(
     let _ = std::fs::remove_dir_all(&workspace);
     let (status, _stdout, stderr) = result?;
 
-    if !status.success() && text.trim().is_empty() {
+    if !status.success() {
         return Err(cli_error(
             "AI_CLI_FAILED",
             format!(
@@ -158,5 +158,78 @@ mod tests {
         let text = read_codex_output(&path, Some("from-stdout"));
         let _ = std::fs::remove_file(&path);
         assert_eq!(text.trim(), "from-file");
+    }
+
+    #[tokio::test]
+    async fn nonzero_exit_with_partial_output_is_an_error() {
+        let root = unique_temp_path("psforge-codex-failing-cli");
+        std::fs::create_dir_all(&root).unwrap();
+        #[cfg(windows)]
+        let script = root.join("codex-fail.cmd");
+        #[cfg(not(windows))]
+        let script = root.join("codex-fail");
+
+        #[cfg(windows)]
+        std::fs::write(
+            &script,
+            concat!(
+                "@echo off\n",
+                "setlocal\n",
+                "set \"out=\"\n",
+                ":args\n",
+                "if \"%~1\"==\"\" goto done\n",
+                "if \"%~1\"==\"-o\" (\n",
+                "  set \"out=%~2\"\n",
+                "  shift\n",
+                "  shift\n",
+                "  goto args\n",
+                ")\n",
+                "shift\n",
+                "goto args\n",
+                ":done\n",
+                "echo partial answer>\"%out%\"\n",
+                "echo synthetic codex failure>&2\n",
+                "exit /b 7\n",
+            ),
+        )
+        .unwrap();
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::permissions::PermissionsExt;
+            std::fs::write(
+                &script,
+                concat!(
+                    "#!/bin/sh\n",
+                    "out=\n",
+                    "while [ \"$#\" -gt 0 ]; do\n",
+                    "  if [ \"$1\" = \"-o\" ]; then\n",
+                    "    out=$2\n",
+                    "    shift 2\n",
+                    "  else\n",
+                    "    shift\n",
+                    "  fi\n",
+                    "done\n",
+                    "printf 'partial answer\\n' > \"$out\"\n",
+                    "printf 'synthetic codex failure\\n' >&2\n",
+                    "exit 7\n",
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let settings = AppSettings {
+            ai_codex_cli_path: script.to_string_lossy().into_owned(),
+            ..AppSettings::default()
+        };
+        let result = run_codex(&settings, "test-model", "test prompt").await;
+        let _ = std::fs::remove_dir_all(&root);
+
+        let err = result
+            .err()
+            .expect("a nonzero Codex exit must fail despite partial output");
+        assert_eq!(err.code, "AI_CLI_FAILED");
+        assert!(err.message.contains("Codex CLI exited with"));
+        assert!(err.message.contains("synthetic codex failure"));
     }
 }

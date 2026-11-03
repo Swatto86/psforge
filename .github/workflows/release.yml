@@ -97,6 +97,33 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
+            // Validate the build ref before reusing or modifying a release.
+            // getCommit peels annotated tags to their underlying commit.
+            try {
+              const { data: tagTarget } = await github.rest.repos.getCommit({
+                owner,
+                repo,
+                ref: tag,
+              });
+              if (tagTarget.sha !== context.sha) {
+                throw new Error(
+                  `Tag ${tag} points at ${tagTarget.sha}, not the CI-verified ${context.sha}`,
+                );
+              }
+              core.info(`Verified tag ${tag} points at ${context.sha}`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              await github.rest.git.createRef({
+                owner,
+                repo,
+                ref: `refs/tags/${tag}`,
+                sha: context.sha,
+              });
+              core.info(`Created tag ${tag} at ${context.sha}`);
+            }
+
             try {
               const { data } = await github.rest.repos.getReleaseByTag({
                 owner,
@@ -109,24 +136,6 @@ jobs:
               if (error.status !== 404) {
                 throw error;
               }
-            }
-
-            // A draft release does not create its tag until it is published,
-            // so the build legs (which check out the tag) need the ref to
-            // exist now. Tag-push runs already have it.
-            try {
-              await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-              await github.rest.git.createRef({
-                owner,
-                repo,
-                ref: `refs/tags/${tag}`,
-                sha: context.sha,
-              });
-              core.info(`Created tag ${tag} at ${context.sha}`);
             }
 
             // Drafts are not returned by getReleaseByTag; reuse one left by
@@ -279,6 +288,7 @@ jobs:
         run: |
           mkdir assets
           gh release download "$RELEASE_TAG" --dir assets
+          rm -f assets/SHA256SUMS
           (cd assets && sha256sum -- * > ../SHA256SUMS)
           gh release upload "$RELEASE_TAG" SHA256SUMS --clobber
 

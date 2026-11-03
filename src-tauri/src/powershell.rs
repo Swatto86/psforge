@@ -15,7 +15,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{sleep, timeout, Duration};
@@ -27,7 +27,9 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const SESSION_GRACEFUL_EXIT_MS: u64 = 1_500;
 
 /// Maximum number of output lines to buffer per process (memory bound).
-const MAX_OUTPUT_LINES: usize = 100_000;
+pub(crate) const MAX_OUTPUT_LINES: usize = 100_000;
+/// Maximum bytes retained for one output line; excess bytes are drained and dropped.
+pub(crate) const MAX_OUTPUT_LINE_BYTES: usize = 64 * 1024;
 /// Poll interval for checking whether the persistent PowerShell process exited.
 const PROCESS_MONITOR_POLL_MS: u64 = 120;
 /// After the stdout DONE marker, how long to wait for the stderr DONE_ERR
@@ -36,8 +38,8 @@ const PROCESS_MONITOR_POLL_MS: u64 = 120;
 const STDERR_DRAIN_TIMEOUT_MS: u64 = 2_000;
 /// Frontend/backend command markers for the persistent host protocol.
 const RUN_COMMAND_MARKER_PREFIX: &str = "<<PSFORGE_RUN|";
-const RUN_COMPLETE_MARKER_PREFIX: &str = "<<PSFORGE_DONE|";
-const RUN_COMPLETE_STDERR_MARKER_PREFIX: &str = "<<PSFORGE_DONE_ERR|";
+pub(crate) const RUN_COMPLETE_MARKER_PREFIX: &str = "<<PSFORGE_DONE|";
+pub(crate) const RUN_COMPLETE_STDERR_MARKER_PREFIX: &str = "<<PSFORGE_DONE_ERR|";
 const HOST_EXIT_MARKER: &str = "<<PSFORGE_EXIT>>";
 pub const VARIABLES_MARKER_PREFIX: &str = "<<PSFORGE_VARIABLES_JSON>>";
 
@@ -126,7 +128,7 @@ fn ps_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-fn parse_run_complete_marker(text: &str) -> Option<(String, i32)> {
+pub(crate) fn parse_run_complete_marker(text: &str) -> Option<(String, i32)> {
     let trimmed = text.trim();
     if !(trimmed.starts_with(RUN_COMPLETE_MARKER_PREFIX) && trimmed.ends_with(">>")) {
         return None;
@@ -143,7 +145,7 @@ fn parse_run_complete_marker(text: &str) -> Option<(String, i32)> {
 }
 
 /// Parses the stderr-side completion marker `<<PSFORGE_DONE_ERR|id>>`.
-fn parse_run_complete_stderr_marker(text: &str) -> Option<String> {
+pub(crate) fn parse_run_complete_stderr_marker(text: &str) -> Option<String> {
     let body = text
         .trim()
         .strip_prefix(RUN_COMPLETE_STDERR_MARKER_PREFIX)?
@@ -225,7 +227,7 @@ while ($true) {
 }
 
 #[derive(Debug, Clone)]
-enum SessionEvent {
+pub(crate) enum SessionEvent {
     Output(OutputLine),
     Exited(i32),
 }
@@ -379,108 +381,6 @@ impl ProcessManager {
         })
     }
 
-    fn try_consume_output_budget(budget: &AtomicUsize) -> bool {
-        let mut current = budget.load(Ordering::Relaxed);
-        loop {
-            if current == 0 {
-                return false;
-            }
-            match budget.compare_exchange_weak(
-                current,
-                current - 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => return true,
-                Err(next) => current = next,
-            }
-        }
-    }
-
-    /// Returns true when `line` is the completion marker of the command whose
-    /// id is currently in `active_command`. Used to let the real marker of the
-    /// running command bypass an exhausted output budget without letting an
-    /// arbitrary marker-shaped output line do the same.
-    async fn is_active_completion_marker(
-        line: &str,
-        active_command: &Mutex<Option<String>>,
-    ) -> bool {
-        let marker_id = match parse_run_complete_marker(line) {
-            Some((id, _)) => id,
-            None => match parse_run_complete_stderr_marker(line) {
-                Some(id) => id,
-                None => return false,
-            },
-        };
-        active_command.lock().await.as_deref() == Some(marker_id.as_str())
-    }
-
-    fn spawn_output_reader(
-        stdout_or_stderr: impl tokio::io::AsyncRead + Unpin + Send + 'static,
-        stream_name: &'static str,
-        tx: mpsc::UnboundedSender<SessionEvent>,
-        output_budget: Arc<AtomicUsize>,
-        output_budget_warned: Arc<AtomicBool>,
-        active_command: Arc<Mutex<Option<String>>>,
-    ) {
-        tokio::spawn(async move {
-            let reader = BufReader::new(stdout_or_stderr);
-            let mut lines = reader.lines();
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => {
-                        if Self::try_consume_output_budget(&output_budget) {
-                            let _ = tx.send(SessionEvent::Output(OutputLine {
-                                stream: stream_name.to_string(),
-                                text: line,
-                                timestamp: chrono_now(),
-                            }));
-                        } else if Self::is_active_completion_marker(&line, &active_command).await {
-                            // The running command's completion marker must reach
-                            // execute()'s wait loop even after the budget is
-                            // exhausted, or a >MAX_OUTPUT_LINES run drops its
-                            // final <<PSFORGE_DONE|...>> marker and execute()
-                            // blocks on recv() forever, hanging every future run
-                            // (it holds execution_lock). Scoped to the active
-                            // command id so a coincidental marker-shaped output
-                            // line can't defeat the budget (S3-1).
-                            let _ = tx.send(SessionEvent::Output(OutputLine {
-                                stream: stream_name.to_string(),
-                                text: line,
-                                timestamp: chrono_now(),
-                            }));
-                        } else if !output_budget_warned.swap(true, Ordering::Relaxed) {
-                            warn!(
-                                "Output line limit reached ({}); dropping additional lines for current command",
-                                MAX_OUTPUT_LINES
-                            );
-                            // Surface truncation in the user-visible output so
-                            // they know stop appearing, not that the script
-                            // simply went silent. Emitted exactly once per
-                            // command (the swap above gates this branch).
-                            let _ = tx.send(SessionEvent::Output(OutputLine {
-                                stream: "stderr".to_string(),
-                                text: format!(
-                                    "[PSForge] Output truncated after {} lines; \
-                                     subsequent script output is being dropped to keep the UI responsive.",
-                                    MAX_OUTPUT_LINES
-                                ),
-                                timestamp: chrono_now(),
-                            }));
-                            // Keep draining to avoid filling the OS pipe and
-                            // deadlocking the PowerShell process.
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(e) => {
-                        debug!("{} reader I/O error: {}", stream_name, e);
-                        break;
-                    }
-                }
-            }
-        });
-    }
-
     fn spawn_process_monitor(
         child: Arc<Mutex<Option<Child>>>,
         stdin_writer: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
@@ -616,7 +516,7 @@ impl ProcessManager {
         let output_budget = Arc::new(AtomicUsize::new(MAX_OUTPUT_LINES));
         let output_budget_warned = Arc::new(AtomicBool::new(false));
 
-        Self::spawn_output_reader(
+        crate::output_reader::spawn(
             stdout,
             "stdout",
             event_tx.clone(),
@@ -624,7 +524,7 @@ impl ProcessManager {
             output_budget_warned.clone(),
             active_command.clone(),
         );
-        Self::spawn_output_reader(
+        crate::output_reader::spawn(
             stderr,
             "stderr",
             event_tx.clone(),
@@ -656,7 +556,7 @@ impl ProcessManager {
             guard.clone()
         };
         if let Some(session) = existing {
-            if session.ps_path.eq_ignore_ascii_case(ps_path)
+            if ps_paths_equal(&session.ps_path, ps_path, cfg!(windows))
                 && session.exec_policy == exec_policy
                 && Self::is_session_usable(&session).await
             {
@@ -901,7 +801,8 @@ impl ProcessManager {
                 }
             }
         }
-        wrapper_script.push_str("__psforge_invoke_user_script_with_emit @args\n");
+        wrapper_script
+            .push_str("__psforge_invoke_user_script_with_emit -__psforge_input_args $args\n");
         let wrapper_script_path =
             write_secure_temp_file("psforge_wrapper", ".ps1", wrapper_script.as_bytes()).map_err(
                 |e| {
@@ -1119,6 +1020,14 @@ impl Default for ProcessManager {
     /// Delegates to `new()` so `ProcessManager::default()` is available (Rule 2 / clippy).
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn ps_paths_equal(left: &str, right: &str, case_insensitive: bool) -> bool {
+    if case_insensitive {
+        left.eq_ignore_ascii_case(right)
+    } else {
+        left == right
     }
 }
 
@@ -1454,7 +1363,7 @@ pub fn discover_ps_versions(preferred: Option<&str>) -> Vec<PsVersion> {
 
 /// Returns the current moment as a Unix epoch-seconds string.
 /// The frontend's `formatTimestamp()` parses this into a locale time string.
-fn chrono_now() -> String {
+pub(crate) fn chrono_now() -> String {
     use std::time::SystemTime;
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -1499,6 +1408,29 @@ mod tests {
             sleep(Duration::from_millis(100)).await;
         }
         false
+    }
+
+    #[test]
+    fn windows_executable_path_comparison_ignores_ascii_case() {
+        assert!(ps_paths_equal(
+            r"C:\PowerShell\pwsh.exe",
+            r"c:\powershell\PWSH.EXE",
+            true
+        ));
+    }
+
+    #[test]
+    fn unix_executable_path_comparison_is_case_sensitive() {
+        assert!(!ps_paths_equal(
+            "/opt/PowerShell/pwsh",
+            "/opt/powershell/pwsh",
+            false
+        ));
+        assert!(ps_paths_equal(
+            "/opt/PowerShell/pwsh",
+            "/opt/PowerShell/pwsh",
+            false
+        ));
     }
 
     /// Live: Stop ends processes the script started, not only the host.
